@@ -1,0 +1,289 @@
+import React, { useState } from 'react';
+import {
+  Calendar,
+  Clock,
+  Stethoscope,
+  Plus,
+  Building2,
+  XCircle,
+  CheckCircle2,
+  AlertCircle,
+  FileText,
+} from 'lucide-react';
+import { MockStorage } from '../../services/mockStorage';
+import { useAuth } from '../../context/AuthContext';
+import { useNotification } from '../../context/NotificationContext';
+import { Appointment, AppointmentType } from '../../types';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Card, CardHeader, CardContent } from '../../components/ui/Card';
+import { Button } from '../../components/ui/Button';
+import { Badge } from '../../components/ui/Badge';
+import { Input } from '../../components/ui/Input';
+import { Select } from '../../components/ui/Select';
+import { Modal } from '../../components/ui/Modal';
+import { Tabs } from '../../components/ui/Tabs';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+
+export const PatientAppointments: React.FC = () => {
+  const { user } = useAuth();
+  const { showToast } = useNotification();
+  const patientId = user?.patientId || 'PAT-1001';
+
+  const [appointments, setAppointments] = useState<Appointment[]>(() =>
+    MockStorage.getAppointments(undefined, patientId)
+  );
+  const hospitals = MockStorage.getHospitals();
+  const doctors = MockStorage.getDoctors();
+  const departments = MockStorage.getDepartments();
+
+  const [activeTab, setActiveTab] = useState('upcoming');
+  const [isBookModalOpen, setIsBookModalOpen] = useState(false);
+  const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
+
+  // Booking Form State
+  const [formData, setFormData] = useState({
+    hospitalId: hospitals[0]?.id || 'HOSP-001',
+    departmentId: departments[0]?.id || 'DEP-101',
+    doctorId: doctors[0]?.id || 'DOC-101',
+    appointmentDate: '2026-09-26',
+    appointmentTime: '10:00 AM',
+    type: 'Consultation' as AppointmentType,
+    reason: '',
+  });
+
+  const refreshData = () => {
+    setAppointments(MockStorage.getAppointments(undefined, patientId));
+  };
+
+  const upcomingList = appointments.filter(
+    (a) => a.status === 'Scheduled' || a.status === 'Confirmed' || a.status === 'Checked In'
+  );
+  const pastList = appointments.filter(
+    (a) => a.status === 'Completed' || a.status === 'Cancelled' || a.status === 'No Show'
+  );
+
+  const handleBookSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const hosp = hospitals.find((h) => h.id === formData.hospitalId);
+    const doc = doctors.find((d) => d.id === formData.doctorId);
+    const dept = departments.find((d) => d.id === formData.departmentId);
+
+    const newApt: Appointment = {
+      id: `APT-2026-${Math.floor(10 + Math.random() * 90)}`,
+      hospitalId: formData.hospitalId,
+      patientId,
+      patientName: user?.name || 'Eleanor Vance',
+      patientPhone: user?.phone || '+1 (555) 301-4492',
+      patientAge: 48,
+      patientGender: 'Female',
+      doctorId: doc?.id || 'DOC-101',
+      doctorName: doc?.name || 'Dr. Specialist Lead',
+      doctorSpecialization: doc?.specialization || 'Clinical Specialist',
+      departmentId: dept?.id || 'DEP-101',
+      departmentName: dept?.name || 'General OPD',
+      appointmentDate: formData.appointmentDate,
+      appointmentTime: formData.appointmentTime,
+      type: formData.type,
+      status: 'Confirmed',
+      reason: formData.reason || 'Routine Consultation Request',
+      fee: doc?.consultationFee || 150,
+      paymentStatus: 'Paid',
+      createdAt: new Date().toISOString().split('T')[0],
+    };
+
+    MockStorage.saveAppointment(newApt);
+    showToast('Appointment Booked', `Confirmed with ${newApt.doctorName} on ${newApt.appointmentDate}.`);
+    setIsBookModalOpen(false);
+    refreshData();
+  };
+
+  const handleCancelConfirm = () => {
+    if (cancelConfirmId) {
+      MockStorage.updateAppointmentStatus(cancelConfirmId, 'Cancelled');
+      showToast('Appointment Cancelled', 'Your consultation slot has been released.');
+      setCancelConfirmId(null);
+      refreshData();
+    }
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <PageHeader
+        title="My Medical Appointments & Consultations"
+        subtitle="Book OPD visits, view specialist schedules, and manage consultation bookings."
+        breadcrumbs={[{ label: 'Patient Portal', href: '/patient/dashboard' }, { label: 'Appointments' }]}
+        actions={
+          <Button variant="primary" size="sm" onClick={() => setIsBookModalOpen(true)} leftIcon={<Plus className="w-3.5 h-3.5" />}>
+            Book New Appointment
+          </Button>
+        }
+      />
+
+      <Card>
+        <div className="p-4 border-b border-slate-100">
+          <Tabs
+            tabs={[
+              { id: 'upcoming', label: 'Upcoming Consultations', count: upcomingList.length },
+              { id: 'past', label: 'Past & Completed Visits', count: pastList.length },
+            ]}
+            activeTab={activeTab}
+            onChange={(t) => setActiveTab(t)}
+            variant="pills"
+          />
+        </div>
+
+        <CardContent className="p-6">
+          <div className="space-y-4">
+            {(activeTab === 'upcoming' ? upcomingList : pastList).length === 0 ? (
+              <div className="text-center py-12 text-slate-400 text-xs">
+                No {activeTab} appointments found.
+              </div>
+            ) : (
+              (activeTab === 'upcoming' ? upcomingList : pastList).map((apt) => (
+                <div
+                  key={apt.id}
+                  className="p-5 rounded-2xl border border-slate-200 bg-white hover:border-teal-300 transition-all shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center font-bold text-sm shrink-0 border border-teal-100">
+                      <Calendar className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-sm text-slate-900">{apt.doctorName}</h4>
+                        <Badge variant="indigo" size="sm">{apt.status}</Badge>
+                      </div>
+                      <p className="text-xs text-teal-700 font-medium">{apt.doctorSpecialization}</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">{apt.departmentName}</p>
+                      <p className="text-xs text-slate-600 mt-2"><span className="font-semibold text-slate-700">Reason:</span> {apt.reason}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex sm:flex-col items-end justify-between sm:justify-center gap-2 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                    <div className="text-left sm:text-right">
+                      <span className="font-bold text-xs text-slate-900 block">{apt.appointmentDate}</span>
+                      <span className="text-xs text-teal-700 font-semibold">{apt.appointmentTime}</span>
+                    </div>
+
+                    {activeTab === 'upcoming' && apt.status !== 'Cancelled' && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className="text-rose-600 hover:bg-rose-50"
+                        onClick={() => setCancelConfirmId(apt.id)}
+                      >
+                        Cancel Visit
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Book Appointment Modal */}
+      <Modal
+        isOpen={isBookModalOpen}
+        onClose={() => setIsBookModalOpen(false)}
+        title="Schedule Specialist Consultation"
+        subtitle="Select preferred physician and time slot"
+        maxWidth="lg"
+      >
+        <form onSubmit={handleBookSubmit} className="space-y-4">
+          <Select
+            label="Select Hospital Facility *"
+            value={formData.hospitalId}
+            onChange={(e) => setFormData({ ...formData, hospitalId: e.target.value })}
+          >
+            {hospitals.map((h) => (
+              <option key={h.id} value={h.id}>{h.name}</option>
+            ))}
+          </Select>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Select
+              label="Medical Department *"
+              value={formData.departmentId}
+              onChange={(e) => setFormData({ ...formData, departmentId: e.target.value })}
+            >
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </Select>
+
+            <Select
+              label="Consulting Doctor *"
+              value={formData.doctorId}
+              onChange={(e) => setFormData({ ...formData, doctorId: e.target.value })}
+            >
+              {doctors.map((doc) => (
+                <option key={doc.id} value={doc.id}>
+                  {doc.name} (${doc.consultationFee})
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Input
+              label="Preferred Date *"
+              type="date"
+              value={formData.appointmentDate}
+              onChange={(e) => setFormData({ ...formData, appointmentDate: e.target.value })}
+              required
+            />
+            <Select
+              label="Available Slot *"
+              value={formData.appointmentTime}
+              onChange={(e) => setFormData({ ...formData, appointmentTime: e.target.value })}
+            >
+              <option value="09:00 AM">09:00 AM</option>
+              <option value="10:00 AM">10:00 AM</option>
+              <option value="11:15 AM">11:15 AM</option>
+              <option value="02:30 PM">02:30 PM</option>
+              <option value="04:00 PM">04:00 PM</option>
+            </Select>
+            <Select
+              label="Visit Type"
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+            >
+              <option value="Consultation">Consultation</option>
+              <option value="General Checkup">General Checkup</option>
+              <option value="Follow-up">Follow-up</option>
+            </Select>
+          </div>
+
+          <Input
+            label="Chief Complaint / Reason for Consultation *"
+            value={formData.reason}
+            onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
+            placeholder="e.g. Follow up on blood pressure readings"
+            required
+          />
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <Button type="button" variant="outline" size="sm" onClick={() => setIsBookModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" size="sm">
+              Confirm & Book Visit (₹{doctors.find((d) => d.id === formData.doctorId)?.consultationFee || 500})
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Cancel Confirmation */}
+      <ConfirmDialog
+        isOpen={!!cancelConfirmId}
+        onClose={() => setCancelConfirmId(null)}
+        onConfirm={handleCancelConfirm}
+        title="Cancel Appointment?"
+        message="Are you sure you want to cancel this scheduled consultation? The doctor's time slot will be opened for other patients."
+        confirmText="Yes, Cancel Booking"
+      />
+    </div>
+  );
+};

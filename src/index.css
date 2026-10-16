@@ -1,0 +1,231 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #f8fafc;
+    color: #0f172a;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Custom utility styles */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+}
+
+.glass-panel-dark {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+}
+
+.table-header {
+  background-color: #f8fafc;
+  color: #475569;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Pulse badge animation */
+@keyframes subtle-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.05); }
+}
+
+.animate-subtle-pulse {
+  animation: subtle-pulse 3s infinite ease-in-out;
+}
+
+/* ==========================================================================
+   DYNAMIC DESIGN TEMPLATES & THEME PALETTES FOR PUBLIC WEBSITES
+   ========================================================================== */
+
+/* Theme 1: Modern Teal */
+.theme-modern-teal {
+  --primary-theme: #0d9488;
+  --secondary-theme: #0f766e;
+  --bg-theme: #ffffff;
+  --text-theme: #0f172a;
+}
+
+/* Theme 2: Deep Ocean */
+.theme-deep-ocean {
+  --primary-theme: #2563eb;
+  --secondary-theme: #1d4ed8;
+  --bg-theme: #020617;
+  --text-theme: #f8fafc;
+  background-color: #020617 !important;
+  color: #f8fafc !important;
+}
+
+.theme-deep-ocean nav {
+  background-color: rgba(15, 23, 42, 0.95) !important;
+  border-color: #1e293b !important;
+}
+
+.theme-deep-ocean nav span,
+.theme-deep-ocean nav a {
+  color: #f1f5f9 !important;
+}
+
+.theme-deep-ocean section:not(#hero):not(#testimonials) {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: #1e293b !important;
+}
+
+.theme-deep-ocean section h2,
+.theme-deep-ocean section h3,
+.theme-deep-ocean section h4 {
+  color: #ffffff !important;
+}
+
+.theme-deep-ocean section p {
+  color: #cbd5e1 !important;
+}
+
+/* Theme 3: Healthcare Classic (Ice Blue Theme) */
+.theme-classic {
+  --primary-theme: #0284c7;
+  --secondary-theme: #0369a1;
+  --bg-theme: #e0f2fe;
+  --text-theme: #0c4a6e;
+  background-color: #e0f2fe !important;
+  color: #0c4a6e !important;
+}
+
+.theme-classic nav {
+  background-color: #0284c7 !important;
+  border-bottom: 4px solid #0369a1 !important;
+}
+
+.theme-classic nav span,
+.theme-classic nav a {
+  color: #ffffff !important;
+}
+
+.theme-classic section:not(#hero):not(#testimonials) {
+  background-color: #f0f9ff !important;
+  color: #0c4a6e !important;
+  border-color: #bae6fd !important;
+}
+
+.theme-classic section h2,
+.theme-classic section h3,
+.theme-classic section h4 {
+  color: #0369a1 !important;
+}
+
+.theme-classic section p {
+  color: #0369a1 !important;
+}
+
+/* Theme 4: Clean Minimal (Warm Emerald & Luxury Cream Theme) */
+.theme-minimal {
+  --primary-theme: #059669;
+  --secondary-theme: #047857;
+  --bg-theme: #fef3c7;
+  --text-theme: #78350f;
+  background-color: #fffbeb !important;
+  color: #78350f !important;
+  font-family: Georgia, Cambria, "Times New Roman", Times, serif !important;
+}
+
+.theme-minimal nav {
+  background-color: #78350f !important;
+  border-bottom: 4px solid #d97706 !important;
+}
+
+.theme-minimal nav span,
+.theme-minimal nav a {
+  color: #fef3c7 !important;
+}
+
+.theme-minimal section:not(#hero):not(#testimonials) {
+  background-color: #fef3c7 !important;
+  color: #78350f !important;
+  border-color: #fde68a !important;
+}
+
+.theme-minimal section h2,
+.theme-minimal section h3,
+.theme-minimal section h4 {
+  color: #92400e !important;
+  font-family: Georgia, serif !important;
+}
+
+.theme-minimal section p {
+  color: #b45309 !important;
+}
+
+/* --------------------------------------------------------------------------
+   DESIGN TEMPLATE DISTINCT STYLING
+   -------------------------------------------------------------------------- */
+
+/* Template 1: Premium Healthcare */
+.template-premium-healthcare nav {
+  border-bottom: 3px solid #0d9488;
+}
+
+/* Template 2: Modern Hospital */
+.template-modern-hospital {
+  border-top: 8px solid #0d9488 !important;
+}
+.template-modern-hospital nav {
+  border-bottom: 3px solid #2563eb;
+  box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.1);
+}
+.template-modern-hospital section {
+  border-radius: 0px !important;
+}
+
+/* Template 3: Luxury Medical Center */
+.template-luxury-medical {
+  letter-spacing: 0.025em;
+}
+.template-luxury-medical nav {
+  background-color: #090d16 !important;
+  color: #ffffff !important;
+  border-bottom: 2px solid #d97706 !important;
+}
+.template-luxury-medical nav a,
+.template-luxury-medical nav span {
+  color: #f3f4f6 !important;
+}
+.template-luxury-medical section#hero h1 {
+  font-family: Georgia, serif !important;
+  letter-spacing: -0.02em;
+}
+

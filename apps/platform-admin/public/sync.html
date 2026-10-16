@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>PulseCore Cross-Port Sync Bridge</title>
+</head>
+<body style="background:transparent;">
+  <script>
+    (function() {
+      // Listen for messages from parent window
+      window.addEventListener('message', function(event) {
+        if (!event.data) return;
+
+        if (event.data.type === 'PULSE_STORAGE_SYNC' && event.data.key && event.data.data !== undefined) {
+          try {
+            localStorage.setItem(event.data.key, JSON.stringify(event.data.data));
+          } catch (e) {
+            console.error('Error writing to bridge localStorage', e);
+          }
+        } else if (event.data.type === 'PULSE_REQUEST_ALL') {
+          syncAllToParent(event.source || window.parent);
+        }
+      });
+
+      function syncAllToParent(target) {
+        if (!target) return;
+        try {
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (k && k.startsWith('pulse_')) {
+              var val = localStorage.getItem(k);
+              if (val) {
+                target.postMessage({
+                  type: 'PULSE_STORAGE_SYNC',
+                  key: k,
+                  data: JSON.parse(val)
+                }, '*');
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Error reading bridge localStorage', e);
+        }
+      }
+
+      // Automatically push initial storage to parent on load
+      window.addEventListener('load', function() {
+        if (window.parent && window.parent !== window) {
+          syncAllToParent(window.parent);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
