@@ -62,6 +62,14 @@ import { ConsolidatedReports } from '../pages/hospital/enterprise/ConsolidatedRe
 import { OrganizationSettings } from '../pages/hospital/enterprise/OrganizationSettings';
 import { EnterpriseSubscriptionDetails } from '../pages/hospital/enterprise/EnterpriseSubscriptionDetails';
 
+// Doctor Portal Pages
+import { DoctorDashboard } from '../pages/hospital/doctor/DoctorDashboard';
+import { DoctorAppointments } from '../pages/hospital/doctor/DoctorAppointments';
+import { DoctorPatientQueue } from '../pages/hospital/doctor/DoctorPatientQueue';
+import { ConsultationWorkspace } from '../pages/hospital/doctor/ConsultationWorkspace';
+import { DoctorScheduleView } from '../pages/hospital/doctor/DoctorScheduleView';
+import { DoctorProfileView } from '../pages/hospital/doctor/DoctorProfileView';
+
 // Patient Portal Pages
 import { PatientDashboard } from '../pages/patient/PatientDashboard';
 import { PatientProfile } from '../pages/patient/PatientProfile';
@@ -97,6 +105,8 @@ export const AppRoutes: React.FC = () => {
 
       {/* Public / Auth Routes */}
       <Route path="/login" element={<Login />} />
+      <Route path="/hospital/:hospitalSlug/login" element={<Login />} />
+      <Route path="/hospital-site/:hospitalSlug/login" element={<Login />} />
       <Route path="/superadmin-login" element={<PlatformLogin />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
@@ -190,6 +200,62 @@ export const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['hospital_admin', 'doctor', 'receptionist', 'nurse']}>
               <AppointmentManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="doctor/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={['doctor', 'hospital_admin']}>
+              <DoctorDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="doctor/appointments"
+          element={
+            <ProtectedRoute allowedRoles={['doctor', 'hospital_admin']}>
+              <DoctorAppointments />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="doctor/queue"
+          element={
+            <ProtectedRoute allowedRoles={['doctor', 'hospital_admin', 'nurse']}>
+              <DoctorPatientQueue />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="consultation"
+          element={
+            <ProtectedRoute allowedRoles={['doctor', 'hospital_admin']}>
+              <ConsultationWorkspace />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="consultation/:appointmentId"
+          element={
+            <ProtectedRoute allowedRoles={['doctor', 'hospital_admin']}>
+              <ConsultationWorkspace />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="doctor/schedule"
+          element={
+            <ProtectedRoute allowedRoles={['doctor', 'hospital_admin']}>
+              <DoctorScheduleView />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="doctor/profile"
+          element={
+            <ProtectedRoute allowedRoles={['doctor', 'hospital_admin']}>
+              <DoctorProfileView />
             </ProtectedRoute>
           }
         />

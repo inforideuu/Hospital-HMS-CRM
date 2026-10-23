@@ -5,13 +5,19 @@ import { MockStorage } from '../services/mockStorage';
 export interface LoginResult {
   success: boolean;
   error?: string;
+  multipleAccounts?: User[];
 }
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   currentHospital: Hospital | null;
-  login: (email: string, role?: UserRole, targetHospitalId?: string) => LoginResult;
+  login: (
+    email: string,
+    passwordOrRole?: string | UserRole,
+    targetHospitalId?: string,
+    explicitRole?: UserRole
+  ) => LoginResult;
   logout: () => void;
   switchRole: (role: UserRole) => void;
   switchHospital: (hospitalId: string) => void;
@@ -20,6 +26,21 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const KNOWN_ROLES: UserRole[] = [
+  'super_admin',
+  'super_admin_manager',
+  'sales_executive',
+  'hospital_admin',
+  'doctor',
+  'receptionist',
+  'nurse',
+  'accountant',
+  'pharmacist',
+  'lab_technician',
+  'patient',
+  'ambulance_driver',
+];
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(() => MockStorage.getAuthUser());
   const [currentHospital, setCurrentHospital] = useState<Hospital | null>(() => {
@@ -27,8 +48,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (authUser?.hospitalId) {
       return MockStorage.getHospitalById(authUser.hospitalId) || null;
     }
-    const hospitals = MockStorage.getHospitals();
-    return hospitals.length > 0 ? hospitals[0] : null;
+    return null;
   });
 
   useEffect(() => {
@@ -37,6 +57,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(authUser);
       if (authUser?.hospitalId) {
         setCurrentHospital(MockStorage.getHospitalById(authUser.hospitalId) || null);
+      } else {
+        setCurrentHospital(null);
       }
     };
 
@@ -44,32 +66,46 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return () => window.removeEventListener('pulse_storage_updated', handleStorageChange);
   }, []);
 
-  const login = (email: string, explicitRole?: UserRole, targetHospitalId?: string): LoginResult => {
-    const allUsers = MockStorage.getUsers();
-    let foundUser = allUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+  const login = (
+    email: string,
+    passwordOrRole?: string | UserRole,
+    targetHospitalId?: string,
+    explicitRole?: UserRole
+  ): LoginResult => {
+    let password: string | undefined = undefined;
+    let role = explicitRole;
 
-    if (!foundUser && explicitRole) {
-      foundUser = allUsers.find((u) => u.role === explicitRole);
-    }
-
-    if (!foundUser) {
-      return { success: false, error: 'User account not found. Please check your credentials or register.' };
-    }
-
-    // Single-Tenant Website & Portal Authorization Enforcement
-    const isSuperAdmin = foundUser.role === 'super_admin' || foundUser.role === 'super_admin_manager';
-    if (targetHospitalId && !isSuperAdmin) {
-      if (foundUser.hospitalId && foundUser.hospitalId !== targetHospitalId) {
-        const assignedHosp = MockStorage.getHospitalById(foundUser.hospitalId);
-        const targetHosp = MockStorage.getHospitalById(targetHospitalId);
-        return {
-          success: false,
-          error: `Access Denied: Your account credentials (${assignedHosp?.name || foundUser.hospitalId}) are valid only inside your assigned hospital website. You are not authorized to log into ${targetHosp?.name || 'this facility'}'s website or portal.`,
-        };
+    if (passwordOrRole) {
+      if (KNOWN_ROLES.includes(passwordOrRole as UserRole)) {
+        role = passwordOrRole as UserRole;
+      } else {
+        password = passwordOrRole;
       }
     }
 
-    // Subscription Plan Expiry Lock Check
+    const normalizedEmail = (email || '').trim().toLowerCase();
+
+    // 1. Strict Tenant Scoping: Look up account using resolved hospital context + normalized email
+    const authLookup = MockStorage.findUserForAuth(normalizedEmail, targetHospitalId, password);
+    let foundUser = authLookup.user;
+
+    // Optional demo fallback for role switcher if specific demo user requested
+    if (!foundUser && role && !targetHospitalId) {
+      const allUsers = MockStorage.getUsers();
+      foundUser = allUsers.find((u) => u.role === role) || null;
+    }
+
+    if (!foundUser) {
+      return {
+        success: false,
+        error: authLookup.error || 'Invalid credentials. No account found for this hospital.',
+        multipleAccounts: authLookup.multipleAccounts,
+      };
+    }
+
+    const isSuperAdmin = foundUser.role === 'super_admin' || foundUser.role === 'super_admin_manager';
+
+    // 2. Subscription Plan Expiry Lock Check
     if (!isSuperAdmin && foundUser.hospitalId) {
       const subStatus = MockStorage.checkHospitalSubscriptionStatus(foundUser.hospitalId);
       if (!subStatus.allowed) {
@@ -89,6 +125,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (foundUser.hospitalId) {
       const hosp = MockStorage.getHospitalById(foundUser.hospitalId);
       setCurrentHospital(hosp || null);
+    } else {
+      setCurrentHospital(null);
     }
     return { success: true };
   };
@@ -96,6 +134,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const logout = () => {
     MockStorage.setAuthUser(null);
     setUser(null);
+    setCurrentHospital(null);
+    window.dispatchEvent(new Event('pulse_storage_updated'));
   };
 
   const switchRole = (role: UserRole) => {

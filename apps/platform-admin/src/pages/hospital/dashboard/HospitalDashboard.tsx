@@ -20,7 +20,7 @@ import {
   BedDouble,
   Users,
   Building2,
-  DollarSign,
+  IndianRupee,
   TrendingUp,
   Stethoscope,
 } from 'lucide-react';
@@ -256,9 +256,9 @@ export const HospitalDashboard: React.FC = () => {
         />
         <StatCard
           title="Total Revenue"
-          value={`$${totalRevenue.toLocaleString()}`}
-          subtext={`$${pendingRevenue.toLocaleString()} pending`}
-          icon={<DollarSign className="w-5 h-5 text-emerald-600" />}
+          value={`₹${totalRevenue.toLocaleString('en-IN')}`}
+          subtext={`₹${pendingRevenue.toLocaleString('en-IN')} pending`}
+          icon={<IndianRupee className="w-5 h-5 text-emerald-600" />}
           accentColor="emerald"
           trend={{ value: '84%', direction: 'up', label: 'Collection rate' }}
         />

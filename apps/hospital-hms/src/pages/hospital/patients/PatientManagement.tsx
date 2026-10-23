@@ -73,6 +73,9 @@ export const PatientManagement: React.FC = () => {
 
   useEffect(() => {
     refreshData();
+    MockStorage.syncWithBackend?.().then?.(() => {
+      refreshData();
+    });
     const handleStorageUpdate = () => {
       refreshData();
     };
@@ -168,13 +171,8 @@ export const PatientManagement: React.FC = () => {
       showToast('Patient Record Updated', `${updated.name} profile saved.`);
       setIsEditModalOpen(false);
     } else {
-      const allExisting = MockStorage.getPatients();
-      const existingIds = new Set(allExisting.map((p) => p.id));
-      let nextNum = 1001;
-      while (existingIds.has(`PAT-${nextNum}`)) {
-        nextNum++;
-      }
-      const newPatientId = `PAT-${nextNum}`;
+      const uniqueSuffix = `${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
+      const newPatientId = `PAT-${uniqueSuffix}`;
 
       const newPatient: Patient = {
         id: newPatientId,

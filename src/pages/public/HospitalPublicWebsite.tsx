@@ -21,6 +21,9 @@ import {
   User,
   ChevronLeft,
   ChevronRight,
+  Microscope,
+  Pill,
+  Sparkles,
 } from 'lucide-react';
 import { MockStorage } from '../../services/mockStorage';
 import { HospitalWebsite, WebsiteSection, Doctor, Department } from '../../types';
@@ -160,6 +163,36 @@ const Testimonials3DCarousel: React.FC<{ hospitalId: string; sec: WebsiteSection
   );
 };
 
+const getServiceCardIcon = (iconKey?: string, title?: string, fallbackIndex = 0) => {
+  switch (iconKey) {
+    case 'stethoscope': return Stethoscope;
+    case 'heart-pulse': return HeartPulse;
+    case 'activity': return Activity;
+    case 'microscope': return Microscope;
+    case 'shield-check': return ShieldCheck;
+    case 'sparkles': return Sparkles;
+    case 'pill': return Pill;
+    case 'building': return Building2;
+    case 'users': return Users;
+    case 'award': return Award;
+    case 'video': return Video;
+  }
+
+  // Automatic smart detection when title is replaced with any clinical service
+  const t = (title || '').toLowerCase();
+  if (t.includes('heart') || t.includes('cardio') || t.includes('vascular') || t.includes('pulse')) return HeartPulse;
+  if (t.includes('emergency') || t.includes('trauma') || t.includes('icu') || t.includes('critical') || t.includes('acute')) return Activity;
+  if (t.includes('pathology') || t.includes('lab') || t.includes('diagnostic') || t.includes('mri') || t.includes('scan') || t.includes('x-ray') || t.includes('blood') || t.includes('test')) return Microscope;
+  if (t.includes('pharmacy') || t.includes('medicine') || t.includes('drug') || t.includes('pill') || t.includes('dose')) return Pill;
+  if (t.includes('robotic') || t.includes('surgery') || t.includes('surgical') || t.includes('laser') || t.includes('precision') || t.includes('advanced')) return Sparkles;
+  if (t.includes('prevent') || t.includes('safety') || t.includes('checkup') || t.includes('wellness') || t.includes('care') || t.includes('mother') || t.includes('child')) return ShieldCheck;
+  if (t.includes('consult') || t.includes('doctor') || t.includes('opd') || t.includes('physician') || t.includes('clinic') || t.includes('health')) return Stethoscope;
+
+  // Universal medical icons list - completely suitable for any replaced clinical service
+  const universalIcons = [Activity, Microscope, Sparkles, HeartPulse, ShieldCheck, Stethoscope];
+  return universalIcons[fallbackIndex % universalIcons.length];
+};
+
 export const HospitalPublicWebsite: React.FC<HospitalPublicWebsiteProps> = ({
   hospitalId: propHospitalId,
   customSections,
@@ -253,7 +286,7 @@ export const HospitalPublicWebsite: React.FC<HospitalPublicWebsiteProps> = ({
               </p>
 
               <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
-                <Link to="/login">
+                <Link to={`/login?targetHospital=${hospId}`}>
                   <Button variant="primary" size="lg" className="bg-teal-500 hover:bg-teal-400 text-slate-950 font-extrabold px-8 py-4 rounded-full shadow-xl shadow-teal-500/20 cursor-pointer">
                     Sign In to Portal <ArrowRight className="w-5 h-5 ml-2" />
                   </Button>
@@ -471,17 +504,18 @@ export const HospitalPublicWebsite: React.FC<HospitalPublicWebsiteProps> = ({
                 {Array.from({ length: (sec.settings as any)?.serviceCardCount || 6 }, (_, idx) => {
                   const id = idx + 1;
                   const defaultServices = [
-                    { defaultTitle: 'Emergency Trauma & ICU', defaultDesc: 'Round-the-clock level 1 emergency care and critical ICU beds.', icon: Activity },
-                    { defaultTitle: 'Advanced Pathology & Imaging', defaultDesc: 'High-speed MRI, CT Scans, digital X-Rays and automated lab diagnostics.', icon: Stethoscope },
-                    { defaultTitle: 'Robotic & Minimally Invasive Surgery', defaultDesc: 'Precision surgical procedures with faster recovery times.', icon: Award },
-                    { defaultTitle: 'Cardiovascular Interventions', defaultDesc: 'Cath lab angioplasty, pacemaker installations, and cardiac rehab.', icon: HeartPulse },
-                    { defaultTitle: 'Mother & Child Care (NICU)', defaultDesc: 'Comprehensive maternity suites and neonatal intensive care.', icon: Users },
-                    { defaultTitle: 'Tele-Consultation & Home Visits', defaultDesc: 'Virtual doctor appointments and emergency home care visits.', icon: Video },
+                    { defaultTitle: 'Emergency Trauma & ICU', defaultDesc: 'Round-the-clock level 1 emergency care and critical ICU beds.', defaultIcon: 'activity' },
+                    { defaultTitle: 'Advanced Pathology & Imaging', defaultDesc: 'High-speed MRI, CT Scans, digital X-Rays and automated lab diagnostics.', defaultIcon: 'microscope' },
+                    { defaultTitle: 'Robotic & Minimally Invasive Surgery', defaultDesc: 'Precision surgical procedures with faster recovery times.', defaultIcon: 'sparkles' },
+                    { defaultTitle: 'Cardiovascular Interventions', defaultDesc: 'Cath lab angioplasty, pacemaker installations, and cardiac rehab.', defaultIcon: 'heart-pulse' },
+                    { defaultTitle: 'Mother & Child Care (NICU)', defaultDesc: 'Comprehensive maternity suites and neonatal intensive care.', defaultIcon: 'shield-check' },
+                    { defaultTitle: 'Tele-Consultation & Home Visits', defaultDesc: 'Virtual doctor appointments and emergency home care visits.', defaultIcon: 'stethoscope' },
                   ];
                   const srv = defaultServices[idx % defaultServices.length];
                   const cardTitle = (sec.settings as any)?.[`serviceCard${id}Title`] || srv.defaultTitle;
                   const cardDesc = (sec.settings as any)?.[`serviceCard${id}Desc`] || srv.defaultDesc;
-                  const IconComp = srv.icon;
+                  const cardIcon = (sec.settings as any)?.[`serviceCard${id}Icon`];
+                  const IconComp = getServiceCardIcon(cardIcon, cardTitle, idx);
 
                   return (
                     <div key={id} className="p-6 bg-slate-800/80 rounded-2xl border border-slate-700/80 shadow-md hover:border-teal-400 transition-all">
@@ -750,7 +784,7 @@ export const HospitalPublicWebsite: React.FC<HospitalPublicWebsiteProps> = ({
                       <li><a href="#departments" className="hover:underline text-white/90">Services & Departments</a></li>
                       <li><a href="#doctors" className="hover:underline text-white/90">Medical Specialists</a></li>
                       <li><a href="#contact" className="hover:underline text-white/90">Contact & Operating Hours</a></li>
-                      <li><Link to="/login" className="hover:underline text-white/90">Staff & Patient Login</Link></li>
+                      <li><Link to={`/login?targetHospital=${hospId}`} className="hover:underline text-white/90">Staff & Patient Login</Link></li>
                     </ul>
                   </div>
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Stethoscope,
   Plus,
@@ -31,13 +31,17 @@ import { Select } from '../../../components/ui/Select';
 import { Modal } from '../../../components/ui/Modal';
 import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
 import { SubscriptionUpgradeModal } from '../../../components/common/SubscriptionUpgradeModal';
+import { EmptyState } from '../../../components/ui/EmptyState';
 
 export const DoctorManagement: React.FC = () => {
   const { currentHospital } = useAuth();
   const { showToast } = useNotification();
   const hospId = currentHospital?.id || 'HOSP-001';
 
-  const [doctors, setDoctors] = useState<Doctor[]>(() => MockStorage.getDoctors(hospId));
+  const [doctors, setDoctors] = useState<Doctor[]>(() => {
+    const raw = MockStorage.getDoctors(hospId);
+    return raw.length > 0 ? raw : MockStorage.getDoctors();
+  });
   const departments = MockStorage.getDepartments(hospId);
   const opdRooms = MockStorage.getOPDRooms(hospId);
 
@@ -58,19 +62,34 @@ export const DoctorManagement: React.FC = () => {
     password: '',
     phone: '',
     specialization: '',
-    departmentId: firstDept?.id || 'DEP-105',
+    departmentId: firstDept?.id || '',
     qualifications: '',
-    experienceYears: 10,
-    consultationFee: 150,
-    availableHours: '09:00 AM - 04:00 PM',
+    experienceYears: 0,
+    consultationFee: 0,
+    availableHours: '',
     opdRoomId: defaultOPDRooms[0]?.id || '',
     roomNumber: defaultOPDRooms[0] ? `${defaultOPDRooms[0].name} / ${defaultOPDRooms[0].code}` : '',
-    avatarUrl: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=150&auto=format&fit=crop&q=80',
+    avatarUrl: '',
   });
 
   const refreshData = () => {
-    setDoctors(MockStorage.getDoctors(hospId));
+    const raw = MockStorage.getDoctors(hospId);
+    setDoctors(raw.length > 0 ? raw : MockStorage.getDoctors());
   };
+
+  useEffect(() => {
+    refreshData();
+    MockStorage.syncWithBackend?.().then?.(() => refreshData()).catch?.(() => {});
+    const handleStorageUpdate = () => {
+      refreshData();
+    };
+    window.addEventListener('pulse_storage_updated', handleStorageUpdate);
+    window.addEventListener('storage', handleStorageUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleStorageUpdate);
+      window.removeEventListener('storage', handleStorageUpdate);
+    };
+  }, [hospId]);
 
   const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -85,15 +104,19 @@ export const DoctorManagement: React.FC = () => {
 
   const filtered = doctors.filter((d) => {
     const matchesSearch =
-      d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      d.specialization.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      d.departmentName.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesDept = departmentFilter === 'all' || d.departmentId === departmentFilter;
+      (d.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (d.specialization || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (d.departmentName || (d as any).department || '').toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesDept =
+      departmentFilter === 'all' ||
+      d.departmentId === departmentFilter ||
+      (d as any).department === departmentFilter ||
+      d.departmentName === departmentFilter;
     return matchesSearch && matchesDept;
   });
 
   const handleOpenAdd = () => {
-    const deptId = departments[0]?.id || 'DEP-105';
+    const deptId = departments[0]?.id || '';
     const deptRooms = opdRooms.filter((r) => r.departmentId === deptId);
     setFormData({
       name: '',
@@ -102,33 +125,38 @@ export const DoctorManagement: React.FC = () => {
       phone: '',
       specialization: '',
       departmentId: deptId,
-      qualifications: 'MD (Internal Medicine)',
-      experienceYears: 10,
-      consultationFee: 150,
-      availableHours: '09:00 AM - 04:00 PM',
+      qualifications: '',
+      experienceYears: 0,
+      consultationFee: 0,
+      availableHours: '09:00 AM - 05:00 PM',
       opdRoomId: deptRooms[0]?.id || '',
-      roomNumber: deptRooms[0] ? `${deptRooms[0].name} / ${deptRooms[0].code}` : 'General Medicine OPD / OPD-101',
-      avatarUrl: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=150&auto=format&fit=crop&q=80',
+      roomNumber: deptRooms[0] ? `${deptRooms[0].name} / ${deptRooms[0].code}` : '',
+      avatarUrl: '',
     });
     setIsAddModalOpen(true);
   };
 
   const handleOpenEdit = (doc: Doctor) => {
     setSelectedDoctor(doc);
+    const existingSched = MockStorage.getDoctorScheduleByDoctorId(doc.id, hospId);
+    const resolvedHours =
+      doc.availableHours ||
+      (existingSched ? `${existingSched.consultationStartTime} - ${existingSched.consultationEndTime}` : '09:00 AM - 05:00 PM');
+
     setFormData({
       name: doc.name,
       email: doc.email,
       password: '',
-      phone: doc.phone,
+      phone: doc.phone || '',
       specialization: doc.specialization,
       departmentId: doc.departmentId,
-      qualifications: doc.qualifications,
-      experienceYears: doc.experienceYears,
-      consultationFee: doc.consultationFee,
-      availableHours: doc.availableHours,
+      qualifications: doc.qualifications || '',
+      experienceYears: doc.experienceYears || 0,
+      consultationFee: doc.consultationFee || 0,
+      availableHours: resolvedHours,
       opdRoomId: doc.opdRoomId || '',
-      roomNumber: doc.opdRoomName || doc.roomNumber,
-      avatarUrl: doc.avatarUrl || 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=150&auto=format&fit=crop&q=80',
+      roomNumber: doc.opdRoomName || doc.roomNumber || '',
+      avatarUrl: doc.avatarUrl || '',
     });
     setIsEditModalOpen(true);
   };
@@ -146,19 +174,25 @@ export const DoctorManagement: React.FC = () => {
     const selectedRoom = opdRooms.find((r) => r.id === formData.opdRoomId);
     const opdRoomDisplayName = selectedRoom ? `${selectedRoom.name} / ${selectedRoom.code}` : (formData.roomNumber || 'General OPD');
 
+    const trimmedEmail = (formData.email || '').trim();
+
     if (isEditModalOpen && selectedDoctor) {
       const updated: Doctor = {
         ...selectedDoctor,
         ...formData,
+        email: trimmedEmail,
         departmentName: dept?.name || selectedDoctor.departmentName,
         opdRoomId: selectedRoom?.id || formData.opdRoomId,
         opdRoomName: opdRoomDisplayName,
         roomNumber: opdRoomDisplayName,
+        avatarUrl: formData.avatarUrl || selectedDoctor.avatarUrl || '',
       };
       const res = MockStorage.saveDoctor(updated);
       if (!res.success) {
-        showToast('Subscription Limit Reached', res.message || 'Limit exceeded', 'error');
-        setIsUpgradeModalOpen(true);
+        showToast('Save Failed', res.message || 'Unable to update specialist profile.', 'error');
+        if (res.message?.includes('Subscription Limit')) {
+          setIsUpgradeModalOpen(true);
+        }
         return;
       }
       if (selectedRoom) {
@@ -166,25 +200,57 @@ export const DoctorManagement: React.FC = () => {
         selectedRoom.assignedDoctorName = updated.name;
         MockStorage.saveOPDRoom(selectedRoom);
       }
+
+      if (trimmedEmail) {
+        const existingUsers = MockStorage.getUsers();
+        const existingUser = existingUsers.find(
+          (u) => u.hospitalId === hospId && (u.email || '').trim().toLowerCase() === trimmedEmail.toLowerCase()
+        );
+        const userToSave: User = {
+          id: existingUser?.id || `USR-${Date.now().toString(36).substring(2, 7)}`,
+          name: formData.name,
+          email: trimmedEmail,
+          password: formData.password || existingUser?.password || 'Doctor@123',
+          role: 'doctor',
+          portal: 'hospital',
+          hospitalId: hospId,
+          hospitalName: currentHospital?.name || 'Hospital',
+          department: dept?.name || '',
+          phone: formData.phone || '',
+          status: 'active',
+          createdAt: existingUser?.createdAt || new Date().toISOString(),
+        };
+        const userRes = MockStorage.saveUser(userToSave);
+        if (!userRes.success) {
+          showToast('Duplicate Account', userRes.error || 'A user with this email already exists in this hospital.', 'error');
+          return;
+        }
+      }
+
       showToast('Doctor Profile Saved', `${updated.name} profile updated.`);
       setIsEditModalOpen(false);
     } else {
       const newDoc: Doctor = {
-        id: `DOC-${100 + doctors.length + 1}`,
+        id: `DOC-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
         hospitalId: hospId,
         ...formData,
-        departmentName: dept?.name || 'General OPD',
+        email: trimmedEmail,
+        departmentName: dept?.name || '',
         opdRoomId: selectedRoom?.id || formData.opdRoomId,
         opdRoomName: opdRoomDisplayName,
         roomNumber: opdRoomDisplayName,
         status: 'active',
         availableDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-        avatarUrl: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=150&auto=format&fit=crop&q=80',
+        avatarUrl: formData.avatarUrl || '',
       };
       const res = MockStorage.saveDoctor(newDoc);
       if (!res.success) {
-        showToast('Subscription Limit Reached', res.message || 'Doctor quota limit exceeded for your subscription plan.', 'error');
-        setIsUpgradeModalOpen(true);
+        if (res.message?.includes('Subscription Limit')) {
+          showToast('Subscription Limit Reached', res.message, 'error');
+          setIsUpgradeModalOpen(true);
+        } else {
+          showToast('Onboarding Blocked', res.message || 'Cannot onboard specialist with this email.', 'error');
+        }
         return;
       }
 
@@ -195,22 +261,28 @@ export const DoctorManagement: React.FC = () => {
       }
 
       // Create User login credentials when Hospital Admin explicitly enters login details
-      if (formData.email) {
+      if (trimmedEmail) {
         const newUser: User = {
           id: `USR-${Date.now().toString(36).substring(2, 7)}`,
           name: formData.name,
-          email: formData.email,
-          password: formData.password || 'Doctor@1234',
+          email: trimmedEmail,
+          password: formData.password || 'Doctor@123',
           role: 'doctor',
           portal: 'hospital',
           hospitalId: hospId,
           hospitalName: currentHospital?.name || 'Hospital',
-          department: dept?.name || 'General OPD',
-          phone: formData.phone,
+          department: dept?.name || '',
+          phone: formData.phone || '',
           status: 'active',
           createdAt: new Date().toISOString(),
         };
-        MockStorage.saveUser(newUser);
+        const userRes = MockStorage.saveUser(newUser);
+        if (!userRes.success) {
+          // Revert doctor creation if user account creation failed due to duplicate email
+          MockStorage.deleteDoctor(newDoc.id);
+          showToast('Account Collision', userRes.error || 'A user with this email already exists in this hospital.', 'error');
+          return;
+        }
       }
 
       showToast('Specialist Onboarded', `${newDoc.name} added to medical roster with login credentials.`);
@@ -288,85 +360,117 @@ export const DoctorManagement: React.FC = () => {
         </div>
 
         {/* Doctor Cards Grid */}
-        <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filtered.map((doc) => (
-            <div
-              key={doc.id}
-              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
-            >
-              <div>
-                <div className="flex items-start gap-3.5 mb-4">
-                  <img
-                    src={doc.avatarUrl || 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=150&auto=format&fit=crop&q=80'}
-                    alt={doc.name}
-                    className="w-14 h-14 rounded-2xl object-cover border border-slate-200 shrink-0"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-bold text-sm text-slate-900 leading-snug truncate">{doc.name}</h3>
-                      {doc.status === 'active' ? (
-                        <Badge variant="success" size="sm" dot>Available</Badge>
-                      ) : (
-                        <Badge variant="warning" size="sm" dot>On Leave</Badge>
-                      )}
+        {filtered.length === 0 ? (
+          <div className="p-8">
+            <EmptyState
+              icon={<Stethoscope className="w-10 h-10 text-indigo-400" />}
+              title="No Medical Specialists Found"
+              description={
+                searchQuery || departmentFilter !== 'all'
+                  ? 'No specialists match your search criteria. Try adjusting your search query or department filter.'
+                  : 'No medical specialists have been onboarded to this hospital roster yet.'
+              }
+              actionText={searchQuery || departmentFilter !== 'all' ? 'Reset Filters' : 'Onboard Specialist'}
+              onAction={
+                searchQuery || departmentFilter !== 'all'
+                  ? () => {
+                      setSearchQuery('');
+                      setDepartmentFilter('all');
+                    }
+                  : handleOpenAdd
+              }
+            />
+          </div>
+        ) : (
+          <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filtered.map((doc) => (
+              <div
+                key={doc.id}
+                className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-start gap-3.5 mb-4">
+                    {doc.avatarUrl ? (
+                      <img
+                        src={doc.avatarUrl}
+                        alt={doc.name}
+                        className="w-14 h-14 rounded-2xl object-cover border border-slate-200 shrink-0"
+                      />
+                    ) : (
+                      <div className="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-base shrink-0">
+                        {doc.name ? doc.name.replace(/^Dr\.\s*/i, '').charAt(0) : <Stethoscope className="w-6 h-6" />}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-bold text-sm text-slate-900 leading-snug truncate">{doc.name}</h3>
+                        {doc.status === 'active' ? (
+                          <Badge variant="success" size="sm" dot>Available</Badge>
+                        ) : (
+                          <Badge variant="warning" size="sm" dot>On Leave</Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-indigo-600 font-medium truncate mt-0.5">{doc.specialization}</p>
+                      <p className="text-[11px] text-slate-400 truncate">{doc.departmentName || 'General OPD'}</p>
                     </div>
-                    <p className="text-xs text-indigo-600 font-medium truncate mt-0.5">{doc.specialization}</p>
-                    <p className="text-[11px] text-slate-400 truncate">{doc.departmentName}</p>
+                  </div>
+
+                  <div className="space-y-2 text-xs text-slate-600 pt-3 border-t border-slate-100">
+                    <p className="flex items-center gap-2">
+                      <Award className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>
+                        {doc.qualifications || 'Clinical Specialist'}
+                        {doc.experienceYears ? ` (${doc.experienceYears}+ yrs exp)` : ''}
+                      </span>
+                    </p>
+                    <p className="flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>{doc.availableHours || 'Schedule in Clinical Roster'}</span>
+                    </p>
+                    <p className="flex items-center gap-2">
+                      <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>{doc.opdRoomName || doc.roomNumber || 'Chamber Unassigned'}</span>
+                    </p>
+                    <p className="flex items-center gap-2 text-emerald-700 font-semibold">
+                      <span className="font-bold text-sm">₹</span>
+                      <span>Consultation Fee: ₹{doc.consultationFee || 0}</span>
+                    </p>
                   </div>
                 </div>
 
-                <div className="space-y-2 text-xs text-slate-600 pt-3 border-t border-slate-100">
-                  <p className="flex items-center gap-2">
-                    <Award className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span>{doc.qualifications} ({doc.experienceYears}+ yrs exp)</span>
-                  </p>
-                  <p className="flex items-center gap-2">
-                    <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span>{doc.availableHours}</span>
-                  </p>
-                  <p className="flex items-center gap-2">
-                    <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span>{doc.roomNumber}</span>
-                  </p>
-                  <p className="flex items-center gap-2 text-emerald-700 font-semibold">
-                    <span className="font-bold text-sm">₹</span>
-                    <span>Consultation Fee: ₹{doc.consultationFee}</span>
-                  </p>
-                </div>
-              </div>
-
-              <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
-                <Button
-                  variant="outline"
-                  size="xs"
-                  onClick={() => handleToggleStatus(doc)}
-                >
-                  {doc.status === 'active' ? 'Mark On Leave' : 'Set Available'}
-                </Button>
-
-                <div className="flex gap-1.5">
+                <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
                   <Button
                     variant="outline"
                     size="xs"
-                    onClick={() => handleOpenEdit(doc)}
-                    title="Edit Profile"
+                    onClick={() => handleToggleStatus(doc)}
                   >
-                    <Edit className="w-3.5 h-3.5" />
+                    {doc.status === 'active' ? 'Mark On Leave' : 'Set Available'}
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="text-rose-600"
-                    onClick={() => setConfirmDeleteId(doc.id)}
-                    title="Delete Doctor"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
+
+                  <div className="flex gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => handleOpenEdit(doc)}
+                      title="Edit Profile"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="text-rose-600"
+                      onClick={() => setConfirmDeleteId(doc.id)}
+                      title="Delete Doctor"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       {/* Add / Edit Doctor Modal */}
@@ -385,11 +489,17 @@ export const DoctorManagement: React.FC = () => {
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
             <label className="block text-xs font-semibold text-slate-700">Doctor Profile Photo / Avatar</label>
             <div className="flex items-center gap-4">
-              <img
-                src={formData.avatarUrl || 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=150&auto=format&fit=crop&q=80'}
-                alt="Doctor Avatar Preview"
-                className="w-14 h-14 rounded-2xl object-cover border-2 border-indigo-500/40 shadow-xs shrink-0"
-              />
+              {formData.avatarUrl ? (
+                <img
+                  src={formData.avatarUrl}
+                  alt="Doctor Avatar Preview"
+                  className="w-14 h-14 rounded-2xl object-cover border-2 border-indigo-500/40 shadow-xs shrink-0"
+                />
+              ) : (
+                <div className="w-14 h-14 rounded-2xl bg-slate-100 border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400 shrink-0">
+                  <Camera className="w-6 h-6" />
+                </div>
+              )}
               <div className="flex-1 space-y-1.5">
                 <div className="flex items-center gap-2">
                   <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg shadow-xs transition-colors">
@@ -402,7 +512,7 @@ export const DoctorManagement: React.FC = () => {
                 <Input
                   value={formData.avatarUrl}
                   onChange={(e) => setFormData({ ...formData, avatarUrl: e.target.value })}
-                  placeholder="https://images.unsplash.com/photo-..."
+                  placeholder="Image web URL (optional)"
                   className="text-xs"
                 />
               </div>
@@ -414,14 +524,14 @@ export const DoctorManagement: React.FC = () => {
               label="Doctor Full Name *"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              placeholder="Dr. Evelyn Reed, MD"
+              placeholder="e.g. Dr. Robert Miller"
               required
             />
             <Input
               label="Clinical Specialization *"
               value={formData.specialization}
               onChange={(e) => setFormData({ ...formData, specialization: e.target.value })}
-              placeholder="e.g. Senior Interventional Cardiologist"
+              placeholder="e.g. Cardiologist"
               required
             />
           </div>
@@ -505,6 +615,22 @@ export const DoctorManagement: React.FC = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
+              label="Contact Phone"
+              value={formData.phone}
+              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+              placeholder="e.g. +91 98765 43210"
+            />
+            <Input
+              label="Consultation Hours (Clinic Hours)"
+              value={formData.availableHours}
+              onChange={(e) => setFormData({ ...formData, availableHours: e.target.value })}
+              placeholder="e.g. 09:00 AM - 05:00 PM"
+              title="Sets the Clinic Start Time & Clinic End Time for OPD consultation slots."
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
               label="Email Address *"
               type="email"
               value={formData.email}
@@ -517,7 +643,7 @@ export const DoctorManagement: React.FC = () => {
               type="password"
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              placeholder="Default: Doctor@1234"
+              placeholder="Leave blank or enter custom password"
             />
           </div>
 

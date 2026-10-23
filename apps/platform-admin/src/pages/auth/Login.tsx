@@ -28,8 +28,8 @@ export const Login: React.FC = () => {
   const targetHospitalId = searchParams.get('targetHospital') || undefined;
   const targetHospital = targetHospitalId ? MockStorage.getHospitalById(targetHospitalId) : null;
 
-  const [email, setEmail] = useState('admin@apexmedical.org');
-  const [password, setPassword] = useState('ApexAdmin@2026');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -39,20 +39,12 @@ export const Login: React.FC = () => {
     label: string;
     email: string;
     role: UserRole;
-    portal: 'platform' | 'hospital' | 'patient' | 'ambulance_driver';
+    portal: 'platform';
     desc: string;
   }[] = [
-    { label: 'Super Admin HQ', email: 'superadmin@pulsecorehealth.com', role: 'super_admin', portal: 'platform', desc: 'Platform Owner & SaaS Admin' },
-    { label: 'Super Admin Manager', email: 'manager@pulsecorehealth.com', role: 'super_admin_manager', portal: 'platform', desc: 'SaaS Platform Manager' },
-    { label: 'Hospital Admin', email: 'admin@apexmedical.org', role: 'hospital_admin', portal: 'hospital', desc: 'Apex City Medical Director' },
-    { label: 'Medical Doctor', email: 'doctor@apexmedical.org', role: 'doctor', portal: 'hospital', desc: 'Dr. Evelyn Reed (Cardiology)' },
-    { label: 'Receptionist', email: 'receptionist@apexmedical.org', role: 'receptionist', portal: 'hospital', desc: 'Clara Oswald (Front Desk)' },
-    { label: 'Registered Nurse', email: 'nurse@apexmedical.org', role: 'nurse', portal: 'hospital', desc: 'Rachel Adams (ICU)' },
-    { label: 'Accountant', email: 'accountant@apexmedical.org', role: 'accountant', portal: 'hospital', desc: 'Marcus Sterling (Billing)' },
-    { label: 'Pharmacist', email: 'pharmacist@apexmedical.org', role: 'pharmacist', portal: 'hospital', desc: 'Priya Sharma (Dispensary)' },
-    { label: 'Lab Technician', email: 'labtech@apexmedical.org', role: 'lab_technician', portal: 'hospital', desc: 'Liam Zhang (Pathology)' },
-    { label: 'Patient Portal', email: 'patient@apexmedical.org', role: 'patient', portal: 'patient', desc: 'Eleanor Vance (Patient EHR)' },
-    { label: 'Ambulance Driver', email: 'driver@apexmedical.org', role: 'ambulance_driver', portal: 'ambulance_driver', desc: 'Paramedic 911 Unit' },
+    { label: 'Super Admin', email: 'superadmin@pulsecore.io', role: 'super_admin', portal: 'platform', desc: 'Platform Owner & Super Admin' },
+    { label: 'Super Admin Manager', email: 'manager@pulsecore.io', role: 'super_admin_manager', portal: 'platform', desc: 'SaaS Platform Manager' },
+    { label: 'Platform Admin', email: 'admin@pulsecore.com', role: 'super_admin', portal: 'platform', desc: 'Platform Operations Admin' },
   ];
 
   const handleLoginSubmit = (e: React.FormEvent) => {
@@ -66,7 +58,7 @@ export const Login: React.FC = () => {
 
     setIsLoading(true);
     setTimeout(() => {
-      const loginResult = login(email, undefined, targetHospitalId);
+      const loginResult = login(email, password, targetHospitalId);
       setIsLoading(false);
 
       if (loginResult.success) {
@@ -91,25 +83,17 @@ export const Login: React.FC = () => {
 
   const handleQuickLogin = (item: (typeof quickLogins)[0]) => {
     setEmail(item.email);
-    setPassword('ApexAdmin@2026');
+    setPassword('SuperAdmin@2026');
     setError('');
     setIsLoading(true);
     setTimeout(() => {
-      const loginResult = login(item.email, item.role, targetHospitalId);
+      const loginResult = login(item.email, 'SuperAdmin@2026', targetHospitalId);
       setIsLoading(false);
       if (loginResult.success) {
-        showToast(`Signed in as ${item.label}`, `Switched to ${item.portal} workspace`, 'success');
-        if (item.portal === 'platform') {
-          navigate('/platform/dashboard');
-        } else if (item.portal === 'patient') {
-          navigate('/patient/dashboard');
-        } else if (item.portal === 'ambulance_driver') {
-          navigate('/driver/dashboard');
-        } else {
-          navigate('/hospital/dashboard');
-        }
+        showToast(`Signed in as ${item.label}`, 'Platform Admin workspace unlocked', 'success');
+        navigate('/platform/dashboard');
       } else {
-        setError(loginResult.error || 'Access Denied: Account not authorized for this hospital website.');
+        setError(loginResult.error || 'Access Denied: Account not authorized.');
       }
     }, 300);
   };
@@ -161,33 +145,25 @@ export const Login: React.FC = () => {
           <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200/90 p-5 shadow-xl space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-teal-600" /> 1-Click Hospital Demo Profiles
+                <User className="w-3.5 h-3.5 text-teal-600" /> Platform Admin Accounts
               </h2>
-              <span className="text-[10px] bg-teal-50 text-teal-700 border border-teal-200 px-2.5 py-0.5 rounded-full font-bold">9 Roles Available</span>
+              <span className="text-[10px] bg-teal-50 text-teal-700 border border-teal-200 px-2.5 py-0.5 rounded-full font-bold">Platform HQ</span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {quickLogins.map((item) => (
                 <button
-                  key={item.role}
+                  key={item.email}
                   type="button"
                   onClick={() => handleQuickLogin(item)}
-                  className="text-left p-2 rounded-xl bg-slate-50 hover:bg-teal-50/80 border border-slate-200 hover:border-teal-400 transition-all cursor-pointer group shadow-sm"
+                  className="text-left p-2.5 rounded-xl bg-slate-50 hover:bg-teal-50/80 border border-slate-200 hover:border-teal-400 transition-all cursor-pointer group shadow-sm"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-900 group-hover:text-teal-700 transition-colors truncate">
                       {item.label}
                     </span>
-                    <span
-                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                        item.portal === 'patient'
-                          ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
-                          : item.portal === 'ambulance_driver'
-                          ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                          : 'bg-teal-100 text-teal-800 border border-teal-200'
-                      }`}
-                    >
-                      {item.portal === 'patient' ? 'Patient' : item.portal === 'ambulance_driver' ? '911' : 'HMS'}
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-teal-100 text-teal-800 border border-teal-200">
+                      HQ
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-500 truncate mt-0.5">{item.desc}</p>

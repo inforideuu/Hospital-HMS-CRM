@@ -23,6 +23,7 @@ import {
   DollarSign,
   TrendingUp,
   Stethoscope,
+  IndianRupee,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -48,10 +49,17 @@ import { Patient, Appointment, Invoice, Bed, Admission, Doctor, HospitalSubscrip
 import { SubscriptionUpgradeModal } from '../../../components/common/SubscriptionUpgradeModal';
 import { isCapabilityAllowedForTier } from '../../../constants/planCapabilities';
 import { QrCode, Sparkles, CheckCircle } from 'lucide-react';
+import { DoctorDashboard } from '../doctor/DoctorDashboard';
 
 export const HospitalDashboard: React.FC = () => {
-  const { currentHospital } = useAuth();
+  const { user, currentHospital } = useAuth();
   const navigate = useNavigate();
+
+  // If authenticated user is a doctor, show the dedicated Doctor Dashboard
+  if (user?.role === 'doctor') {
+    return <DoctorDashboard />;
+  }
+
   const hospId = currentHospital?.id || 'hosp-1';
 
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -315,9 +323,9 @@ export const HospitalDashboard: React.FC = () => {
         )}
         <StatCard
           title="Total Revenue"
-          value={`$${totalRevenue.toLocaleString()}`}
-          subtext={`$${pendingRevenue.toLocaleString()} pending`}
-          icon={<DollarSign className="w-5 h-5 text-emerald-600" />}
+          value={`₹${totalRevenue.toLocaleString('en-IN')}`}
+          subtext={`₹${pendingRevenue.toLocaleString('en-IN')} pending`}
+          icon={<IndianRupee className="w-5 h-5 text-emerald-600" />}
           accentColor="emerald"
           trend={{ value: '84%', direction: 'up', label: 'Collection rate' }}
         />

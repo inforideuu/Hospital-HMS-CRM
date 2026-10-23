@@ -59,13 +59,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const hospId = user?.hospitalId || currentHospital?.id;
   const patientCount = hospId ? MockStorage.getPatients(hospId).length : MockStorage.getPatients().length;
 
+  const activeTicketCount = MockStorage.getSupportTickets().filter(
+    (t) => t.status === 'open' || t.status === 'in_progress'
+  ).length;
+
   const platformNavItems: NavItem[] = [
     { label: 'Overview', path: '/platform/dashboard', icon: <LayoutDashboard className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Hospital Management', path: '/platform/hospitals', icon: <Building2 className="w-4 h-4" />, badge: String(MockStorage.getHospitals().length), roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Subscriptions & Plans', path: '/platform/subscriptions', icon: <CreditCard className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Users & Access', path: '/platform/users', icon: <Users className="w-4 h-4" />, roles: ['super_admin'] },
     { label: 'Hospital Website Builder', path: '/platform/websites', icon: <Globe className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
-    { label: 'Support Center', path: '/platform/support', icon: <HelpCircle className="w-4 h-4" />, badge: '3', roles: ['super_admin', 'super_admin_manager'] },
+    { label: 'Support Center', path: '/platform/support', icon: <HelpCircle className="w-4 h-4" />, badge: activeTicketCount > 0 ? String(activeTicketCount) : undefined, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Reports & Analytics', path: '/platform/reports', icon: <BarChart3 className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Platform Settings', path: '/platform/settings', icon: <Settings className="w-4 h-4" />, roles: ['super_admin'] },
   ];

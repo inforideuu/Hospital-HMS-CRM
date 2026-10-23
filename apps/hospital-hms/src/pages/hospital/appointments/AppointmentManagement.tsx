@@ -56,13 +56,15 @@ export const AppointmentManagement: React.FC = () => {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
 
+  const todayActual = new Date().toISOString().split('T')[0];
+
   // Form State
   const [formData, setFormData] = useState({
-    patientId: patients[0]?.id || 'PAT-1001',
-    doctorId: doctors[0]?.id || 'DOC-101',
-    departmentId: departments[0]?.id || 'DEP-101',
-    appointmentDate: '2026-09-24',
-    appointmentTime: '11:00 AM',
+    patientId: patients[0]?.id || '',
+    doctorId: doctors[0]?.id || '',
+    departmentId: departments[0]?.id || '',
+    appointmentDate: todayActual,
+    appointmentTime: '10:00 AM',
     type: 'Consultation' as AppointmentType,
     reason: '',
     notes: '',
@@ -84,7 +86,7 @@ export const AppointmentManagement: React.FC = () => {
 
     let matchesTab = true;
     if (activeTab === 'today') {
-      matchesTab = a.appointmentDate === '2026-09-24';
+      matchesTab = a.appointmentDate === todayActual;
     } else if (activeTab === 'confirmed') {
       matchesTab = a.status === 'Confirmed' || a.status === 'Checked In';
     } else if (activeTab === 'completed') {
@@ -102,7 +104,7 @@ export const AppointmentManagement: React.FC = () => {
       patientId: patients[0]?.id || '',
       doctorId: doctors[0]?.id || '',
       departmentId: departments[0]?.id || '',
-      appointmentDate: '2026-09-24',
+      appointmentDate: todayActual,
       appointmentTime: '10:00 AM',
       type: 'Consultation',
       reason: 'General Medical Examination',
@@ -124,7 +126,7 @@ export const AppointmentManagement: React.FC = () => {
     }
 
     const newApt: Appointment = {
-      id: `APT-2026-${Math.floor(10 + Math.random() * 90)}`,
+      id: `APT-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
       hospitalId: hospId,
       patientId: pat.id,
       patientName: pat.name,
@@ -134,8 +136,8 @@ export const AppointmentManagement: React.FC = () => {
       doctorId: doc.id,
       doctorName: doc.name,
       doctorSpecialization: doc.specialization,
-      departmentId: dep?.id || 'DEP-101',
-      departmentName: dep?.name || 'General OPD',
+      departmentId: dep?.id || '',
+      departmentName: dep?.name || 'General',
       appointmentDate: formData.appointmentDate,
       appointmentTime: formData.appointmentTime,
       type: formData.type,
@@ -193,7 +195,7 @@ export const AppointmentManagement: React.FC = () => {
           <Tabs
             tabs={[
               { id: 'all', label: 'All Appointments', count: appointments.length },
-              { id: 'today', label: "Today's Schedule", count: appointments.filter((a) => a.appointmentDate === '2026-09-24').length },
+              { id: 'today', label: "Today's Schedule", count: appointments.filter((a) => a.appointmentDate === todayActual).length },
               { id: 'confirmed', label: 'Confirmed / Checked In', count: appointments.filter((a) => a.status === 'Confirmed' || a.status === 'Checked In').length },
               { id: 'completed', label: 'Completed', count: appointments.filter((a) => a.status === 'Completed').length },
             ]}

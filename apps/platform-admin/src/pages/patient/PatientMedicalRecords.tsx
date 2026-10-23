@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   FileText,
   Activity,
@@ -18,35 +18,55 @@ import { Badge } from '../../components/ui/Badge';
 
 export const PatientMedicalRecords: React.FC = () => {
   const { user } = useAuth();
-  const patientId = user?.patientId || 'PAT-1001';
+  const patientId = user?.patientId || '';
 
   const patient = MockStorage.getPatientById(patientId);
   const admissions = MockStorage.getAdmissions(undefined, patientId);
   const appointments = MockStorage.getAppointments(undefined, patientId);
 
-  const clinicalTimeline = [
-    {
-      date: '2026-09-24',
-      type: 'OPD Consultation',
-      doctor: 'Dr. Evelyn Reed, MD',
-      specialty: 'Cardiology',
-      summary: 'Follow-up Holter monitor review. Blood pressure stable at 128/84. Continued Atorvastatin & Metoprolol.',
-    },
-    {
-      date: '2026-09-22',
-      type: 'Inpatient Emergency Admission',
-      doctor: 'Dr. Evelyn Reed, MD',
-      specialty: 'Cardiology & ICU',
-      summary: 'Emergency intake for Acute Coronary telemetry monitoring in ICU-Bed-01. IV Heparin infused. Troponin-I returned negative at 0.012 ng/mL.',
-    },
-    {
-      date: '2024-03-12',
-      type: 'Initial Hospital Registration',
-      doctor: 'Dr. Laura Chen, MD',
-      specialty: 'Internal Medicine',
-      summary: 'Comprehensive health intake. Established baseline ECG, vitals, and declared drug allergies (Penicillin, Sulfa).',
-    },
-  ];
+  const clinicalTimeline = useMemo(() => {
+    const list: Array<{
+      date: string;
+      type: string;
+      doctor: string;
+      specialty: string;
+      summary: string;
+    }> = [];
+
+    appointments.forEach((apt) => {
+      list.push({
+        date: apt.appointmentDate,
+        type: `OPD Consultation (${apt.status})`,
+        doctor: apt.doctorName || 'Attending Specialist',
+        specialty: apt.doctorSpecialization || apt.departmentName || 'General OPD',
+        summary: apt.reason
+          ? `Visit Reason: ${apt.reason}.${apt.notes ? ` Clinical Notes: ${apt.notes}` : ''}`
+          : 'Consultation session scheduled.',
+      });
+    });
+
+    admissions.forEach((adm) => {
+      list.push({
+        date: adm.admissionDate,
+        type: `Inpatient Admission (${adm.status})`,
+        doctor: adm.doctorName || 'Attending Physician',
+        specialty: (adm as any).department || adm.departmentName || 'Inpatient Care',
+        summary: `Admitted to ${(adm as any).wardName || adm.wardType || 'Ward'} (Bed ${adm.bedNumber || 'N/A'}). Diagnosis: ${(adm as any).diagnosis || adm.reason || 'Clinical evaluation'}.`,
+      });
+    });
+
+    if (patient?.registeredDate) {
+      list.push({
+        date: patient.registeredDate,
+        type: 'Hospital Registration',
+        doctor: 'Hospital Registrar',
+        specialty: 'Patient Administration',
+        summary: `Patient record registered in Electronic Medical Records. Declared blood group: ${patient.bloodGroup || 'N/A'}.`,
+      });
+    }
+
+    return list.sort((a, b) => b.date.localeCompare(a.date));
+  }, [appointments, admissions, patient]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">

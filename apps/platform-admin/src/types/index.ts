@@ -1,6 +1,8 @@
 export type UserRole =
   | 'super_admin'
   | 'super_admin_manager'
+  | 'superadmin_manager'
+  | 'sales_executive'
   | 'hospital_admin'
   | 'doctor'
   | 'receptionist'
@@ -247,6 +249,10 @@ export interface Doctor {
   availableHours: string;
   avatarUrl?: string;
   roomNumber: string;
+  opdRoomId?: string;
+  opdRoomName?: string;
+  availabilityStatus?: string;
+  department?: string;
 }
 
 export interface Staff {

@@ -46,6 +46,182 @@ import { HospitalPublicWebsite } from '../../public/HospitalPublicWebsite';
 import { ErrorBoundary } from '../../../components/common/ErrorBoundary';
 import { compressImage } from '../../../utils/imageCompressor';
 
+interface MediaUploadFieldProps {
+  label: string;
+  value: string;
+  onChange: (val: string) => void;
+  mediaType?: 'image' | 'video';
+  placeholder?: string;
+  helperText?: string;
+  presets?: { name: string; url: string }[];
+}
+
+const MediaUploadField: React.FC<MediaUploadFieldProps> = ({
+  label,
+  value,
+  onChange,
+  mediaType = 'image',
+  placeholder,
+  helperText,
+  presets,
+}) => {
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [showUrlInput, setShowUrlInput] = useState(false);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (mediaType === 'video') {
+      if (file.size > 25 * 1024 * 1024) {
+        alert('Video file exceeds 25MB limit. Please upload a smaller .mp4 or .webm video.');
+        return;
+      }
+      setIsProcessing(true);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        onChange(event.target?.result as string);
+        setIsProcessing(false);
+      };
+      reader.onerror = () => {
+        alert('Failed to read video file.');
+        setIsProcessing(false);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      try {
+        setIsProcessing(true);
+        const compressed = await compressImage(file, 1200, 1200, 0.85);
+        onChange(compressed);
+      } catch (err) {
+        alert('Failed to process image file.');
+      } finally {
+        setIsProcessing(false);
+      }
+    }
+  };
+
+  return (
+    <div className="space-y-2 p-3 rounded-xl bg-slate-950 border border-slate-800">
+      <div className="flex items-center justify-between">
+        <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wide">
+          <ImageIcon className="w-3.5 h-3.5 text-teal-400" />
+          {label}
+        </label>
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="text-[10px] text-rose-400 hover:text-rose-300 font-bold flex items-center gap-1 cursor-pointer"
+            title="Remove media"
+          >
+            <Trash2 className="w-3 h-3" /> Remove
+          </button>
+        )}
+      </div>
+
+      {/* Media Preview if available */}
+      {value && (
+        <div className="relative rounded-lg overflow-hidden border border-slate-700/80 bg-slate-900 shadow-inner">
+          {mediaType === 'video' ? (
+            <video
+              src={value}
+              className="w-full h-28 object-cover rounded-lg"
+              controls
+              muted
+            />
+          ) : (
+            <div className="flex items-center gap-2.5 p-2">
+              <img
+                src={value}
+                alt="Uploaded media preview"
+                className="w-16 h-12 rounded-lg object-cover border border-slate-700 bg-slate-950 shrink-0"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src =
+                    'https://images.unsplash.com/photo-1586773860418-d37222d8fce3?w=800&auto=format&fit=crop&q=80';
+                }}
+              />
+              <div className="min-w-0 flex-1">
+                <span className="text-[10px] text-teal-400 font-semibold block">Media Ready</span>
+                <p className="text-[9px] text-slate-400 truncate font-mono">
+                  {value.startsWith('data:') ? 'Uploaded File (Base64 Data)' : value}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Upload File Button */}
+      <div>
+        <label className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-teal-500/50 bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 font-semibold cursor-pointer transition-all text-xs shadow-xs">
+          <Upload className="w-4 h-4 text-teal-400 shrink-0" />
+          <span>
+            {isProcessing
+              ? 'Compressing & uploading...'
+              : value
+              ? `Replace ${mediaType === 'video' ? 'Video' : 'Image'}`
+              : `Upload ${mediaType === 'video' ? 'Video File (.mp4, .webm)' : 'Image File'}`}
+          </span>
+          <input
+            type="file"
+            accept={mediaType === 'video' ? 'video/mp4,video/webm,video/ogg' : 'image/*'}
+            onChange={handleFileUpload}
+            disabled={isProcessing}
+            className="hidden"
+          />
+        </label>
+      </div>
+
+      {/* Or Paste URL Option */}
+      <div className="flex items-center justify-between pt-1">
+        <button
+          type="button"
+          onClick={() => setShowUrlInput(!showUrlInput)}
+          className="text-[10px] text-slate-400 hover:text-teal-400 flex items-center gap-1 cursor-pointer transition-colors"
+        >
+          <ExternalLink className="w-3 h-3" />
+          {showUrlInput ? 'Hide URL field' : 'Or paste web URL'}
+        </button>
+        {helperText && <span className="text-[9px] text-slate-500">{helperText}</span>}
+      </div>
+
+      {showUrlInput && (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder || (mediaType === 'video' ? 'https://.../video.mp4' : 'https://.../photo.jpg')}
+          className="w-full bg-slate-900 border border-slate-800 px-2.5 py-1.5 rounded text-white text-xs font-mono focus:ring-1 focus:ring-teal-500 focus:outline-none"
+        />
+      )}
+
+      {/* Presets */}
+      {presets && presets.length > 0 && (
+        <div className="pt-1.5 border-t border-slate-900">
+          <span className="text-[9px] text-slate-500 uppercase font-mono block mb-1">Quick Presets:</span>
+          <div className="flex flex-wrap gap-1">
+            {presets.map((preset, pIdx) => (
+              <button
+                key={pIdx}
+                type="button"
+                onClick={() => onChange(preset.url)}
+                className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                  value === preset.url
+                    ? 'bg-teal-900/60 text-teal-300 border-teal-500 font-bold'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'
+                }`}
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const WebsiteBuilder: React.FC = () => {
   const { hospitalId } = useParams<{ hospitalId: string }>();
   const navigate = useNavigate();
@@ -150,6 +326,106 @@ export const WebsiteBuilder: React.FC = () => {
       sections.map((s) =>
         s.id === activeSectionId ? { ...s, settings: { ...s.settings, [key]: val } } : s
       )
+    );
+  };
+
+  const deleteServiceCard = (cardId: number) => {
+    if (!activeSection) return;
+    const currentCount = (activeSection.settings as any)?.serviceCardCount || 6;
+    if (currentCount <= 1) {
+      updateActiveSectionSettings('serviceCard1Title', '');
+      updateActiveSectionSettings('serviceCard1Desc', '');
+      return;
+    }
+
+    const defaultServices = [
+      { title: 'Emergency Trauma & ICU', desc: 'Round-the-clock level 1 emergency care and critical ICU beds.' },
+      { title: 'Advanced Pathology & Imaging', desc: 'High-speed MRI, CT Scans, digital X-Rays and automated lab diagnostics.' },
+      { title: 'Robotic & Minimally Invasive Surgery', desc: 'Precision surgical procedures with faster recovery times.' },
+      { title: 'Cardiovascular Interventions', desc: 'Cath lab angioplasty, pacemaker installations, and cardiac rehab.' },
+      { title: 'Mother & Child Care (NICU)', desc: 'Comprehensive maternity suites and neonatal intensive care.' },
+      { title: 'Tele-Consultation & Home Visits', desc: 'Virtual doctor appointments and emergency home care visits.' },
+    ];
+
+    const currentSettings = { ...(activeSection.settings || {}) };
+    for (let i = cardId; i < currentCount; i++) {
+      const nextId = i + 1;
+      const nextTitle =
+        currentSettings[`serviceCard${nextId}Title`] !== undefined
+          ? currentSettings[`serviceCard${nextId}Title`]
+          : defaultServices[(nextId - 1) % defaultServices.length]?.title || '';
+      const nextDesc =
+        currentSettings[`serviceCard${nextId}Desc`] !== undefined
+          ? currentSettings[`serviceCard${nextId}Desc`]
+          : defaultServices[(nextId - 1) % defaultServices.length]?.desc || '';
+
+      currentSettings[`serviceCard${i}Title`] = nextTitle;
+      currentSettings[`serviceCard${i}Desc`] = nextDesc;
+      const nextIcon = currentSettings[`serviceCard${nextId}Icon`];
+      if (nextIcon !== undefined) {
+        currentSettings[`serviceCard${i}Icon`] = nextIcon;
+      } else {
+        delete currentSettings[`serviceCard${i}Icon`];
+      }
+    }
+
+    delete currentSettings[`serviceCard${currentCount}Title`];
+    delete currentSettings[`serviceCard${currentCount}Desc`];
+    delete currentSettings[`serviceCard${currentCount}Icon`];
+    currentSettings.serviceCardCount = currentCount - 1;
+
+    setSections(
+      sections.map((s) => (s.id === activeSection.id ? { ...s, settings: currentSettings } : s))
+    );
+  };
+
+  const deleteDeptCard = (cardId: number) => {
+    if (!activeSection) return;
+    const currentCount = (activeSection.settings as any)?.deptCardCount || 6;
+    if (currentCount <= 1) {
+      updateActiveSectionSettings('deptCard1Title', '');
+      updateActiveSectionSettings('deptCard1Desc', '');
+      updateActiveSectionSettings('deptCard1Img', '');
+      return;
+    }
+
+    const defaults = [
+      { title: 'Cardiology & Cardiovascular Sciences', desc: 'Comprehensive non-invasive & catheterization labs for acute heart care.', img: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=600&auto=format&fit=crop&q=80' },
+      { title: 'Neurology & Neurosurgery', desc: 'Advanced brain, spinal cord, stroke rehabilitation, and neuro ICU units.', img: 'https://images.unsplash.com/photo-1586773860418-d37222d8fce3?w=600&auto=format&fit=crop&q=80' },
+      { title: 'Pediatric & Neonatal Care', desc: 'Dedicated neonatal intensive care (NICU) and pediatric emergency care.', img: 'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=600&auto=format&fit=crop&q=80' },
+      { title: 'Orthopedics & Joint Reconstruction', desc: 'Arthroscopic surgery, joint replacements, and trauma reconstruction.', img: 'https://images.unsplash.com/photo-1516549655169-df83a0774514?w=600&auto=format&fit=crop&q=80' },
+      { title: 'General Internal Medicine & OPD', desc: 'Preventive health checkups, chronic disease management, and outpatient clinics.', img: 'https://images.unsplash.com/photo-1538108149393-fbbd81895907?w=600&auto=format&fit=crop&q=80' },
+      { title: 'Emergency & Trauma Bay', desc: '24/7 Level-1 trauma response, resuscitations, and stroke code activations.', img: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=600&auto=format&fit=crop&q=80' },
+    ];
+
+    const currentSettings = { ...(activeSection.settings || {}) };
+    for (let i = cardId; i < currentCount; i++) {
+      const nextId = i + 1;
+      const nextTitle =
+        currentSettings[`deptCard${nextId}Title`] !== undefined
+          ? currentSettings[`deptCard${nextId}Title`]
+          : defaults[(nextId - 1) % defaults.length]?.title || '';
+      const nextDesc =
+        currentSettings[`deptCard${nextId}Desc`] !== undefined
+          ? currentSettings[`deptCard${nextId}Desc`]
+          : defaults[(nextId - 1) % defaults.length]?.desc || '';
+      const nextImg =
+        currentSettings[`deptCard${nextId}Img`] !== undefined
+          ? currentSettings[`deptCard${nextId}Img`]
+          : defaults[(nextId - 1) % defaults.length]?.img || '';
+
+      currentSettings[`deptCard${i}Title`] = nextTitle;
+      currentSettings[`deptCard${i}Desc`] = nextDesc;
+      currentSettings[`deptCard${i}Img`] = nextImg;
+    }
+
+    delete currentSettings[`deptCard${currentCount}Title`];
+    delete currentSettings[`deptCard${currentCount}Desc`];
+    delete currentSettings[`deptCard${currentCount}Img`];
+    currentSettings.deptCardCount = currentCount - 1;
+
+    setSections(
+      sections.map((s) => (s.id === activeSection.id ? { ...s, settings: currentSettings } : s))
     );
   };
 
@@ -706,7 +982,7 @@ export const WebsiteBuilder: React.FC = () => {
                     Hero Background Media
                   </label>
                   <div>
-                    <label className="block text-slate-400 font-semibold mb-1">Media Type</label>
+                    <label className="block text-slate-400 font-semibold mb-1 text-xs">Media Type</label>
                     <select
                       value={activeSection.settings?.heroBgType || 'image'}
                       onChange={(e) =>
@@ -718,25 +994,35 @@ export const WebsiteBuilder: React.FC = () => {
                       <option value="video">🎥 Background Video (.mp4)</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-slate-400 font-semibold mb-1">
-                      {activeSection.settings?.heroBgType === 'video' ? 'Background Video URL (.mp4)' : 'Background Image URL'}
-                    </label>
-                    <input
-                      type="text"
-                      value={activeSection.settings?.heroBgUrl || activeSection.imageUrl || ''}
-                      onChange={(e) => {
-                        updateActiveSectionSettings('heroBgUrl', e.target.value);
-                        updateActiveSectionContent('imageUrl', e.target.value);
-                      }}
-                      placeholder={
-                        activeSection.settings?.heroBgType === 'video'
-                          ? 'https://example.com/hospital-intro.mp4'
-                          : '/hero_bg_banner_1790314222005.jpg'
-                      }
-                      className="w-full bg-slate-950 border border-slate-800 px-3 py-1.5 rounded text-white text-xs font-mono focus:ring-1 focus:ring-teal-500"
-                    />
-                  </div>
+
+                  <MediaUploadField
+                    label={activeSection.settings?.heroBgType === 'video' ? 'Upload Background Video' : 'Upload Background Image'}
+                    mediaType={activeSection.settings?.heroBgType === 'video' ? 'video' : 'image'}
+                    value={activeSection.settings?.heroBgUrl || activeSection.imageUrl || ''}
+                    onChange={(val) => {
+                      updateActiveSectionSettings('heroBgUrl', val);
+                      updateActiveSectionContent('imageUrl', val);
+                    }}
+                    placeholder={
+                      activeSection.settings?.heroBgType === 'video'
+                        ? 'https://example.com/hospital-intro.mp4'
+                        : '/light_hero_bg_1790313418511.jpg'
+                    }
+                    helperText={
+                      activeSection.settings?.heroBgType === 'video'
+                        ? 'Supports MP4, WebM (Max 25MB)'
+                        : 'Auto-compressed JPG, PNG, WebP'
+                    }
+                    presets={
+                      activeSection.settings?.heroBgType === 'video'
+                        ? undefined
+                        : [
+                            { name: 'Hospital Exterior', url: '/light_hero_bg_1790313418511.jpg' },
+                            { name: 'Modern ICU', url: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=1200&auto=format&fit=crop&q=80' },
+                            { name: 'Surgery Suite', url: 'https://images.unsplash.com/photo-1586773860418-d37222d8fce3?w=1200&auto=format&fit=crop&q=80' },
+                          ]
+                    }
+                  />
                 </div>
               )}
 
@@ -895,21 +1181,34 @@ export const WebsiteBuilder: React.FC = () => {
                       className="w-full bg-slate-950 border border-slate-800 px-3 py-1.5 rounded text-white text-xs uppercase tracking-widest focus:ring-1 focus:ring-teal-500"
                     />
                   </div>
-                  <div>
-                    <label className="block text-slate-400 font-semibold mb-1">Location Map Image URL</label>
-                    <input
-                      type="text"
-                      placeholder="https://images.unsplash.com/photo-1526778548025-fa2f459cd5c1?w=300&auto=format&fit=crop&q=80"
-                      value={(activeSection.settings as any)?.mapImg || ''}
-                      onChange={(e) => updateActiveSectionSettings('mapImg', e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 px-3 py-1.5 rounded text-white text-xs font-mono focus:ring-1 focus:ring-teal-500"
-                    />
-                  </div>
+                  <MediaUploadField
+                    label="Hospital Location Map / Campus Photo"
+                    value={(activeSection.settings as any)?.mapImg || ''}
+                    onChange={(val) => updateActiveSectionSettings('mapImg', val)}
+                    placeholder="https://images.unsplash.com/photo-1526778548025-fa2f459cd5c1?w=300&auto=format&fit=crop&q=80"
+                    presets={[
+                      { name: 'City Map View', url: 'https://images.unsplash.com/photo-1526778548025-fa2f459cd5c1?w=300&auto=format&fit=crop&q=80' },
+                      { name: 'Campus Aerial', url: 'https://images.unsplash.com/photo-1586773860418-d37222d8fce3?w=300&auto=format&fit=crop&q=80' },
+                    ]}
+                  />
                 </div>
               )}
 
               {activeSection.sectionType === 'about' && (
                 <div className="space-y-3 p-3 rounded-xl bg-slate-900 border border-slate-800">
+                  <MediaUploadField
+                    label="About Hospital Showcase Photo"
+                    value={activeSection.imageUrl || ''}
+                    onChange={(val) => updateActiveSectionContent('imageUrl', val)}
+                    placeholder="/card_hospital_hms_1790313910509.jpg"
+                    helperText="Displayed prominently next to About overview"
+                    presets={[
+                      { name: 'Campus Facility', url: '/card_hospital_hms_1790313910509.jpg' },
+                      { name: 'Medical Center', url: 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?w=800&auto=format&fit=crop&q=80' },
+                      { name: 'Inpatient Hospital', url: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=800&auto=format&fit=crop&q=80' },
+                    ]}
+                  />
+
                   <label className="block text-teal-400 font-bold text-[11px] uppercase tracking-wider">
                     About Us Statistics Counters
                   </label>
@@ -990,9 +1289,9 @@ export const WebsiteBuilder: React.FC = () => {
                         const current = (activeSection.settings as any)?.serviceCardCount || 6;
                         updateActiveSectionSettings('serviceCardCount', current + 1);
                       }}
-                      className="px-2 py-0.5 rounded bg-teal-600 hover:bg-teal-500 text-white font-bold text-[10px] cursor-pointer"
+                      className="px-2 py-0.5 rounded bg-teal-600 hover:bg-teal-500 text-white font-bold text-[10px] cursor-pointer flex items-center gap-1"
                     >
-                      + Add Card
+                      <Plus className="w-3 h-3" /> Add Card
                     </button>
                   </div>
                   <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
@@ -1011,18 +1310,14 @@ export const WebsiteBuilder: React.FC = () => {
                         <div key={id} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1.5">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-bold text-teal-400 block uppercase">Card {id}</span>
-                            {id > 6 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  updateActiveSectionSettings(`serviceCard${id}Title`, '');
-                                  updateActiveSectionSettings(`serviceCard${id}Desc`, '');
-                                }}
-                                className="text-[10px] text-rose-400 hover:text-rose-300 font-bold"
-                              >
-                                Clear
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => deleteServiceCard(id)}
+                              className="text-[10px] text-rose-400 hover:text-rose-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                              title={`Delete Service Card ${id}`}
+                            >
+                              <Trash2 className="w-3 h-3" /> Delete
+                            </button>
                           </div>
                           <div>
                             <label className="block text-slate-400 text-[10px]">Title</label>
@@ -1033,6 +1328,25 @@ export const WebsiteBuilder: React.FC = () => {
                               onChange={(e) => updateActiveSectionSettings(`serviceCard${id}Title`, e.target.value)}
                               className="w-full bg-slate-900 border border-slate-800 px-2 py-1 rounded text-white text-xs font-medium"
                             />
+                          </div>
+                          <div>
+                            <label className="block text-slate-400 text-[10px]">Icon</label>
+                            <select
+                              value={(activeSection.settings as any)?.[`serviceCard${id}Icon`] || 'auto'}
+                              onChange={(e) => updateActiveSectionSettings(`serviceCard${id}Icon`, e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-800 px-2 py-1 rounded text-white text-xs focus:ring-1 focus:ring-teal-500 cursor-pointer"
+                            >
+                              <option value="auto">✨ Auto Detect (Suitable for any service replacing here)</option>
+                              <option value="activity">⚡ Activity (Emergency & Intensive Care)</option>
+                              <option value="stethoscope">🩺 Stethoscope (OPD & General Medical)</option>
+                              <option value="heart-pulse">❤️ Heart Pulse (Cardiology & Vitals)</option>
+                              <option value="microscope">🔬 Microscope (Pathology & Diagnostics)</option>
+                              <option value="sparkles">✨ Sparkles (Robotics & Precision Surgery)</option>
+                              <option value="shield-check">🛡️ Shield Check (Quality & Preventive Care)</option>
+                              <option value="pill">💊 Pill (Pharmacy & Therapeutics)</option>
+                              <option value="building">🏥 Building (Hospital Facility)</option>
+                              <option value="users">👥 Care Team & Specialists</option>
+                            </select>
                           </div>
                           <div>
                             <label className="block text-slate-400 text-[10px]">Description</label>
@@ -1124,19 +1438,14 @@ export const WebsiteBuilder: React.FC = () => {
                         <div key={id} className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1.5 relative group">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-bold text-teal-400 uppercase">Department Card {id}</span>
-                            {id > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  updateActiveSectionSettings(`deptCard${id}Title`, '');
-                                  updateActiveSectionSettings(`deptCard${id}Desc`, '');
-                                  updateActiveSectionSettings(`deptCard${id}Img`, '');
-                                }}
-                                className="text-[10px] text-rose-400 hover:text-rose-300 font-bold"
-                              >
-                                Clear
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => deleteDeptCard(id)}
+                              className="text-[10px] text-rose-400 hover:text-rose-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                              title={`Delete Department Card ${id}`}
+                            >
+                              <Trash2 className="w-3 h-3" /> Delete
+                            </button>
                           </div>
                           <div>
                             <label className="block text-slate-400 text-[10px]">Title</label>
@@ -1158,16 +1467,18 @@ export const WebsiteBuilder: React.FC = () => {
                               className="w-full bg-slate-900 border border-slate-800 px-2 py-1 rounded text-white text-xs"
                             />
                           </div>
-                          <div>
-                            <label className="block text-slate-400 text-[10px]">Banner Image URL</label>
-                            <input
-                              type="text"
-                              placeholder={d.img}
-                              value={(activeSection.settings as any)?.[`deptCard${id}Img`] !== undefined ? (activeSection.settings as any)?.[`deptCard${id}Img`] : d.img}
-                              onChange={(e) => updateActiveSectionSettings(`deptCard${id}Img`, e.target.value)}
-                              className="w-full bg-slate-900 border border-slate-800 px-2 py-1 rounded text-white text-xs font-mono"
-                            />
-                          </div>
+                          <MediaUploadField
+                            label="Department Banner Photo"
+                            value={(activeSection.settings as any)?.[`deptCard${id}Img`] !== undefined ? (activeSection.settings as any)?.[`deptCard${id}Img`] : d.img}
+                            onChange={(val) => updateActiveSectionSettings(`deptCard${id}Img`, val)}
+                            placeholder={d.img}
+                            presets={[
+                              { name: 'Cardiology', url: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=600&auto=format&fit=crop&q=80' },
+                              { name: 'Neurology', url: 'https://images.unsplash.com/photo-1586773860418-d37222d8fce3?w=600&auto=format&fit=crop&q=80' },
+                              { name: 'Pediatrics', url: 'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=600&auto=format&fit=crop&q=80' },
+                              { name: 'Orthopedics', url: 'https://images.unsplash.com/photo-1516549655169-df83a0774514?w=600&auto=format&fit=crop&q=80' },
+                            ]}
+                          />
                         </div>
                       );
                     })}
@@ -1253,16 +1564,18 @@ export const WebsiteBuilder: React.FC = () => {
                               className="w-full bg-slate-900 border border-slate-800 px-2 py-1 rounded text-white text-xs font-mono"
                             />
                           </div>
-                          <div>
-                            <label className="block text-slate-400 text-[10px]">Photo / Avatar URL</label>
-                            <input
-                              type="text"
-                              placeholder={item.img}
-                              value={(activeSection.settings as any)?.[`docCard${id}Img`] !== undefined ? (activeSection.settings as any)?.[`docCard${id}Img`] : item.img}
-                              onChange={(e) => updateActiveSectionSettings(`docCard${id}Img`, e.target.value)}
-                              className="w-full bg-slate-900 border border-slate-800 px-2 py-1 rounded text-white text-xs font-mono"
-                            />
-                          </div>
+                          <MediaUploadField
+                            label="Doctor Photo / Avatar"
+                            value={(activeSection.settings as any)?.[`docCard${id}Img`] !== undefined ? (activeSection.settings as any)?.[`docCard${id}Img`] : item.img}
+                            onChange={(val) => updateActiveSectionSettings(`docCard${id}Img`, val)}
+                            placeholder={item.img}
+                            presets={[
+                              { name: 'Dr. Evelyn', url: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=150&auto=format&fit=crop&q=80' },
+                              { name: 'Dr. Shaw', url: 'https://images.unsplash.com/photo-1622253692010-333f2da6031d?w=150&auto=format&fit=crop&q=80' },
+                              { name: 'Dr. Ananya', url: 'https://images.unsplash.com/photo-1594824813566-88855ce78907?w=150&auto=format&fit=crop&q=80' },
+                              { name: 'Dr. Rajesh', url: 'https://images.unsplash.com/photo-1537368910025-700350fe46c7?w=150&auto=format&fit=crop&q=80' },
+                            ]}
+                          />
                         </div>
                       );
                     })}
@@ -1482,54 +1795,19 @@ export const WebsiteBuilder: React.FC = () => {
                               />
                             </div>
 
-                            {/* Branch Image (img) with Preview & Presets */}
-                            <div>
-                              <label className="block text-slate-400 text-[10px] font-semibold mb-1 flex items-center gap-1">
-                                <ImageIcon className="w-3 h-3 text-teal-400" /> Branch Facility Image (img)
-                              </label>
-                              <input
-                                type="text"
-                                placeholder={d.img}
-                                value={curImg}
-                                onChange={(e) => updateActiveSectionSettings(`branchCard${id}Img`, e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-800 px-2.5 py-1.5 rounded text-white text-xs font-mono focus:ring-1 focus:ring-teal-500 focus:outline-none"
-                              />
-
-                              {/* Image Preview & Preset Selector */}
-                              <div className="mt-2 flex items-center gap-3">
-                                {curImg && (
-                                  <img
-                                    src={curImg}
-                                    alt={`Branch ${id}`}
-                                    className="w-16 h-12 object-cover rounded-lg border border-slate-700 shrink-0"
-                                    onError={(e) => {
-                                      (e.target as HTMLImageElement).src =
-                                        'https://images.unsplash.com/photo-1586773860418-d37222d8fce3?w=800&auto=format&fit=crop&q=80';
-                                    }}
-                                  />
-                                )}
-                                <div className="flex-1 space-y-1">
-                                  <span className="text-[9px] text-slate-500 block uppercase font-mono">Photo Presets:</span>
-                                  <div className="flex flex-wrap gap-1">
-                                    {[
-                                      { name: 'Campus 1', url: 'https://images.unsplash.com/photo-1586773860418-d37222d8fce3?w=800&auto=format&fit=crop&q=80' },
-                                      { name: 'Campus 2', url: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=800&auto=format&fit=crop&q=80' },
-                                      { name: 'Campus 3', url: 'https://images.unsplash.com/photo-1516549655169-df83a0774514?w=800&auto=format&fit=crop&q=80' },
-                                      { name: 'Campus 4', url: 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?w=800&auto=format&fit=crop&q=80' },
-                                    ].map((preset, pIdx) => (
-                                      <button
-                                        key={pIdx}
-                                        type="button"
-                                        onClick={() => updateActiveSectionSettings(`branchCard${id}Img`, preset.url)}
-                                        className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-teal-900/60 hover:text-teal-300 text-slate-400 border border-slate-700 transition-colors"
-                                      >
-                                        {preset.name}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
+                            {/* Branch Image with Upload & Presets */}
+                            <MediaUploadField
+                              label={`Branch #${id} Campus Photo`}
+                              value={curImg}
+                              onChange={(val) => updateActiveSectionSettings(`branchCard${id}Img`, val)}
+                              placeholder={d.img}
+                              presets={[
+                                { name: 'Campus 1', url: 'https://images.unsplash.com/photo-1586773860418-d37222d8fce3?w=800&auto=format&fit=crop&q=80' },
+                                { name: 'Campus 2', url: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=800&auto=format&fit=crop&q=80' },
+                                { name: 'Campus 3', url: 'https://images.unsplash.com/photo-1516549655169-df83a0774514?w=800&auto=format&fit=crop&q=80' },
+                                { name: 'Campus 4', url: 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?w=800&auto=format&fit=crop&q=80' },
+                              ]}
+                            />
 
                             {/* Additional info: Phone & Route link */}
                             <div className="grid grid-cols-2 gap-2 pt-1">
@@ -1562,28 +1840,15 @@ export const WebsiteBuilder: React.FC = () => {
                 </div>
               )}
 
-              <div>
-                <label className="block text-slate-400 font-semibold mb-1">Feature / Section Image URL</label>
-                <input
-                  type="text"
+              {!['hero', 'about', 'services', 'departments', 'doctors', 'facilities', 'testimonials', 'branches', 'appointment_cta', 'contact', 'footer'].includes(activeSection.sectionType) && (
+                <MediaUploadField
+                  label={`${activeSection.title || 'Section'} Media / Showcase Image`}
                   value={activeSection.imageUrl || ''}
-                  onChange={(e) => updateActiveSectionContent('imageUrl', e.target.value)}
+                  onChange={(val) => updateActiveSectionContent('imageUrl', val)}
                   placeholder="/light_hero_bg_1790313418511.jpg"
-                  className="w-full bg-slate-900 border border-slate-800 px-3 py-2 rounded text-white text-xs focus:ring-1 focus:ring-teal-500 focus:outline-none font-mono"
+                  helperText="Upload image for this layout section on the live website"
                 />
-              </div>
-
-              <div className="pt-4 border-t border-slate-800">
-                <label className="flex items-center space-x-2 text-slate-300 font-semibold cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={activeSection.isEnabled}
-                    onChange={() => toggleSectionEnabled(activeSection.id)}
-                    className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-slate-700 bg-slate-900"
-                  />
-                  <span>Show Section on Public Website</span>
-                </label>
-              </div>
+              )}
             </div>
           ) : (
             <div className="text-center py-12 text-slate-500 text-xs">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FlaskConical,
   Plus,
@@ -62,6 +62,18 @@ export const LaboratoryManagement: React.FC = () => {
     setLabOrders(MockStorage.getLabOrders(hospId));
     setLabCatalog(MockStorage.getLabCatalog(hospId));
   };
+
+  useEffect(() => {
+    refreshData();
+    MockStorage.syncWithBackend?.();
+    const handleUpdate = () => refreshData();
+    window.addEventListener('pulse_storage_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, [hospId]);
 
   const filteredOrders = labOrders.filter(
     (o) =>
@@ -279,7 +291,20 @@ export const LaboratoryManagement: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {labCatalog.map((t) => (
+                {labCatalog.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center text-slate-500">
+                      <div className="max-w-sm mx-auto flex flex-col items-center">
+                        <FlaskConical className="w-10 h-10 text-slate-300 mb-2" />
+                        <p className="font-bold text-slate-700 text-sm">No Diagnostic Tests in Catalog</p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          The hospital laboratory test catalog is currently empty.
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  labCatalog.map((t) => (
                   <tr key={t.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-5 py-3.5">
                       <p className="font-bold text-slate-900">{t.testName}</p>
@@ -295,7 +320,7 @@ export const LaboratoryManagement: React.FC = () => {
                     <td className="px-4 py-3.5 text-slate-500 max-w-[220px] truncate">{t.normalRange}</td>
                     <td className="px-5 py-3.5 text-right font-bold text-slate-900">${t.price}</td>
                   </tr>
-                ))}
+                )))}
               </tbody>
             </table>
           </div>

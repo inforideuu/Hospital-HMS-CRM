@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams, useParams } from 'react-router-dom';
 import {
   Activity,
   ShieldCheck,
@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
-import { UserRole, PortalType } from '../../types';
+import { UserRole, PortalType, User as AuthUser } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { MockStorage } from '../../services/mockStorage';
@@ -24,38 +24,30 @@ export const Login: React.FC = () => {
   const { login } = useAuth();
   const { showToast } = useNotification();
   const navigate = useNavigate();
+  const { hospitalSlug } = useParams<{ hospitalSlug?: string }>();
   const [searchParams] = useSearchParams();
-  const targetHospitalId = searchParams.get('targetHospital') || undefined;
-  const targetHospital = targetHospitalId ? MockStorage.getHospitalById(targetHospitalId) : null;
 
-  const [email, setEmail] = useState('admin@apexmedical.org');
-  const [password, setPassword] = useState('ApexAdmin@2026');
+  const hospitals = MockStorage.getHospitals();
+  const rawTarget = searchParams.get('targetHospital') || hospitalSlug;
+  const initialHospitalId = rawTarget;
+  const targetHospital = rawTarget
+    ? hospitals.find(
+        (h) =>
+          h.id.toLowerCase() === rawTarget.toLowerCase() ||
+          (h.slug && h.slug.toLowerCase() === rawTarget.toLowerCase()) ||
+          (h.branchCode && h.branchCode.toLowerCase() === rawTarget.toLowerCase()) ||
+          (rawTarget === 'hosp-1' && h.id === 'HOSP-001') ||
+          (rawTarget === 'HOSP-001' && h.id === 'HOSP-001')
+      ) || MockStorage.getHospitalById(rawTarget)
+    : null;
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-
-  const quickLogins: {
-    label: string;
-    email: string;
-    role: UserRole;
-    portal: PortalType;
-    desc: string;
-  }[] = [
-    { label: 'ABC Chennai Admin', email: 'admin@abcchennai.org', role: 'hospital_admin', portal: 'hospital', desc: 'Dr. Ramesh Kumar (ABC Chennai -> Enterprise Network)' },
-    { label: 'ABC Bangalore Admin', email: 'admin@abcbangalore.org', role: 'hospital_admin', portal: 'hospital', desc: 'Dr. Anita Desai (Bangalore Branch Scope)' },
-    { label: 'Enterprise Admin', email: 'admin@apexmedical.org', role: 'hospital_admin', portal: 'hospital', desc: 'Apex City Medical (Enterprise Health Network)' },
-    { label: 'Professional Admin', email: 'admin@stjudehorizon.org', role: 'hospital_admin', portal: 'hospital', desc: 'St. Jude Horizon (Professional Hospital)' },
-    { label: 'Starter Clinic Admin', email: 'admin@careprime.org', role: 'hospital_admin', portal: 'hospital', desc: 'CarePrime Clinic (Starter Clinic Tier)' },
-    { label: 'Medical Doctor', email: 'doctor@apexmedical.org', role: 'doctor', portal: 'hospital', desc: 'Dr. Evelyn Reed (Cardiology)' },
-    { label: 'Receptionist', email: 'receptionist@apexmedical.org', role: 'receptionist', portal: 'hospital', desc: 'Clara Oswald (Front Desk)' },
-    { label: 'Registered Nurse', email: 'nurse@apexmedical.org', role: 'nurse', portal: 'hospital', desc: 'Rachel Adams (ICU)' },
-    { label: 'Accountant', email: 'accountant@apexmedical.org', role: 'accountant', portal: 'hospital', desc: 'Marcus Sterling (Billing)' },
-    { label: 'Pharmacist', email: 'pharmacist@apexmedical.org', role: 'pharmacist', portal: 'hospital', desc: 'Priya Sharma (Dispensary)' },
-    { label: 'Lab Technician', email: 'labtech@apexmedical.org', role: 'lab_technician', portal: 'hospital', desc: 'Liam Zhang (Pathology)' },
-    { label: 'Patient Portal', email: 'patient@apexmedical.org', role: 'patient', portal: 'patient', desc: 'Eleanor Vance (Patient EHR)' },
-    { label: 'Ambulance Driver', email: 'driver@apexmedical.org', role: 'ambulance_driver', portal: 'ambulance_driver', desc: 'Paramedic 911 Unit' },
-  ];
+  const [matchedAccounts, setMatchedAccounts] = useState<AuthUser[] | null>(null);
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,7 +59,9 @@ export const Login: React.FC = () => {
     }
 
     const allUsers = MockStorage.getUsers();
-    const foundUser = allUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    const foundUser = allUsers.find(
+      (u) => u.email.trim().toLowerCase() === email.trim().toLowerCase()
+    );
 
     // Role Restriction: Sales Executive can ONLY log in via /superadmin-login
     if (foundUser && foundUser.role === 'sales_executive') {
@@ -77,22 +71,29 @@ export const Login: React.FC = () => {
 
     setIsLoading(true);
     setTimeout(() => {
-      const loginResult = login(email, undefined, targetHospitalId);
+      const resolvedHospitalId = targetHospital?.id || rawTarget || undefined;
+      const loginResult = login(email, password, resolvedHospitalId);
       setIsLoading(false);
 
-      if (loginResult.success) {
-        const allUsers = MockStorage.getUsers();
-        const foundUser = allUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
-        showToast('Login Successful', `Welcome ${foundUser?.name || 'Back'}`, 'success');
+      if (loginResult.multipleAccounts && loginResult.multipleAccounts.length > 1) {
+        setMatchedAccounts(loginResult.multipleAccounts);
+        return;
+      }
 
-        if (foundUser?.role === 'super_admin' || foundUser?.role === 'super_admin_manager') {
+      if (loginResult.success) {
+        const authUser = MockStorage.getAuthUser();
+        showToast('Login Successful', `Welcome ${authUser?.name || 'Back'}`, 'success');
+
+        if (authUser?.role === 'super_admin' || authUser?.role === 'super_admin_manager') {
           navigate('/platform/dashboard');
-        } else if (foundUser?.role === 'sales_executive') {
+        } else if (authUser?.role === 'sales_executive') {
           navigate('/sales/dashboard');
-        } else if (foundUser?.role === 'patient') {
+        } else if (authUser?.role === 'patient') {
           navigate('/patient/dashboard');
-        } else if (foundUser?.role === 'ambulance_driver') {
+        } else if (authUser?.role === 'ambulance_driver') {
           navigate('/driver/dashboard');
+        } else if (authUser?.role === 'doctor') {
+          navigate('/hospital/doctor/dashboard');
         } else {
           navigate('/hospital/dashboard');
         }
@@ -102,29 +103,28 @@ export const Login: React.FC = () => {
     }, 400);
   };
 
-  const handleQuickLogin = (item: (typeof quickLogins)[0]) => {
-    setEmail(item.email);
-    setPassword('ApexAdmin@2026');
-    setError('');
+  const handleSelectHospitalAccount = (targetHospId: string) => {
+    setMatchedAccounts(null);
     setIsLoading(true);
     setTimeout(() => {
-      const loginResult = login(item.email, item.role, targetHospitalId);
+      const loginResult = login(email, password, targetHospId);
       setIsLoading(false);
       if (loginResult.success) {
-        showToast(`Signed in as ${item.label}`, `Switched to ${item.portal} workspace`, 'success');
-        if (item.portal === 'platform') {
-          navigate('/platform/dashboard');
-        } else if (item.portal === 'patient') {
+        const authUser = MockStorage.getAuthUser();
+        showToast('Login Successful', `Welcome ${authUser?.name || 'Back'}`, 'success');
+        if (authUser?.role === 'patient') {
           navigate('/patient/dashboard');
-        } else if (item.portal === 'ambulance_driver') {
+        } else if (authUser?.role === 'doctor') {
+          navigate('/hospital/doctor/dashboard');
+        } else if (authUser?.role === 'ambulance_driver') {
           navigate('/driver/dashboard');
         } else {
           navigate('/hospital/dashboard');
         }
       } else {
-        setError(loginResult.error || 'Access Denied: Account not authorized for this hospital website.');
+        setError(loginResult.error || 'Unable to access selected facility.');
       }
-    }, 300);
+    }, 200);
   };
 
   return (
@@ -170,42 +170,30 @@ export const Login: React.FC = () => {
             </p>
           </div>
 
-          {/* Quick 1-Click Demo Login Panel */}
+          {/* Security & Access Information Card */}
           <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200/90 p-5 shadow-xl space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-teal-600" /> 1-Click Hospital Demo Profiles
+                <ShieldCheck className="w-3.5 h-3.5 text-teal-600" /> Database & Security Architecture
               </h2>
-              <span className="text-[10px] bg-teal-50 text-teal-700 border border-teal-200 px-2.5 py-0.5 rounded-full font-bold">9 Roles Available</span>
+              <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full font-bold">MySQL Powered</span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {quickLogins.map((item) => (
-                <button
-                  key={item.role}
-                  type="button"
-                  onClick={() => handleQuickLogin(item)}
-                  className="text-left p-2 rounded-xl bg-slate-50 hover:bg-teal-50/80 border border-slate-200 hover:border-teal-400 transition-all cursor-pointer group shadow-sm"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 group-hover:text-teal-700 transition-colors truncate">
-                      {item.label}
-                    </span>
-                    <span
-                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                        item.portal === 'patient'
-                          ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
-                          : item.portal === 'ambulance_driver'
-                          ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                          : 'bg-teal-100 text-teal-800 border border-teal-200'
-                      }`}
-                    >
-                      {item.portal === 'patient' ? 'Patient' : item.portal === 'ambulance_driver' ? '911' : 'HMS'}
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-slate-500 truncate mt-0.5">{item.desc}</p>
-                </button>
-              ))}
+            <div className="space-y-2 text-xs text-slate-600">
+              <div className="flex items-start gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                <Building2 className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-slate-800">Strict Multi-Tenant Isolation</p>
+                  <p className="text-[11px] text-slate-500">Each hospital operates in an isolated tenant schema with role-based permissions.</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                <Lock className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-slate-800">Cryptographic Authentication</p>
+                  <p className="text-[11px] text-slate-500">Hospital staff and patients log in with their registered MySQL database credentials.</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -226,6 +214,24 @@ export const Login: React.FC = () => {
             )}
 
             <form onSubmit={handleLoginSubmit} className="space-y-4">
+              {/* Optional Verified Facility Context Banner (if accessed via hospital-specific route) */}
+              {initialHospitalId && targetHospital && (
+                <div className="p-3 bg-teal-50 border border-teal-200 rounded-2xl flex items-center justify-between shadow-xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-teal-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <Building2 className="w-4 h-4" />
+                    </div>
+                    <div className="truncate">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-teal-700">Target Facility</p>
+                      <p className="text-xs font-bold text-slate-900 truncate">{targetHospital.name}</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-semibold bg-white text-teal-800 border border-teal-200 px-2.5 py-0.5 rounded-full shrink-0 shadow-2xs">
+                    Verified Portal
+                  </span>
+                </div>
+              )}
+
               <div>
                 <Input
                   label="Work Email Address"
@@ -295,6 +301,51 @@ export const Login: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Multi-Hospital Patient Account Selection Dialog */}
+      {matchedAccounts && matchedAccounts.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+            <div className="w-12 h-12 rounded-2xl bg-teal-50 border border-teal-200 text-teal-600 flex items-center justify-center mb-4">
+              <Building2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-900">Select Hospital Facility</h3>
+            <p className="text-xs text-slate-600 mt-1 mb-5">
+              You have registered accounts at multiple hospitals under this email. Please select which hospital facility you would like to access:
+            </p>
+            <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+              {matchedAccounts.map((acc) => {
+                const hosp = MockStorage.getHospitalById(acc.hospitalId || '');
+                return (
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() => handleSelectHospitalAccount(acc.hospitalId || '')}
+                    className="w-full text-left p-3.5 rounded-2xl bg-slate-50 hover:bg-teal-50/90 border border-slate-200 hover:border-teal-400 transition-all flex items-center justify-between group cursor-pointer"
+                  >
+                    <div className="truncate mr-2">
+                      <p className="text-sm font-bold text-slate-900 group-hover:text-teal-700 transition-colors truncate">
+                        {hosp?.name || acc.hospitalName || 'Hospital Facility'}
+                      </p>
+                      <p className="text-[11px] text-slate-500 font-mono mt-0.5 truncate">
+                        Patient ID: {acc.patientId || acc.id} • {acc.role === 'patient' ? 'Patient Portal' : acc.role}
+                      </p>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-teal-600 shrink-0 transition-colors" />
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={() => setMatchedAccounts(null)}
+              className="mt-5 w-full py-2.5 text-xs font-semibold text-slate-500 hover:text-slate-800 text-center cursor-pointer transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

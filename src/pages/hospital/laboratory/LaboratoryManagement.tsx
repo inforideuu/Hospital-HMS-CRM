@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Plus,
   Search,
@@ -87,6 +87,18 @@ export const LaboratoryManagement: React.FC = () => {
     setLabOrders(MockStorage.getLabOrders(hospId));
     setLabCatalog(MockStorage.getLabCatalog(hospId));
   };
+
+  useEffect(() => {
+    refreshData();
+    MockStorage.syncWithBackend?.();
+    const handleUpdate = () => refreshData();
+    window.addEventListener('pulse_storage_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, [hospId]);
 
   // Metric Computations
   const pendingOrdersCount = labOrders.filter(
@@ -265,7 +277,7 @@ export const LaboratoryManagement: React.FC = () => {
   const handleSaveCatalogTest = (e: React.FormEvent) => {
     e.preventDefault();
     const newTest: LabTestCatalog = {
-      id: editingTest ? editingTest.id : `CAT-${Date.now().toString().slice(-4)}`,
+      id: editingTest ? editingTest.id : `CAT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
       hospitalId: hospId,
       testName: catalogForm.testName,
       code: catalogForm.code,
@@ -319,7 +331,7 @@ export const LaboratoryManagement: React.FC = () => {
         breadcrumbs={[{ label: 'Hospital HMS', href: '/hospital/dashboard' }, { label: 'Laboratory Diagnostics' }]}
         actions={
           <Button variant="primary" size="md" onClick={handleOpenOrderModal} leftIcon={<Plus className="w-4 h-4" />}>
-            + Order Lab Test
+             Order Lab Test
           </Button>
         }
       />
@@ -592,10 +604,26 @@ export const LaboratoryManagement: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {labCatalog.map((test) => {
-                  const isInactive = test.status === 'inactive';
+                {labCatalog.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-slate-500">
+                      <div className="max-w-sm mx-auto flex flex-col items-center">
+                        <FlaskConical className="w-10 h-10 text-slate-300 mb-2" />
+                        <p className="font-bold text-slate-700 text-sm">No Diagnostic Tests in Catalog</p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          The hospital laboratory test catalog is currently empty. Configure diagnostic tests to allow doctors and pathologists to place lab orders.
+                        </p>
+                        <Button variant="outline" size="sm" onClick={handleOpenAddTest} className="mt-3">
+                          + Add Diagnostic Test
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  labCatalog.map((test) => {
+                    const isInactive = test.status === 'inactive';
 
-                  return (
+                    return (
                     <tr key={test.id} className={`hover:bg-slate-50/80 transition-colors ${isInactive ? 'bg-slate-50/40 text-slate-400' : ''}`}>
                       <td className="px-4 py-3.5">
                         <p className={`font-bold ${isInactive ? 'text-slate-500 line-through' : 'text-slate-900'}`}>{test.testName}</p>
@@ -664,7 +692,7 @@ export const LaboratoryManagement: React.FC = () => {
                       </td>
                     </tr>
                   );
-                })}
+                }))}
               </tbody>
             </table>
           </div>

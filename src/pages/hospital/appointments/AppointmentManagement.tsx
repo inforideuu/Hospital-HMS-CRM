@@ -30,6 +30,10 @@ import {
   Info,
   Layers,
   Sparkles,
+  RefreshCw,
+  HeartPulse,
+  Activity,
+  RotateCw,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { ApiService } from '../../../services/apiService';
@@ -47,6 +51,8 @@ import {
   OPDRoom,
   DoctorBreak,
   UnavailabilityType,
+  Patient,
+  FollowUpRequest,
 } from '../../../types';
 import {
   generateDoctorTimeSlots,
@@ -54,6 +60,8 @@ import {
   getDayOfWeekName,
   formatDisplayDate,
   getHospitalTodayDate,
+  getHospitalMinutesSinceMidnight,
+  minutesToTime,
   getHospitalTimezone,
   getScheduleDateConstraints,
   findNextConsultingDate,
@@ -91,6 +99,84 @@ export const AppointmentManagement: React.FC = () => {
     user?.role === 'super_admin' ||
     user?.role === 'super_admin_manager';
 
+  const isNurseOrAdmin = user?.role === 'nurse' || isHospitalAdmin;
+
+  // Nurse Clinical Intake State (Post Check-In)
+  const [isNurseIntakeModalOpen, setIsNurseIntakeModalOpen] = useState(false);
+  const [selectedIntakeAppointment, setSelectedIntakeAppointment] = useState<Appointment | null>(null);
+  const [intakePatient, setIntakePatient] = useState<Patient | null>(null);
+  const [intakeForm, setIntakeForm] = useState({
+    bloodPressure: '120/80 mmHg',
+    heartRate: 72,
+    temperature: 98.6,
+    oxygenLevel: 99,
+    weightKg: 70,
+    allergies: '',
+    medicalHistory: '',
+  });
+
+  const handleOpenNurseIntake = (apt: Appointment) => {
+    if (!isNurseOrAdmin) {
+      showToast('Access Restricted', 'Only Registered Nurses and Hospital Admins can conduct clinical intake.', 'error');
+      return;
+    }
+    if (apt.status !== 'Checked In' && apt.status !== 'In Consultation') {
+      showToast('Check-In Required', 'Clinical intake can only be performed after the patient is checked in.', 'warning');
+      return;
+    }
+    setSelectedIntakeAppointment(apt);
+    const pat = MockStorage.getPatientById(apt.patientId);
+    setIntakePatient(pat || null);
+    setIntakeForm({
+      bloodPressure: pat?.vitals?.bloodPressure || '120/80 mmHg',
+      heartRate: pat?.vitals?.heartRate || 72,
+      temperature: pat?.vitals?.temperature || 98.6,
+      oxygenLevel: pat?.vitals?.oxygenLevel || 99,
+      weightKg: pat?.vitals?.weightKg || 70,
+      allergies: Array.isArray(pat?.allergies) ? pat.allergies.join(', ') : '',
+      medicalHistory: Array.isArray(pat?.medicalHistory) ? pat.medicalHistory.join(', ') : '',
+    });
+    setIsNurseIntakeModalOpen(true);
+  };
+
+  const handleSaveNurseIntake = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedIntakeAppointment || !intakePatient) return;
+
+    const allergiesArray = intakeForm.allergies
+      ? intakeForm.allergies.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    const historyArray = intakeForm.medicalHistory
+      ? intakeForm.medicalHistory.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    const vitalsPayload = {
+      bloodPressure: intakeForm.bloodPressure || '120/80 mmHg',
+      heartRate: Number(intakeForm.heartRate) || 72,
+      temperature: Number(intakeForm.temperature) || 98.6,
+      oxygenLevel: Number(intakeForm.oxygenLevel) || 99,
+      weightKg: Number(intakeForm.weightKg) || 70,
+      recordedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
+      recordedBy: user?.name,
+      recordedRole: user?.role === 'nurse' ? 'Registered Nurse' : 'Hospital Admin',
+    };
+
+    const updatedPatient: Patient = {
+      ...intakePatient,
+      allergies: allergiesArray,
+      medicalHistory: historyArray,
+      vitals: vitalsPayload,
+    };
+
+    MockStorage.savePatient(updatedPatient);
+    setIsNurseIntakeModalOpen(false);
+    showToast(
+      'Clinical Intake Saved',
+      `Vitals and clinical warnings for ${selectedIntakeAppointment.patientName} successfully recorded by ${user?.name || 'Nurse'}.`
+    );
+    refreshData();
+  };
+
   // Core Data stored in state to prevent new object references on every render
   const [appointments, setAppointments] = useState<Appointment[]>(() => MockStorage.getAppointments(hospId));
   const [doctors, setDoctors] = useState<Doctor[]>(() => {
@@ -121,20 +207,17 @@ export const AppointmentManagement: React.FC = () => {
 
   // Sync state when hospId changes
   useEffect(() => {
-    const rawDocs = MockStorage.getDoctors(hospId);
-    setDoctors(rawDocs.length > 0 ? rawDocs : MockStorage.getDoctors());
-    const rawPats = MockStorage.getPatients(hospId);
-    setPatients(rawPats.length > 0 ? rawPats : MockStorage.getPatients());
-    const rawDepts = MockStorage.getDepartments(hospId);
-    setDepartments(rawDepts.length > 0 ? rawDepts : MockStorage.getDepartments());
-    const rawRms = MockStorage.getOPDRooms(hospId);
-    setOpdRooms(rawRms.length > 0 ? rawRms : MockStorage.getOPDRooms());
-    setAppointments(MockStorage.getAppointments(hospId));
-    setSchedules(MockStorage.getDoctorSchedules(hospId));
-    setUnavailabilities(MockStorage.getDoctorUnavailability(hospId));
-    const newSettings = MockStorage.getAppointmentSettings(hospId);
-    setSettings(newSettings);
-    setSettingsForm({ ...newSettings });
+    refreshData();
+    MockStorage.syncWithBackend?.().then?.(() => refreshData()).catch?.(() => {});
+    const handleStorageUpdate = () => {
+      refreshData();
+    };
+    window.addEventListener('pulse_storage_updated', handleStorageUpdate);
+    window.addEventListener('storage', handleStorageUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleStorageUpdate);
+      window.removeEventListener('storage', handleStorageUpdate);
+    };
   }, [hospId]);
 
   // Navigation & Filtering
@@ -151,6 +234,18 @@ export const AppointmentManagement: React.FC = () => {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [isAddLeaveModalOpen, setIsAddLeaveModalOpen] = useState(false);
+  const [confirmDeleteAppointmentId, setConfirmDeleteAppointmentId] = useState<string | null>(null);
+
+  // Step 2 & 5: Doctor Follow-Up Requests & Reschedule States
+  const [followUpRequests, setFollowUpRequests] = useState<FollowUpRequest[]>(() => MockStorage.getFollowUpRequests(hospId));
+  const [activeFollowUpRequestId, setActiveFollowUpRequestId] = useState<string | null>(null);
+  const [isRescheduleModalOpen, setIsRescheduleModalOpen] = useState(false);
+  const [appointmentToReschedule, setAppointmentToReschedule] = useState<Appointment | null>(null);
+  const [rescheduleForm, setRescheduleForm] = useState({
+    newDate: '',
+    newTime: '',
+    reason: 'Patient requested time adjustment',
+  });
 
   // Doctor Schedule Config state (for Schedules tab)
   const [selectedScheduleDoctorId, setSelectedScheduleDoctorId] = useState<string>(() => doctors[0]?.id || '');
@@ -197,6 +292,7 @@ export const AppointmentManagement: React.FC = () => {
     setAppointments(MockStorage.getAppointments(hospId));
     setSchedules(MockStorage.getDoctorSchedules(hospId));
     setUnavailabilities(MockStorage.getDoctorUnavailability(hospId));
+    setFollowUpRequests(MockStorage.getFollowUpRequests(hospId));
     const newSettings = MockStorage.getAppointmentSettings(hospId);
     setSettings(newSettings);
     setSettingsForm({ ...newSettings });
@@ -257,6 +353,14 @@ export const AppointmentManagement: React.FC = () => {
             (docDept && r.departmentName?.toLowerCase() === docDept.name.toLowerCase())
         );
 
+      let parsedStart = '09:00 AM';
+      let parsedEnd = '05:00 PM';
+      if (doc.availableHours && doc.availableHours.includes('-')) {
+        const parts = doc.availableHours.split('-').map((s) => s.trim());
+        if (parts[0]) parsedStart = parts[0];
+        if (parts[1]) parsedEnd = parts[1];
+      }
+
       const newDraft: DoctorSchedule = {
         id: `SCH-${selectedScheduleDoctorId}`,
         hospitalId: hospId,
@@ -266,9 +370,11 @@ export const AppointmentManagement: React.FC = () => {
         departmentName: resolvedDeptName,
         opdRoomId: assignedOrDeptRoom?.id || doc.opdRoomId || '',
         opdRoomName: assignedOrDeptRoom ? `${assignedOrDeptRoom.name} (${assignedOrDeptRoom.code})` : doc.opdRoomName || '',
-        workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-        consultationStartTime: '09:00 AM',
-        consultationEndTime: '05:00 PM',
+        workingDays: (doc.availableDays && doc.availableDays.length > 0)
+          ? (doc.availableDays as any)
+          : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+        consultationStartTime: parsedStart,
+        consultationEndTime: parsedEnd,
         slotDurationMinutes: 30,
         breaks: [
           { id: `BRK-${selectedScheduleDoctorId}`, name: 'Lunch Break', startTime: '01:00 PM', endTime: '02:00 PM' },
@@ -292,13 +398,22 @@ export const AppointmentManagement: React.FC = () => {
     return getHospitalTodayDate(hospitalTimezone);
   }, [hospitalTimezone]);
 
+  // Timestamp tracker to force recalculation when modal opens, date changes, or refresh is clicked
+  const [availabilityRefreshTimestamp, setAvailabilityRefreshTimestamp] = useState<number>(() => Date.now());
+
+  // Current hospital local time display formatted in hospital timezone
+  const currentHospitalTimeDisplay = useMemo(() => {
+    const mins = getHospitalMinutesSinceMidnight(hospitalTimezone);
+    return minutesToTime(mins);
+  }, [hospitalTimezone, availabilityRefreshTimestamp]);
+
   // Dynamic Book Appointment Form State
   const [formData, setFormData] = useState(() => ({
-    patientId: patients[0]?.id || 'PAT-1001',
-    departmentId: departments[0]?.id || 'DEP-101',
-    doctorId: doctors[0]?.id || 'DOC-101',
+    patientId: patients[0]?.id || '',
+    departmentId: departments[0]?.id || '',
+    doctorId: doctors[0]?.id || '',
     opdRoomId: '',
-    appointmentDate: getHospitalTodayDate(),
+    appointmentDate: getHospitalTodayDate(hospitalTimezone),
     appointmentTime: '10:00 AM',
     type: 'Consultation' as AppointmentType,
     reason: 'Clinical consultation and review',
@@ -333,8 +448,13 @@ export const AppointmentManagement: React.FC = () => {
 
   // Calculated slots for current selection in Book Modal
   const doctorScheduleForBooking = useMemo(() => {
-    return schedules.find((s) => s.doctorId === formData.doctorId && s.isActive !== false);
-  }, [schedules, formData.doctorId]);
+    const fromState = schedules.find((s) => s.doctorId === formData.doctorId && s.isActive !== false);
+    if (fromState) return fromState;
+    if (formData.doctorId) {
+      return MockStorage.getDoctorScheduleByDoctorId(formData.doctorId, hospId);
+    }
+    return undefined;
+  }, [schedules, formData.doctorId, hospId]);
 
   const dateConstraints = useMemo(() => {
     return getScheduleDateConstraints(doctorScheduleForBooking, settings, hospitalTimezone);
@@ -363,9 +483,20 @@ export const AppointmentManagement: React.FC = () => {
     unavailabilities,
     settings,
     hospitalTimezone,
+    availabilityRefreshTimestamp,
   ]);
 
-  // Keep appointmentTime synchronized with newly generated slots: never retain stale slot time from another date
+  // Auto-refresh availability every 30 seconds while modal is open to ensure passed slots flip in real-time
+  useEffect(() => {
+    if (!isBookModalOpen) return;
+    setAvailabilityRefreshTimestamp(Date.now());
+    const intervalId = setInterval(() => {
+      setAvailabilityRefreshTimestamp(Date.now());
+    }, 30000);
+    return () => clearInterval(intervalId);
+  }, [isBookModalOpen]);
+
+  // Keep appointmentTime synchronized with newly generated slots: never retain stale or passed slot time
   useEffect(() => {
     if (isBookModalOpen) {
       const available = slotGeneration.slots.filter((s) => s.isAvailable);
@@ -379,7 +510,59 @@ export const AppointmentManagement: React.FC = () => {
     }
   }, [slotGeneration.slots, isBookModalOpen]);
 
+  // Reschedule Slot Generation Hooks
+  const rescheduleDoctorSchedule = useMemo(() => {
+    if (!appointmentToReschedule) return undefined;
+    const fromState = schedules.find((s) => s.doctorId === appointmentToReschedule.doctorId && s.isActive !== false);
+    if (fromState) return fromState;
+    return MockStorage.getDoctorScheduleByDoctorId(appointmentToReschedule.doctorId, hospId);
+  }, [schedules, appointmentToReschedule, hospId]);
+
+  const rescheduleDateConstraints = useMemo(() => {
+    return getScheduleDateConstraints(rescheduleDoctorSchedule, settings, hospitalTimezone);
+  }, [rescheduleDoctorSchedule, settings, hospitalTimezone]);
+
+  const rescheduleSlotGeneration = useMemo(() => {
+    if (!isRescheduleModalOpen || !appointmentToReschedule || !rescheduleForm.newDate) {
+      return { slots: [], isDoctorWorkingDay: true, isOnLeave: false, outsideEffectiveRange: false };
+    }
+    return generateDoctorTimeSlots(
+      rescheduleDoctorSchedule,
+      rescheduleForm.newDate,
+      appointments.filter((a) => a.id !== appointmentToReschedule.id),
+      unavailabilities,
+      appointmentToReschedule.opdRoomId,
+      settings,
+      hospitalTimezone
+    );
+  }, [
+    isRescheduleModalOpen,
+    appointmentToReschedule,
+    rescheduleDoctorSchedule,
+    rescheduleForm.newDate,
+    appointments,
+    unavailabilities,
+    settings,
+    hospitalTimezone,
+    availabilityRefreshTimestamp,
+  ]);
+
+  // Synchronize newTime with available slots when reschedule date changes
+  useEffect(() => {
+    if (isRescheduleModalOpen && rescheduleSlotGeneration.slots.length > 0) {
+      const available = rescheduleSlotGeneration.slots.filter((s) => s.isAvailable);
+      const isCurrentTimeValid = available.some((s) => s.time === rescheduleForm.newTime);
+      if (!isCurrentTimeValid) {
+        setRescheduleForm((prev) => ({
+          ...prev,
+          newTime: available[0]?.time || '',
+        }));
+      }
+    }
+  }, [rescheduleSlotGeneration.slots, isRescheduleModalOpen]);
+
   const handleDateChange = (newDate: string) => {
+    setAvailabilityRefreshTimestamp(Date.now());
     setFormData((prev) => ({
       ...prev,
       appointmentDate: newDate,
@@ -427,7 +610,7 @@ export const AppointmentManagement: React.FC = () => {
 
     let matchesTab = true;
     if (activeTab === 'today') {
-      matchesTab = a.appointmentDate === '2026-09-24' || a.appointmentDate === todayActual;
+      matchesTab = a.appointmentDate === todayActual;
     } else if (activeTab === 'confirmed') {
       matchesTab = a.status === 'Confirmed' || a.status === 'Checked In';
     } else if (activeTab === 'completed') {
@@ -485,6 +668,7 @@ export const AppointmentManagement: React.FC = () => {
     setSelectedBookingPatient(initPatient);
     setPatientBookingError('');
 
+    setAvailabilityRefreshTimestamp(Date.now());
     setFormData({
       patientId: initPatient?.id || '',
       departmentId: chosenDoc?.departmentId || firstDept?.id || '',
@@ -496,6 +680,54 @@ export const AppointmentManagement: React.FC = () => {
       reason: 'General Medical Examination',
       notes: '',
       fee: chosenDoc?.consultationFee || 150,
+    });
+    setIsBookModalOpen(true);
+  };
+
+  // Step 2: Receptionist Schedules Follow-Up Appointment
+  const handleScheduleFollowUp = (req: FollowUpRequest) => {
+    setActiveFollowUpRequestId(req.id);
+    const targetPatient = MockStorage.getPatientById(req.patientId) || patients.find((p) => p.id === req.patientId);
+    const targetDoctor = doctors.find((d) => d.id === req.doctorId) || doctors[0];
+    const targetDept = departments.find((d) => d.id === targetDoctor?.departmentId) || departments[0];
+    const deptRooms = opdRooms.filter((r) => r.departmentId === targetDoctor?.departmentId);
+    const targetRoom = deptRooms.find((r) => r.id === targetDoctor?.opdRoomId) || deptRooms[0];
+
+    const docSched = schedules.find((s) => s.doctorId === targetDoctor?.id && s.isActive !== false);
+    const constraints = getScheduleDateConstraints(docSched, settings, hospitalTimezone);
+
+    let chosenDate = req.suggestedDate;
+    if (!chosenDate || chosenDate < constraints.minDate) {
+      chosenDate = findNextConsultingDate(docSched, constraints.minDate, constraints.maxDate, unavailabilities) || constraints.minDate;
+    }
+
+    const gen = generateDoctorTimeSlots(
+      docSched,
+      chosenDate,
+      appointments,
+      unavailabilities,
+      targetRoom?.id,
+      settings,
+      hospitalTimezone
+    );
+    const firstAvail = gen.slots.find((s) => s.isAvailable)?.time || '';
+
+    if (targetPatient) {
+      setSelectedBookingPatient(targetPatient);
+    }
+    setPatientBookingError('');
+    setAvailabilityRefreshTimestamp(Date.now());
+    setFormData({
+      patientId: req.patientId,
+      departmentId: targetDept?.id || '',
+      doctorId: targetDoctor?.id || '',
+      opdRoomId: targetRoom?.id || '',
+      appointmentDate: chosenDate,
+      appointmentTime: firstAvail,
+      type: 'Follow-up',
+      reason: req.reason || 'Clinical Follow-up Consultation',
+      notes: req.notes ? `Doctor Notes: ${req.notes}` : '',
+      fee: targetDoctor?.consultationFee || 150,
     });
     setIsBookModalOpen(true);
   };
@@ -521,6 +753,27 @@ export const AppointmentManagement: React.FC = () => {
       return;
     }
 
+    // Real-time revalidation: never allow a booking for a passed or stale slot
+    const freshSlotCheck = generateDoctorTimeSlots(
+      doctorScheduleForBooking,
+      formData.appointmentDate,
+      appointments,
+      unavailabilities,
+      room?.id,
+      settings,
+      hospitalTimezone
+    );
+    const selectedSlotObj = freshSlotCheck.slots.find((s) => s.time === formData.appointmentTime);
+    if (!selectedSlotObj || !selectedSlotObj.isAvailable) {
+      showToast(
+        'Booking Rejected',
+        selectedSlotObj?.reason || 'The selected consultation slot is no longer available or has passed. Please choose another slot.',
+        'error'
+      );
+      setAvailabilityRefreshTimestamp(Date.now());
+      return;
+    }
+
     // Comprehensive Revalidation before saving
     const validation = validateBookingAvailability(
       {
@@ -538,11 +791,13 @@ export const AppointmentManagement: React.FC = () => {
 
     if (!validation.isValid) {
       showToast('Booking Rejected', validation.errorMessage || 'This slot is unavailable.', 'error');
+      setAvailabilityRefreshTimestamp(Date.now());
       return;
     }
 
+    const isFollowUpAppointment = formData.type === 'Follow-up' || !!activeFollowUpRequestId;
     const newApt: Appointment = {
-      id: `APT-2026-${Math.floor(100 + Math.random() * 900)}`,
+      id: `APT-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
       hospitalId: hospId,
       patientId: pat.id,
       patientName: pat.name,
@@ -552,8 +807,8 @@ export const AppointmentManagement: React.FC = () => {
       doctorId: doc.id,
       doctorName: doc.name,
       doctorSpecialization: doc.specialization,
-      departmentId: dep?.id || doc.departmentId || 'DEP-101',
-      departmentName: dep?.name || doc.departmentName || 'General OPD',
+      departmentId: dep?.id || doc.departmentId || '',
+      departmentName: dep?.name || doc.departmentName || 'General',
       opdRoomId: room?.id || doc.opdRoomId,
       opdRoomName: room ? `${room.name} (${room.code})` : doc.opdRoomName,
       appointmentDate: formData.appointmentDate,
@@ -565,9 +820,23 @@ export const AppointmentManagement: React.FC = () => {
       fee: doc.consultationFee || formData.fee,
       paymentStatus: 'Paid',
       createdAt: new Date().toISOString().split('T')[0],
+      isFollowUp: isFollowUpAppointment,
+      followUpReason: isFollowUpAppointment ? formData.reason : undefined,
     };
 
     MockStorage.saveAppointment(newApt);
+
+    // If booked from a Doctor Follow-Up Request (Step 2), mark request as Scheduled
+    if (activeFollowUpRequestId) {
+      MockStorage.updateFollowUpRequestStatus(
+        activeFollowUpRequestId,
+        'Scheduled',
+        newApt.id,
+        newApt.appointmentDate,
+        newApt.appointmentTime
+      );
+      setActiveFollowUpRequestId(null);
+    }
 
     // Asynchronously sync with Django REST Framework backend
     ApiService.createAppointment({
@@ -582,6 +851,7 @@ export const AppointmentManagement: React.FC = () => {
       notes: newApt.notes,
       opd_room_id: newApt.opdRoomId,
       opd_room_name: newApt.opdRoomName,
+      timezone: hospitalTimezone,
     }).catch(() => {
       // Local storage already persisted
     });
@@ -591,9 +861,85 @@ export const AppointmentManagement: React.FC = () => {
     refreshData();
   };
 
+  // Step 5: Reschedule Consultation Handler
+  const handleOpenReschedule = (apt: Appointment) => {
+    setAppointmentToReschedule(apt);
+    const docSched = schedules.find((s) => s.doctorId === apt.doctorId && s.isActive !== false);
+    const constraints = getScheduleDateConstraints(docSched, settings, hospitalTimezone);
+    const todayStr = getHospitalTodayDate(hospitalTimezone);
+    const nextDate = todayStr >= constraints.minDate ? todayStr : constraints.minDate;
+
+    setAvailabilityRefreshTimestamp(Date.now());
+    setRescheduleForm({
+      newDate: nextDate,
+      newTime: '',
+      reason: 'Patient requested alternate date / time adjustment',
+    });
+    setIsRescheduleModalOpen(true);
+  };
+
+  const handleRescheduleDateChange = (newDate: string) => {
+    setAvailabilityRefreshTimestamp(Date.now());
+    setRescheduleForm((prev) => ({
+      ...prev,
+      newDate,
+      newTime: '',
+    }));
+  };
+
+  const handleConfirmReschedule = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!appointmentToReschedule) return;
+    if (!rescheduleForm.newDate || !rescheduleForm.newTime) {
+      showToast('Validation Error', 'Please select both a new date and an available consultation time slot.', 'error');
+      return;
+    }
+
+    const selectedSlotObj = rescheduleSlotGeneration.slots.find((s) => s.time === rescheduleForm.newTime);
+    if (!selectedSlotObj || !selectedSlotObj.isAvailable) {
+      showToast(
+        'Slot Unavailable',
+        selectedSlotObj?.reason || 'The selected slot is no longer available. Please select another slot.',
+        'error'
+      );
+      setAvailabilityRefreshTimestamp(Date.now());
+      return;
+    }
+
+    MockStorage.rescheduleAppointment(
+      appointmentToReschedule.id,
+      rescheduleForm.newDate,
+      rescheduleForm.newTime,
+      rescheduleForm.reason
+    );
+
+    showToast(
+      'Appointment Rescheduled',
+      `Appointment ${appointmentToReschedule.id} moved to ${rescheduleForm.newDate} at ${rescheduleForm.newTime}.`
+    );
+    setIsRescheduleModalOpen(false);
+    setAppointmentToReschedule(null);
+    refreshData();
+  };
+
   const handleStatusUpdate = (aptId: string, status: AppointmentStatus) => {
-    MockStorage.updateAppointmentStatus(aptId, status);
-    ApiService.updateAppointmentStatus(aptId, status).catch(() => {});
+    const timestamp = new Date().toISOString();
+    const updatePayload = {
+      ...(status === 'Checked In' ? { checkedInAt: timestamp } : {}),
+      ...(status === 'In Consultation' ? { consultationStartedAt: timestamp } : {}),
+      ...(status === 'Completed' ? { consultationCompletedAt: timestamp } : {}),
+    };
+    MockStorage.updateAppointmentStatus(aptId, status, updatePayload);
+    if (status === 'Checked In') {
+      ApiService.checkInAppointment(aptId).catch(() => {
+        ApiService.updateAppointmentStatus(aptId, status, { checked_in_at: timestamp }).catch(() => {});
+      });
+    } else {
+      ApiService.updateAppointmentStatus(aptId, status, {
+        ...(status === 'In Consultation' ? { consultation_started_at: timestamp } : {}),
+        ...(status === 'Completed' ? { consultation_completed_at: timestamp } : {}),
+      }).catch(() => {});
+    }
     showToast('Status Updated', `Appointment marked as ${status}.`);
     refreshData();
   };
@@ -601,6 +947,14 @@ export const AppointmentManagement: React.FC = () => {
   const handleViewDetail = (apt: Appointment) => {
     setSelectedAppointment(apt);
     setIsDetailModalOpen(true);
+  };
+
+  const handleDeleteAppointment = async (aptId: string) => {
+    MockStorage.deleteAppointment(aptId);
+    await ApiService.deleteAppointment(aptId).catch(() => {});
+    showToast('Appointment Removed', 'The appointment record has been permanently deleted.');
+    setConfirmDeleteAppointmentId(null);
+    refreshData();
   };
 
   // Schedule Configuration Handlers
@@ -720,6 +1074,53 @@ export const AppointmentManagement: React.FC = () => {
       showToast('Save Failed', err?.message || 'Failed to save specialist schedule. Form values preserved.', 'error');
     } finally {
       setIsSavingSchedule(false);
+    }
+  };
+
+  const handleDeleteSchedule = async (scheduleId: string, doctorName?: string) => {
+    if (!window.confirm(`Are you sure you want to delete the schedule and roster for ${doctorName || 'this specialist'}? This will remove configured consultation hours and chamber allocations.`)) {
+      return;
+    }
+
+    try {
+      MockStorage.deleteDoctorSchedule(scheduleId);
+      try {
+        await ApiService.deleteDoctorSchedule(scheduleId);
+      } catch (backendErr) {
+        console.warn('Backend delete sync warning (offline fallback):', backendErr);
+      }
+      showToast('Schedule Deleted', `Schedule for ${doctorName || 'specialist'} has been removed.`, 'success');
+      refreshData();
+      if (scheduleForm?.id === scheduleId) {
+        setScheduleForm(null);
+        setIsEditingSchedule(false);
+      }
+    } catch (err: any) {
+      showToast('Delete Failed', err?.message || 'Failed to delete schedule.', 'error');
+    }
+  };
+
+  const handleDeleteAllSchedules = async () => {
+    if (schedules.length === 0) {
+      showToast('No Schedules', 'There are no active specialist schedules to delete.', 'info');
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to delete all ${schedules.length} specialist schedules and rosters for this hospital? This will remove all configured consultation hours and chamber allocations.`)) {
+      return;
+    }
+
+    try {
+      for (const s of schedules) {
+        MockStorage.deleteDoctorSchedule(s.id);
+        ApiService.deleteDoctorSchedule(s.id).catch(() => {});
+      }
+      showToast('All Schedules Deleted', 'All medical specialist schedules have been removed.', 'success');
+      refreshData();
+      setScheduleForm(null);
+      setIsEditingSchedule(false);
+    } catch (err: any) {
+      showToast('Delete Failed', err?.message || 'Failed to delete schedules.', 'error');
     }
   };
 
@@ -921,7 +1322,7 @@ export const AppointmentManagement: React.FC = () => {
                 id: 'today',
                 label: "Today's Schedule",
                 count: appointments.filter(
-                  (a) => a.appointmentDate === '2026-09-24' || a.appointmentDate === todayActual
+                  (a) => a.appointmentDate === todayActual
                 ).length,
               },
               {
@@ -933,6 +1334,11 @@ export const AppointmentManagement: React.FC = () => {
                 id: 'completed',
                 label: 'Completed',
                 count: appointments.filter((a) => a.status === 'Completed').length,
+              },
+              {
+                id: 'follow-ups',
+                label: 'Doctor Follow-Ups (Pending)',
+                count: followUpRequests.filter((f) => f.status === 'Pending').length,
               },
               {
                 id: 'all-schedules',
@@ -957,7 +1363,7 @@ export const AppointmentManagement: React.FC = () => {
           />
 
           {/* Quick Search and Specialist Filter (for Appointment List Tabs) */}
-          {activeTab !== 'schedules' && activeTab !== 'settings' && activeTab !== 'all-schedules' && (
+          {activeTab !== 'schedules' && activeTab !== 'settings' && activeTab !== 'all-schedules' && activeTab !== 'follow-ups' && (
             <div className="flex items-center gap-2 w-full md:w-auto">
               <div className="relative w-full md:w-64">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -993,7 +1399,7 @@ export const AppointmentManagement: React.FC = () => {
         </div>
 
         {/* TAB 1-4: APPOINTMENTS LIST / WORKFLOW TABLES */}
-        {activeTab !== 'schedules' && activeTab !== 'settings' && activeTab !== 'all-schedules' && (
+        {activeTab !== 'schedules' && activeTab !== 'settings' && activeTab !== 'all-schedules' && activeTab !== 'follow-ups' && (
           <>
             {filtered.length === 0 ? (
               <EmptyState
@@ -1041,19 +1447,34 @@ export const AppointmentManagement: React.FC = () => {
                           </p>
                         </td>
 
-                        <td className="px-4 py-3.5 text-slate-600 max-w-[200px] truncate">
-                          <span className="px-1.5 py-0.5 rounded bg-slate-100 font-semibold text-[10px] mr-1 text-slate-700">
-                            {apt.type}
-                          </span>
-                          {apt.reason}
+                        <td className="px-4 py-3.5 text-slate-600 max-w-[220px]">
+                          <div className="flex items-center gap-1 flex-wrap mb-0.5">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 font-semibold text-[10px] text-slate-700">
+                              {apt.type}
+                            </span>
+                            {(apt.isFollowUp || apt.type === 'Follow-up') && (
+                              <Badge variant="cyan" size="sm">Follow-Up</Badge>
+                            )}
+                            {apt.rescheduledFromDate && (
+                              <span className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 font-mono">
+                                Rescheduled
+                              </span>
+                            )}
+                          </div>
+                          <p className="truncate text-slate-700">{apt.reason}</p>
+                          {apt.followUpReason && apt.followUpReason !== apt.reason && (
+                            <p className="text-[10px] text-teal-700 truncate italic">Obj: {apt.followUpReason}</p>
+                          )}
                         </td>
 
                         <td className="px-4 py-3.5">
                           {apt.status === 'Checked In' && <Badge variant="success" dot>Checked In</Badge>}
+                          {apt.status === 'In Consultation' && <Badge variant="warning" dot>In Consultation</Badge>}
                           {apt.status === 'Confirmed' && <Badge variant="info" dot>Confirmed</Badge>}
                           {apt.status === 'Scheduled' && <Badge variant="neutral" dot>Scheduled</Badge>}
                           {apt.status === 'Completed' && <Badge variant="purple" dot>Completed</Badge>}
                           {apt.status === 'Cancelled' && <Badge variant="error" dot>Cancelled</Badge>}
+                          {apt.status === 'No Show' && <Badge variant="error" dot>No Show</Badge>}
                         </td>
 
                         <td className="px-5 py-3.5 text-right">
@@ -1088,12 +1509,59 @@ export const AppointmentManagement: React.FC = () => {
                             )}
 
                             {apt.status === 'Checked In' && (
+                              <div className="flex items-center gap-1.5">
+                                {isNurseOrAdmin && (
+                                  <Button
+                                    variant="outline"
+                                    size="xs"
+                                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-medium"
+                                    onClick={() => handleOpenNurseIntake(apt)}
+                                  >
+                                    <HeartPulse className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                                    Clinical Intake
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="primary"
+                                  size="xs"
+                                  onClick={() => navigate(`/hospital/consultation/${apt.id}`)}
+                                >
+                                  Start Consultation
+                                </Button>
+                              </div>
+                            )}
+
+                            {apt.status === 'In Consultation' && (
                               <Button
                                 variant="primary"
                                 size="xs"
-                                onClick={() => handleStatusUpdate(apt.id, 'Completed')}
+                                className="bg-amber-600 hover:bg-amber-700 text-white"
+                                onClick={() => navigate(`/hospital/consultation/${apt.id}`)}
                               >
-                                Mark Completed
+                                Resume Consultation
+                              </Button>
+                            )}
+
+                            {apt.status === 'Completed' && (
+                              <Button
+                                variant="outline"
+                                size="xs"
+                                onClick={() => navigate(`/hospital/patients/${apt.patientId}`)}
+                              >
+                                View EHR
+                              </Button>
+                            )}
+
+                            {(apt.status === 'Scheduled' || apt.status === 'Confirmed') && (
+                              <Button
+                                variant="ghost"
+                                size="xs"
+                                className="text-teal-700 hover:bg-teal-50"
+                                onClick={() => handleOpenReschedule(apt)}
+                                title="Reschedule Consultation"
+                              >
+                                <RotateCw className="w-3.5 h-3.5 mr-0.5" />
+                                Reschedule
                               </Button>
                             )}
 
@@ -1107,6 +1575,16 @@ export const AppointmentManagement: React.FC = () => {
                                 Cancel
                               </Button>
                             )}
+
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                              onClick={() => setConfirmDeleteAppointmentId(apt.id)}
+                              title="Delete Appointment"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
                           </div>
                         </td>
                       </tr>
@@ -1124,6 +1602,141 @@ export const AppointmentManagement: React.FC = () => {
               onPageChange={(page) => setCurrentPage(page)}
             />
           </>
+        )}
+
+        {/* TAB: DOCTOR FOLLOW-UP REQUESTS (STEP 2: RECEPTIONIST SCHEDULES) */}
+        {activeTab === 'follow-ups' && (
+          <div className="p-6 space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-teal-50 text-teal-700">
+                  <RotateCw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900"> Doctor-Initiated Follow-Up Queue</h3>
+                  <p className="text-xs text-slate-500">
+                    Consultations finalized by attending physicians requiring follow-up OPD bookings for patient recovery.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <span className="px-3 py-1.5 rounded-lg bg-teal-50 text-teal-800 font-semibold border border-teal-200">
+                  {followUpRequests.filter((f) => f.status === 'Pending').length} Pending Scheduling
+                </span>
+                <span className="px-3 py-1.5 rounded-lg bg-slate-50 text-slate-700 font-semibold border border-slate-200">
+                  {followUpRequests.filter((f) => f.status === 'Scheduled' || f.status === 'Completed').length} Processed
+                </span>
+              </div>
+            </div>
+
+            {followUpRequests.length === 0 ? (
+              <EmptyState
+                title="No Pending Follow-Up Requests"
+                description="When clinicians finalize consultations and initiate follow-ups (Step 1), requests will appear here for receptionist scheduling."
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-500 font-semibold uppercase tracking-wider">
+                      <th className="px-5 py-3.5">Patient Details</th>
+                      <th className="px-4 py-3.5">Attending Clinician</th>
+                      <th className="px-4 py-3.5">Doctor's Clinical Objective</th>
+                      <th className="px-4 py-3.5">Suggested Target Date</th>
+                      <th className="px-4 py-3.5">Status</th>
+                      <th className="px-5 py-3.5 text-right">Step 2 Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {followUpRequests.map((req) => (
+                      <tr key={req.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="px-5 py-3.5">
+                          <p className="font-bold text-slate-900">{req.patientName}</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            <span className="font-mono font-semibold text-teal-700">{req.patientId}</span> • {req.patientPhone || 'No Phone'}
+                          </p>
+                        </td>
+
+                        <td className="px-4 py-3.5">
+                          <p className="font-bold text-slate-900">{req.doctorName}</p>
+                          <p className="text-[11px] text-slate-500">{req.departmentName}</p>
+                        </td>
+
+                        <td className="px-4 py-3.5 text-slate-700 max-w-[240px]">
+                          <p className="font-semibold text-teal-900">{req.reason}</p>
+                          {req.notes && (
+                            <p className="text-[11px] text-slate-500 truncate mt-0.5">{req.notes}</p>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3.5">
+                          <p className="font-bold text-slate-900 flex items-center gap-1">
+                            <Calendar className="w-3.5 h-3.5 text-teal-600" />
+                            {req.suggestedDate || 'Flexible'}
+                          </p>
+                          {req.intervalDays && (
+                            <p className="text-[10px] text-slate-500 mt-0.5 font-medium">
+                              Within {req.intervalDays} days of last consult
+                            </p>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3.5">
+                          {req.status === 'Pending' && (
+                            <Badge variant="warning" dot>Pending Scheduling</Badge>
+                          )}
+                          {req.status === 'Scheduled' && (
+                            <div>
+                              <Badge variant="success" dot>Scheduled</Badge>
+                              {req.scheduledDate && (
+                                <p className="text-[10px] text-slate-500 mt-0.5 font-mono">
+                                  {req.scheduledDate} {req.scheduledTime}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                          {req.status === 'Completed' && (
+                            <Badge variant="purple" dot>Follow-Up Completed</Badge>
+                          )}
+                          {req.status === 'Cancelled' && (
+                            <Badge variant="error" dot>Cancelled</Badge>
+                          )}
+                        </td>
+
+                        <td className="px-5 py-3.5 text-right">
+                          {req.status === 'Pending' ? (
+                            <Button
+                              variant="primary"
+                              size="xs"
+                              className="bg-teal-600 hover:bg-teal-700 text-white font-semibold"
+                              onClick={() => handleScheduleFollowUp(req)}
+                              leftIcon={<CalendarCheck className="w-3.5 h-3.5" />}
+                            >
+                              Schedule Follow-up
+                            </Button>
+                          ) : req.scheduledAppointmentId ? (
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              onClick={() => {
+                                const matched = appointments.find((a) => a.id === req.scheduledAppointmentId);
+                                if (matched) handleViewDetail(matched);
+                              }}
+                            >
+                              View Appointment
+                            </Button>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 italic">Completed</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         )}
 
         {/* TAB: VIEW ALL SCHEDULES (IN BETWEEN COMPLETED AND DOCTOR AVAILABILITY & SCHEDULES) */}
@@ -1144,6 +1757,16 @@ export const AppointmentManagement: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2">
+                {schedules.length > 0 && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleDeleteAllSchedules}
+                    leftIcon={<Trash2 className="w-4 h-4" />}
+                  >
+                    Delete All Schedules
+                  </Button>
+                )}
                 <Button
                   variant="primary"
                   size="sm"
@@ -1334,22 +1957,46 @@ export const AppointmentManagement: React.FC = () => {
                             )}
                           </td>
                           <td className="px-4 py-3.5 text-right">
-                            <Button
-                              variant={docSchedule ? 'outline' : 'primary'}
-                              size="xs"
-                              onClick={() => {
-                                setSelectedScheduleDoctorId(doc.id);
-                                if (docSchedule) {
-                                  setIsEditingSchedule(false);
-                                } else {
-                                  setIsEditingSchedule(true);
-                                }
-                                setActiveTab('schedules');
-                              }}
-                              leftIcon={docSchedule ? <Eye className="w-3 h-3 text-indigo-600" /> : <Plus className="w-3 h-3" />}
-                            >
-                              {docSchedule ? 'View / Edit' : 'Configure'}
-                            </Button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              {docSchedule ? (
+                                <>
+                                  <Button
+                                    variant="outline"
+                                    size="xs"
+                                    onClick={() => {
+                                      setSelectedScheduleDoctorId(doc.id);
+                                      setIsEditingSchedule(false);
+                                      setActiveTab('schedules');
+                                    }}
+                                    leftIcon={<Eye className="w-3 h-3 text-indigo-600" />}
+                                  >
+                                    View / Edit
+                                  </Button>
+                                  <Button
+                                    variant="danger"
+                                    size="xs"
+                                    onClick={() => handleDeleteSchedule(docSchedule.id, doc.name)}
+                                    leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                                    title={`Delete schedule and roster for ${doc.name}`}
+                                  >
+                                    Delete
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button
+                                  variant="primary"
+                                  size="xs"
+                                  onClick={() => {
+                                    setSelectedScheduleDoctorId(doc.id);
+                                    setIsEditingSchedule(true);
+                                    setActiveTab('schedules');
+                                  }}
+                                  leftIcon={<Plus className="w-3 h-3" />}
+                                >
+                                  Configure
+                                </Button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1457,16 +2104,22 @@ export const AppointmentManagement: React.FC = () => {
                         >
                           View All Schedules
                         </Button>
-                        {isHospitalAdmin && (
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            onClick={handleEditSchedule}
-                            leftIcon={<Edit className="w-3.5 h-3.5" />}
-                          >
-                            Edit Schedule
-                          </Button>
-                        )}
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={handleEditSchedule}
+                          leftIcon={<Edit className="w-3.5 h-3.5" />}
+                        >
+                          Edit Schedule
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => handleDeleteSchedule(savedSchedule.id, savedSchedule.doctorName)}
+                          leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                        >
+                          Delete Schedule
+                        </Button>
                       </div>
                     </div>
 
@@ -1870,32 +2523,42 @@ export const AppointmentManagement: React.FC = () => {
                     </div>
 
                     {/* Form Action Buttons */}
-                    {isHospitalAdmin && (
-                      <div className="flex items-center justify-between pt-2">
+                    <div className="flex items-center justify-between pt-2">
+                      <div className="flex items-center gap-2">
                         {savedSchedule ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={handleCancelEditSchedule}
-                            disabled={isSavingSchedule}
-                          >
-                            Cancel Editing
-                          </Button>
-                        ) : (
-                          <div />
-                        )}
-                        <Button
-                          type="submit"
-                          variant="primary"
-                          size="sm"
-                          disabled={isSavingSchedule}
-                          leftIcon={isSavingSchedule ? undefined : <CheckCircle2 className="w-4 h-4" />}
-                        >
-                          {isSavingSchedule ? 'Saving Schedule...' : 'Save Specialist Consultation Schedule'}
-                        </Button>
+                          <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={handleCancelEditSchedule}
+                              disabled={isSavingSchedule}
+                            >
+                              Cancel Editing
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="danger"
+                              size="sm"
+                              onClick={() => handleDeleteSchedule(savedSchedule.id, savedSchedule.doctorName)}
+                              disabled={isSavingSchedule}
+                              leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                            >
+                              Delete Schedule
+                            </Button>
+                          </>
+                        ) : null}
                       </div>
-                    )}
+                      <Button
+                        type="submit"
+                        variant="primary"
+                        size="sm"
+                        disabled={isSavingSchedule}
+                        leftIcon={isSavingSchedule ? undefined : <CheckCircle2 className="w-4 h-4" />}
+                      >
+                        {isSavingSchedule ? 'Saving Schedule...' : 'Save Specialist Consultation Schedule'}
+                      </Button>
+                    </div>
                   </form>
                 );
               }
@@ -2241,14 +2904,33 @@ export const AppointmentManagement: React.FC = () => {
 
           {/* DYNAMIC TIME SLOTS GENERATOR */}
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-indigo-600" />
-                Available Consultation Slots on {formData.appointmentDate}
-              </label>
-              <span className="text-[11px] text-slate-500 font-medium">
-                Day: <span className="font-semibold text-slate-800">{getDayOfWeekName(formData.appointmentDate)}</span>
-              </span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-1 border-b border-slate-200">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                  Available Consultation Slots on {formData.appointmentDate}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAvailabilityRefreshTimestamp(Date.now());
+                    showToast('Slots Refreshed', 'Real-time specialist consultation slots refreshed.', 'info');
+                  }}
+                  title="Refresh slot availability"
+                  className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-slate-200/60 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium">
+                <span>
+                  Local Time: <span className="font-semibold text-slate-800">{currentHospitalTimeDisplay}</span>
+                </span>
+                <span>•</span>
+                <span>
+                  Day: <span className="font-semibold text-slate-800">{getDayOfWeekName(formData.appointmentDate)}</span>
+                </span>
+              </div>
             </div>
 
             {/* Availability Alerts */}
@@ -2339,27 +3021,33 @@ export const AppointmentManagement: React.FC = () => {
                             ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-300'
                             : isAvailable
                             ? 'bg-white border border-slate-200 text-slate-800 hover:border-indigo-400 hover:bg-indigo-50/50'
-                            : slot.status === 'break'
-                            ? 'bg-amber-50/80 border border-amber-200 text-amber-600/70 cursor-not-allowed line-through'
-                            : slot.status === 'leave'
-                            ? 'bg-rose-50 border border-rose-200 text-rose-500/70 cursor-not-allowed line-through'
+                            : slot.status === 'passed' || slot.status === 'outside_hours'
+                            ? 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
+                            : slot.status === 'booked_doctor'
+                            ? 'bg-slate-200/90 border border-slate-300 text-slate-600 cursor-not-allowed'
                             : slot.status === 'occupied_room'
-                            ? 'bg-purple-50 border border-purple-200 text-purple-500/70 cursor-not-allowed'
-                            : 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
+                            ? 'bg-purple-50 border border-purple-200 text-purple-600 cursor-not-allowed'
+                            : slot.status === 'break'
+                            ? 'bg-amber-50/80 border border-amber-200 text-amber-700/80 cursor-not-allowed line-through'
+                            : slot.status === 'leave'
+                            ? 'bg-rose-50 border border-rose-200 text-rose-600/80 cursor-not-allowed line-through'
+                            : 'bg-orange-50 border border-orange-200 text-orange-600 cursor-not-allowed'
                         }`}
                       >
                         {slot.time}
                         {!isAvailable && (
                           <span className="block text-[8px] font-normal tracking-tighter truncate">
-                            {slot.status === 'break'
-                              ? 'Break'
-                              : slot.status === 'occupied_room'
-                              ? 'Room In Use'
-                              : slot.status === 'leave'
-                              ? 'Leave'
-                              : slot.status === 'outside_hours'
+                            {slot.status === 'passed' || slot.status === 'outside_hours'
                               ? 'Passed'
-                              : 'Booked'}
+                              : slot.status === 'booked_doctor'
+                              ? 'Doctor Booked'
+                              : slot.status === 'occupied_room'
+                              ? 'Chamber Occupied'
+                              : slot.status === 'break'
+                              ? 'Scheduled Break'
+                              : slot.status === 'leave'
+                              ? 'Specialist Leave'
+                              : 'Notice Required'}
                           </span>
                         )}
                       </button>
@@ -2378,16 +3066,19 @@ export const AppointmentManagement: React.FC = () => {
                     <span className="w-2.5 h-2.5 rounded bg-white border border-slate-300 inline-block" /> Available
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded bg-slate-200 inline-block" /> Doctor Booked
+                    <span className="w-2.5 h-2.5 rounded bg-slate-100 border border-slate-300 inline-block" /> Passed
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded bg-purple-200 inline-block" /> Chamber Occupied
+                    <span className="w-2.5 h-2.5 rounded bg-slate-200 border border-slate-300 inline-block" /> Doctor Booked
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded bg-amber-200 inline-block" /> Scheduled Break
+                    <span className="w-2.5 h-2.5 rounded bg-purple-200 border border-purple-300 inline-block" /> Chamber Occupied
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded bg-rose-200 inline-block" /> Specialist Leave
+                    <span className="w-2.5 h-2.5 rounded bg-amber-200 border border-amber-300 inline-block" /> Scheduled Break
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded bg-rose-200 border border-rose-300 inline-block" /> Specialist Leave
                   </span>
                 </div>
               </div>
@@ -2732,6 +3423,455 @@ export const AppointmentManagement: React.FC = () => {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Delete Appointment Confirmation Modal */}
+      <Modal
+        isOpen={!!confirmDeleteAppointmentId}
+        onClose={() => setConfirmDeleteAppointmentId(null)}
+        title="Delete Appointment Record"
+      >
+        <div className="space-y-4">
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="text-xs text-rose-900 space-y-1">
+              <p className="font-bold">Permanently Remove Appointment?</p>
+              <p>
+                Are you sure you want to permanently delete appointment <span className="font-mono font-semibold">{confirmDeleteAppointmentId}</span>? This will remove the appointment from both the local database and backend server.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <Button variant="outline" size="sm" onClick={() => setConfirmDeleteAppointmentId(null)}>
+              Keep Appointment
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => confirmDeleteAppointmentId && handleDeleteAppointment(confirmDeleteAppointmentId)}
+              leftIcon={<Trash2 className="w-4 h-4" />}
+            >
+              Permanently Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Nurse Clinical Vitals & Medical History Intake Modal (Post Check-In) */}
+      <Modal
+        isOpen={isNurseIntakeModalOpen}
+        onClose={() => setIsNurseIntakeModalOpen(false)}
+        title="Clinical Vitals & Medical History Intake"
+        subtitle={`Pre-consultation clinical intake for ${selectedIntakeAppointment?.patientName || 'Checked-in Patient'}`}
+      >
+        <form onSubmit={handleSaveNurseIntake} className="space-y-4">
+          <div className="p-3 bg-emerald-50/80 border border-emerald-200/80 rounded-xl flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="font-semibold text-emerald-950">Patient Status: Checked In & Waiting</span>
+            </div>
+            <Badge variant="success" size="sm" dot>
+              {user?.role === 'nurse' ? 'Registered Nurse' : 'Hospital Admin'} Authorized
+            </Badge>
+          </div>
+
+          <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <Activity className="w-4 h-4 text-emerald-600" />
+              Clinical Vitals Intake
+            </h4>
+            <span className="text-[11px] text-slate-400">Post Check-In Intake</span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <Input
+              label="Blood Pressure"
+              value={intakeForm.bloodPressure}
+              onChange={(e) => setIntakeForm({ ...intakeForm, bloodPressure: e.target.value })}
+              placeholder="120/80 mmHg"
+              required
+            />
+            <Input
+              label="Pulse / Heart Rate (bpm)"
+              type="number"
+              value={intakeForm.heartRate}
+              onChange={(e) => setIntakeForm({ ...intakeForm, heartRate: Number(e.target.value) })}
+              placeholder="72"
+              required
+            />
+            <Input
+              label="Body Temp (°F)"
+              type="number"
+              step="0.1"
+              value={intakeForm.temperature}
+              onChange={(e) => setIntakeForm({ ...intakeForm, temperature: Number(e.target.value) })}
+              placeholder="98.6"
+              required
+            />
+            <Input
+              label="SpO2 (%)"
+              type="number"
+              value={intakeForm.oxygenLevel}
+              onChange={(e) => setIntakeForm({ ...intakeForm, oxygenLevel: Number(e.target.value) })}
+              placeholder="99"
+              required
+            />
+            <Input
+              label="Weight (kg)"
+              type="number"
+              step="0.1"
+              value={intakeForm.weightKg}
+              onChange={(e) => setIntakeForm({ ...intakeForm, weightKg: Number(e.target.value) })}
+              placeholder="70"
+              required
+            />
+          </div>
+
+          <div className="pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <HeartPulse className="w-4 h-4 text-rose-500" />
+                Clinical Warnings & Medical History
+              </h4>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input
+                label="Known Drug / Food Allergies"
+                value={intakeForm.allergies}
+                onChange={(e) => setIntakeForm({ ...intakeForm, allergies: e.target.value })}
+                placeholder="e.g. Penicillin, Peanuts, Sulfa"
+              />
+              <Input
+                label="Past Medical Conditions"
+                value={intakeForm.medicalHistory}
+                onChange={(e) => setIntakeForm({ ...intakeForm, medicalHistory: e.target.value })}
+                placeholder="e.g. Hypertension, Type 2 Diabetes"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <Button type="button" variant="outline" size="sm" onClick={() => setIsNurseIntakeModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" size="sm">
+              Save Clinical Intake
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Step 5: Reschedule Consultation Modal */}
+      <Modal
+        isOpen={isRescheduleModalOpen}
+        onClose={() => {
+          setIsRescheduleModalOpen(false);
+          setAppointmentToReschedule(null);
+        }}
+        title="Reschedule Consultation Appointment"
+        subtitle={`Select a new available date and time slot for ${appointmentToReschedule?.patientName || 'Patient'}`}
+        maxWidth="lg"
+      >
+        <form onSubmit={handleConfirmReschedule} className="space-y-4 text-xs">
+          {appointmentToReschedule && (
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h4 className="font-bold text-slate-900 text-sm">{appointmentToReschedule.patientName}</h4>
+                  <p className="text-slate-500 mt-0.5">
+                    Attending Specialist: <span className="font-semibold text-slate-700">{appointmentToReschedule.doctorName}</span> ({appointmentToReschedule.departmentName}) • {appointmentToReschedule.opdRoomName || 'OPD Chamber'}
+                  </p>
+                </div>
+                <div className="text-left sm:text-right">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Current Schedule</span>
+                  <span className="font-mono text-slate-800 font-semibold bg-white px-2.5 py-1 rounded-md border border-slate-200 inline-block mt-0.5">
+                    {appointmentToReschedule.appointmentDate} • {appointmentToReschedule.appointmentTime}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                New Consultation Date <span className="text-rose-500">*</span>
+              </label>
+              <Input
+                type="date"
+                value={rescheduleForm.newDate}
+                min={rescheduleDateConstraints.minDate}
+                max={rescheduleDateConstraints.maxDate}
+                onChange={(e) => handleRescheduleDateChange(e.target.value)}
+                required
+              />
+              {rescheduleDateConstraints.isFutureSchedule && rescheduleDateConstraints.futureStartDate && (
+                <p className="mt-1 text-[11px] text-amber-700 bg-amber-50/80 border border-amber-200 rounded-md px-2 py-1 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 shrink-0 text-amber-600" />
+                  <span>Doctor's schedule starts on <strong>{formatDisplayDate(rescheduleDateConstraints.futureStartDate)}</strong></span>
+                </p>
+              )}
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-teal-50/60 border border-teal-200 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-teal-700 block">Selected New Slot</span>
+                <span className="font-mono text-xs font-bold text-teal-950">
+                  {rescheduleForm.newTime ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5 text-teal-600" /> {rescheduleForm.newTime}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400 font-normal italic">None selected — tap an open slot below</span>
+                  )}
+                </span>
+              </div>
+              {rescheduleForm.newTime && (
+                <Badge variant="cyan" size="sm">Slot Selected</Badge>
+              )}
+            </div>
+          </div>
+
+          {/* DYNAMIC TIME SLOTS GENERATOR FOR RESCHEDULING */}
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-1 border-b border-slate-200">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-teal-600" />
+                  Available Consultation Slots on {rescheduleForm.newDate}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAvailabilityRefreshTimestamp(Date.now());
+                    showToast('Slots Refreshed', 'Specialist consultation slots refreshed.', 'info');
+                  }}
+                  title="Refresh slot availability"
+                  className="p-1 rounded text-slate-400 hover:text-teal-600 hover:bg-slate-200/60 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium">
+                <span>
+                  Local Time: <span className="font-semibold text-slate-800">{currentHospitalTimeDisplay}</span>
+                </span>
+                <span>•</span>
+                <span>
+                  Day: <span className="font-semibold text-slate-800">{getDayOfWeekName(rescheduleForm.newDate)}</span>
+                </span>
+              </div>
+            </div>
+
+            {/* Availability Alerts */}
+            {rescheduleSlotGeneration.isPastDate && (
+              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>
+                  <strong>Past Date:</strong> Cannot reschedule appointments to a past date. Please select today or a future date.
+                </span>
+              </div>
+            )}
+
+            {rescheduleSlotGeneration.isFutureSchedule && (
+              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  <strong>Schedule Not Yet Started:</strong> {rescheduleSlotGeneration.message}
+                </span>
+              </div>
+            )}
+
+            {rescheduleSlotGeneration.outsideEffectiveRange && !rescheduleSlotGeneration.isFutureSchedule && (
+              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  <strong>Schedule Expired:</strong> {rescheduleSlotGeneration.message}
+                </span>
+              </div>
+            )}
+
+            {rescheduleSlotGeneration.outsideAdvanceWindow && (
+              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  <strong>Advance Window Exceeded:</strong> {rescheduleSlotGeneration.message}
+                </span>
+              </div>
+            )}
+
+            {rescheduleSlotGeneration.sameDayDisallowed && (
+              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  <strong>Policy Restriction:</strong> {rescheduleSlotGeneration.message}
+                </span>
+              </div>
+            )}
+
+            {rescheduleSlotGeneration.isOnLeave && (
+              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>
+                  <strong>Doctor Unavailable:</strong> {rescheduleSlotGeneration.message}
+                </span>
+              </div>
+            )}
+
+            {!rescheduleSlotGeneration.isDoctorWorkingDay &&
+              !rescheduleSlotGeneration.isOnLeave &&
+              !rescheduleSlotGeneration.isPastDate &&
+              !rescheduleSlotGeneration.outsideEffectiveRange &&
+              !rescheduleSlotGeneration.sameDayDisallowed &&
+              !rescheduleSlotGeneration.outsideAdvanceWindow && (
+                <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    <strong>Non-Consulting Day:</strong> {rescheduleSlotGeneration.message}
+                  </span>
+                </div>
+              )}
+
+            {rescheduleSlotGeneration.slots.length > 0 ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-48 overflow-y-auto p-1">
+                  {rescheduleSlotGeneration.slots.map((slot) => {
+                    const isSelected = rescheduleForm.newTime === slot.time;
+                    const isAvailable = slot.isAvailable;
+
+                    return (
+                      <button
+                        key={slot.time}
+                        type="button"
+                        disabled={!isAvailable}
+                        onClick={() => setRescheduleForm({ ...rescheduleForm, newTime: slot.time })}
+                        title={slot.reason || slot.time}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-semibold transition-all text-center relative ${
+                          isSelected
+                            ? 'bg-teal-600 text-white shadow-sm ring-2 ring-teal-300'
+                            : isAvailable
+                            ? 'bg-white border border-slate-200 text-slate-800 hover:border-teal-400 hover:bg-teal-50/50'
+                            : slot.status === 'passed' || slot.status === 'outside_hours'
+                            ? 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
+                            : slot.status === 'booked_doctor'
+                            ? 'bg-slate-200/90 border border-slate-300 text-slate-600 cursor-not-allowed'
+                            : slot.status === 'occupied_room'
+                            ? 'bg-purple-50 border border-purple-200 text-purple-600 cursor-not-allowed'
+                            : slot.status === 'break'
+                            ? 'bg-amber-50/80 border border-amber-200 text-amber-700/80 cursor-not-allowed line-through'
+                            : slot.status === 'leave'
+                            ? 'bg-rose-50 border border-rose-200 text-rose-600/80 cursor-not-allowed line-through'
+                            : 'bg-orange-50 border border-orange-200 text-orange-600 cursor-not-allowed'
+                        }`}
+                      >
+                        {slot.time}
+                        {!isAvailable && (
+                          <span className="block text-[8px] font-normal tracking-tighter truncate">
+                            {slot.status === 'passed' || slot.status === 'outside_hours'
+                              ? 'Passed'
+                              : slot.status === 'booked_doctor'
+                              ? 'Doctor Booked'
+                              : slot.status === 'occupied_room'
+                              ? 'Chamber Occupied'
+                              : slot.status === 'break'
+                              ? 'Scheduled Break'
+                              : slot.status === 'leave'
+                              ? 'Specialist Leave'
+                              : 'Notice Required'}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/60 px-1">
+                  <span>
+                    <strong>{rescheduleSlotGeneration.slots.filter((s) => s.isAvailable).length}</strong> available slots
+                  </span>
+                  <div className="flex items-center gap-3 text-[10px]">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded bg-white border border-slate-300 inline-block" /> Open
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded bg-teal-600 inline-block" /> Selected
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded bg-slate-200 inline-block" /> Booked
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              !rescheduleSlotGeneration.isPastDate &&
+              !rescheduleSlotGeneration.isOnLeave &&
+              rescheduleSlotGeneration.isDoctorWorkingDay && (
+                <div className="p-3 text-center text-slate-400 text-xs">
+                  No consultation slots configured for this specialist on this date.
+                </div>
+              )
+            )}
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+              Reason for Rescheduling <span className="text-rose-500">*</span>
+            </label>
+            <Input
+              value={rescheduleForm.reason}
+              onChange={(e) => setRescheduleForm({ ...rescheduleForm, reason: e.target.value })}
+              placeholder="e.g. Patient requested morning slot, Doctor emergency surgery rescheduled"
+              required
+            />
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {[
+                'Patient requested alternate date',
+                'Awaiting pathology / test reports',
+                'Physician OPD roster adjustment',
+                'Routine patient follow-up postponement',
+              ].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setRescheduleForm({ ...rescheduleForm, reason: r })}
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200"
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              Rescheduling updates the doctor's calendar queue, frees up the previous slot, preserves payment status, and sends an updated notice to the patient portal.
+            </span>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setIsRescheduleModalOpen(false);
+                setAppointmentToReschedule(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              disabled={!rescheduleForm.newDate || !rescheduleForm.newTime}
+              className="bg-teal-600 hover:bg-teal-700 text-white font-bold"
+            >
+              Confirm Reschedule
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

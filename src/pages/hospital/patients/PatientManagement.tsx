@@ -14,11 +14,16 @@ import {
   HeartPulse,
   Droplet,
   User as UserIcon,
+  Activity,
+  ShieldAlert,
+  Lock,
+  AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
-import { Patient, Gender, BloodGroup, PatientStatus, User } from '../../../types';
+import { Patient, Gender, BloodGroup, PatientStatus, User, Doctor, Appointment } from '../../../types';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -32,11 +37,18 @@ import { EmptyState } from '../../../components/ui/EmptyState';
 
 export const PatientManagement: React.FC = () => {
   const navigate = useNavigate();
-  const { currentHospital } = useAuth();
+  const { currentHospital, user } = useAuth();
   const { showToast } = useNotification();
   const hospId = currentHospital?.id || 'HOSP-001';
 
+  const isNurseOrAdmin =
+    user?.role === 'nurse' ||
+    user?.role === 'hospital_admin' ||
+    user?.role === 'super_admin';
+
   const [patients, setPatients] = useState<Patient[]>(() => MockStorage.getPatients(hospId));
+  const [doctors, setDoctors] = useState<Doctor[]>(() => MockStorage.getDoctors(hospId));
+  const [appointments, setAppointments] = useState<Appointment[]>(() => MockStorage.getAppointments(hospId));
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [genderFilter, setGenderFilter] = useState<string>('all');
@@ -54,25 +66,48 @@ export const PatientManagement: React.FC = () => {
     email: '',
     password: '',
     phone: '',
-    dateOfBirth: '1990-01-01',
-    age: 36,
+    dateOfBirth: '',
+    age: 0,
     gender: 'Male' as Gender,
     bloodGroup: 'O+' as BloodGroup,
     address: '',
     emergencyContactName: '',
     emergencyContactPhone: '',
-    emergencyContactRelation: 'Spouse',
+    emergencyContactRelation: '',
     status: 'Outpatient' as PatientStatus,
-    allergies: 'None',
-    medicalHistory: 'None',
+    allergies: '',
+    medicalHistory: '',
+    assignedDoctorId: '',
+    roomBedNumber: '',
+    bloodPressure: '120/80 mmHg',
+    heartRate: 72,
+    temperature: 98.6,
+    oxygenLevel: 99,
+    weightKg: 70,
   });
 
   const refreshData = () => {
     setPatients(MockStorage.getPatients(hospId));
+    setDoctors(MockStorage.getDoctors(hospId));
+    setAppointments(MockStorage.getAppointments(hospId));
+  };
+
+  const isPatientCheckedIn = (patId?: string): boolean => {
+    if (!patId) return false;
+    const pat = patients.find((p) => p.id === patId);
+    if (pat?.status === 'Inpatient') return true;
+    return appointments.some(
+      (a) =>
+        a.patientId === patId &&
+        (a.status === 'Checked In' ||
+          a.status === 'In Consultation' ||
+          a.status === 'Completed')
+    );
   };
 
   useEffect(() => {
     refreshData();
+    MockStorage.syncWithBackend?.().then?.(() => refreshData()).catch?.(() => {});
     const handleStorageUpdate = () => {
       refreshData();
     };
@@ -99,23 +134,45 @@ export const PatientManagement: React.FC = () => {
   const totalPages = Math.ceil(filtered.length / pageSize);
   const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
+  const handleDobChange = (dob: string) => {
+    let calculatedAge = formData.age;
+    if (dob) {
+      const birthDate = new Date(dob);
+      const today = new Date();
+      let age = today.getFullYear() - birthDate.getFullYear();
+      const m = today.getMonth() - birthDate.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+        age--;
+      }
+      calculatedAge = age >= 0 ? age : 0;
+    }
+    setFormData((prev) => ({ ...prev, dateOfBirth: dob, age: calculatedAge }));
+  };
+
   const handleOpenAdd = () => {
     setFormData({
       name: '',
       email: '',
       password: '',
       phone: '',
-      dateOfBirth: '1992-05-15',
-      age: 34,
+      dateOfBirth: '',
+      age: 0,
       gender: 'Male',
-      bloodGroup: 'A+',
+      bloodGroup: 'O+',
       address: '',
       emergencyContactName: '',
       emergencyContactPhone: '',
-      emergencyContactRelation: 'Spouse',
+      emergencyContactRelation: '',
       status: 'Outpatient',
       allergies: '',
       medicalHistory: '',
+      assignedDoctorId: doctors[0]?.id || '',
+      roomBedNumber: '',
+      bloodPressure: '120/80 mmHg',
+      heartRate: 72,
+      temperature: 98.6,
+      oxygenLevel: 99,
+      weightKg: 70,
     });
     setIsAddModalOpen(true);
   };
@@ -123,21 +180,28 @@ export const PatientManagement: React.FC = () => {
   const handleOpenEdit = (patient: Patient) => {
     setSelectedPatient(patient);
     setFormData({
-      name: patient.name,
-      email: patient.email,
+      name: patient.name || '',
+      email: patient.email || '',
       password: '',
-      phone: patient.phone,
-      dateOfBirth: patient.dateOfBirth,
-      age: patient.age,
-      gender: patient.gender,
-      bloodGroup: patient.bloodGroup,
-      address: patient.address,
-      emergencyContactName: patient.emergencyContactName,
-      emergencyContactPhone: patient.emergencyContactPhone,
-      emergencyContactRelation: patient.emergencyContactRelation,
-      status: patient.status,
-      allergies: patient.allergies.join(', '),
-      medicalHistory: patient.medicalHistory.join(', '),
+      phone: patient.phone || '',
+      dateOfBirth: patient.dateOfBirth || '',
+      age: patient.age || 0,
+      gender: patient.gender || 'Male',
+      bloodGroup: patient.bloodGroup || 'O+',
+      address: patient.address || '',
+      emergencyContactName: patient.emergencyContactName || '',
+      emergencyContactPhone: patient.emergencyContactPhone || '',
+      emergencyContactRelation: patient.emergencyContactRelation || '',
+      status: patient.status || 'Outpatient',
+      allergies: Array.isArray(patient.allergies) ? patient.allergies.join(', ') : '',
+      medicalHistory: Array.isArray(patient.medicalHistory) ? patient.medicalHistory.join(', ') : '',
+      assignedDoctorId: patient.assignedDoctorId || '',
+      roomBedNumber: patient.roomBedNumber || '',
+      bloodPressure: patient.vitals?.bloodPressure || '120/80 mmHg',
+      heartRate: patient.vitals?.heartRate || 72,
+      temperature: patient.vitals?.temperature || 98.6,
+      oxygenLevel: patient.vitals?.oxygenLevel || 99,
+      weightKg: patient.vitals?.weightKg || 70,
     });
     setIsEditModalOpen(true);
   };
@@ -149,48 +213,77 @@ export const PatientManagement: React.FC = () => {
       return;
     }
 
-    const allergiesArray = formData.allergies
-      ? formData.allergies.split(',').map((s) => s.trim()).filter(Boolean)
-      : ['None Reported'];
+    const isCheckedIn = isEditModalOpen && selectedPatient ? isPatientCheckedIn(selectedPatient.id) : false;
+    const canRecordIntake = isNurseOrAdmin && isCheckedIn;
 
-    const historyArray = formData.medicalHistory
-      ? formData.medicalHistory.split(',').map((s) => s.trim()).filter(Boolean)
-      : ['Routine Health Checkup'];
+    const allergiesArray = canRecordIntake
+      ? (formData.allergies ? formData.allergies.split(',').map((s) => s.trim()).filter(Boolean) : [])
+      : (selectedPatient?.allergies || []);
+
+    const historyArray = canRecordIntake
+      ? (formData.medicalHistory ? formData.medicalHistory.split(',').map((s) => s.trim()).filter(Boolean) : [])
+      : (selectedPatient?.medicalHistory || []);
+
+    const vitalsData = canRecordIntake && (formData.bloodPressure || formData.heartRate)
+      ? {
+          bloodPressure: formData.bloodPressure || '120/80 mmHg',
+          heartRate: Number(formData.heartRate) || 72,
+          temperature: Number(formData.temperature) || 98.6,
+          oxygenLevel: Number(formData.oxygenLevel) || 99,
+          weightKg: Number(formData.weightKg) || 70,
+          recordedAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
+          recordedBy: user?.name,
+          recordedRole: user?.role === 'nurse' ? 'Registered Nurse' : 'Hospital Admin',
+        }
+      : selectedPatient?.vitals;
 
     if (isEditModalOpen && selectedPatient) {
       const updated: Patient = {
         ...selectedPatient,
-        ...formData,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        dateOfBirth: formData.dateOfBirth,
+        age: Number(formData.age) || 0,
+        gender: formData.gender,
+        bloodGroup: formData.bloodGroup,
+        address: formData.address,
+        emergencyContactName: formData.emergencyContactName,
+        emergencyContactPhone: formData.emergencyContactPhone,
+        emergencyContactRelation: formData.emergencyContactRelation,
+        status: formData.status,
         allergies: allergiesArray,
         medicalHistory: historyArray,
+        vitals: vitalsData,
       };
       MockStorage.savePatient(updated);
       showToast('Patient Record Updated', `${updated.name} profile saved.`);
       setIsEditModalOpen(false);
     } else {
-      const allExisting = MockStorage.getPatients();
-      const existingIds = new Set(allExisting.map((p) => p.id));
-      let nextNum = 1001;
-      while (existingIds.has(`PAT-${nextNum}`)) {
-        nextNum++;
-      }
-      const newPatientId = `PAT-${nextNum}`;
+      const newPatientId = `PAT-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
 
       const newPatient: Patient = {
         id: newPatientId,
         hospitalId: hospId,
-        ...formData,
-        allergies: allergiesArray,
-        medicalHistory: historyArray,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        dateOfBirth: formData.dateOfBirth,
+        age: Number(formData.age) || 0,
+        gender: formData.gender,
+        bloodGroup: formData.bloodGroup,
+        address: formData.address,
+        emergencyContactName: formData.emergencyContactName,
+        emergencyContactPhone: formData.emergencyContactPhone,
+        emergencyContactRelation: formData.emergencyContactRelation,
+        status: formData.status || 'Outpatient',
+        allergies: [],
+        medicalHistory: [],
         registeredDate: new Date().toISOString().split('T')[0],
-        vitals: {
-          bloodPressure: '120/80 mmHg',
-          heartRate: 72,
-          temperature: 98.6,
-          oxygenLevel: 99,
-          weightKg: 70,
-          recordedAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
-        },
+        assignedDoctorId: undefined,
+        assignedDoctorName: undefined,
+        roomBedNumber: undefined,
+        vitals: undefined,
       };
       MockStorage.savePatient(newPatient);
 
@@ -210,7 +303,12 @@ export const PatientManagement: React.FC = () => {
           status: 'active',
           createdAt: new Date().toISOString(),
         };
-        MockStorage.saveUser(newUser);
+        const userRes = MockStorage.saveUser(newUser);
+        if (!userRes.success) {
+          MockStorage.deletePatient(newPatient.id);
+          showToast('Duplicate Account', userRes.error || 'A user with this email already exists in this hospital.', 'error');
+          return;
+        }
       }
 
       showToast('Patient Registered & Credentials Created', `${newPatient.name} registered with Patient Portal login (${formData.email || 'Phone ID'}).`);
@@ -438,6 +536,23 @@ export const PatientManagement: React.FC = () => {
         maxWidth="2xl"
       >
         <form onSubmit={handleSavePatient} className="space-y-4">
+          {/* Patient EHR ID Auto-Generated Banner */}
+          <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl">
+            <div>
+              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                Electronic Health Record (EHR) ID
+              </span>
+              <span className="text-xs text-slate-700 font-medium">
+                {isEditModalOpen ? (
+                  <>Patient ID: <span className="font-mono font-bold text-indigo-700">{selectedPatient?.id}</span></>
+                ) : (
+                  <>Patient ID: <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">Auto-Generated by System</span></>
+                )}
+              </span>
+            </div>
+            <Badge variant="purple" size="sm">Auto Generated</Badge>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="Full Legal Name *"
@@ -460,7 +575,7 @@ export const PatientManagement: React.FC = () => {
               label="Date of Birth"
               type="date"
               value={formData.dateOfBirth}
-              onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
+              onChange={(e) => handleDobChange(e.target.value)}
             />
             <Input
               label="Age (Years)"
@@ -516,6 +631,154 @@ export const PatientManagement: React.FC = () => {
             />
           </div>
 
+          {/* Clinical Vitals Intake & Clinical Warnings Policy Enforcement */}
+          {isAddModalOpen && (
+            <div className="pt-2 border-t border-slate-100">
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/90 flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
+                  <ShieldAlert className="w-4 h-4 text-indigo-600" />
+                </div>
+                <div className="text-xs">
+                  <p className="font-bold text-slate-800">Clinical Intake Post Check-In Only</p>
+                  <p className="text-slate-500 mt-0.5 leading-relaxed">
+                    <strong>Clinical Vitals Intake</strong> and <strong>Clinical Warnings & Medical History</strong> are restricted to <strong>Registered Nurses</strong> and <strong>Hospital Admins</strong> and can only be recorded once the patient arrives and checks in at reception.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isEditModalOpen && !isNurseOrAdmin && (
+            <div className="pt-2 border-t border-slate-100">
+              <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 flex items-start gap-3">
+                <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-xs">
+                  <p className="font-bold text-amber-900">Restricted Clinical Fields</p>
+                  <p className="text-amber-700 mt-0.5 leading-relaxed">
+                    Only <strong>Registered Nurses</strong> and <strong>Hospital Admins</strong> are authorized to record or update <strong>Clinical Vitals Intake</strong> and <strong>Clinical Warnings & Medical History</strong>.
+                  </p>
+                  {selectedPatient?.vitals && (
+                    <div className="mt-2.5 flex flex-wrap gap-2 text-[11px] text-slate-600">
+                      <span className="px-2 py-0.5 rounded-md bg-white border border-amber-200 font-medium">BP: {selectedPatient.vitals.bloodPressure || 'N/A'}</span>
+                      <span className="px-2 py-0.5 rounded-md bg-white border border-amber-200 font-medium">Pulse: {selectedPatient.vitals.heartRate || 'N/A'} bpm</span>
+                      <span className="px-2 py-0.5 rounded-md bg-white border border-amber-200 font-medium">Temp: {selectedPatient.vitals.temperature || 'N/A'} °F</span>
+                      <span className="px-2 py-0.5 rounded-md bg-white border border-amber-200 font-medium">SpO2: {selectedPatient.vitals.oxygenLevel || 'N/A'}%</span>
+                      <span className="px-2 py-0.5 rounded-md bg-white border border-amber-200 font-medium">Weight: {selectedPatient.vitals.weightKg || 'N/A'} kg</span>
+                    </div>
+                  )}
+                  {selectedPatient?.allergies && selectedPatient.allergies.length > 0 && (
+                    <div className="mt-1.5 text-[11px] text-rose-700 font-medium">
+                      Allergies on file: {selectedPatient.allergies.join(', ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isEditModalOpen && isNurseOrAdmin && !isPatientCheckedIn(selectedPatient?.id) && (
+            <div className="pt-2 border-t border-slate-100">
+              <div className="p-3.5 rounded-xl bg-rose-50/70 border border-rose-200 flex items-start gap-3">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="text-xs">
+                  <p className="font-bold text-rose-900">Patient Check-In Required</p>
+                  <p className="text-rose-700 mt-0.5 leading-relaxed">
+                    Clinical Vitals Intake and Clinical Warnings & Medical History can only be entered <strong>after the patient has checked in</strong> for an appointment at reception. This patient currently has no active check-in.
+                  </p>
+                  {selectedPatient?.vitals && (
+                    <div className="mt-2.5 flex flex-wrap gap-2 text-[11px] text-slate-600">
+                      <span className="px-2 py-0.5 rounded-md bg-white border border-rose-200 font-medium">Last BP: {selectedPatient.vitals.bloodPressure || 'N/A'}</span>
+                      <span className="px-2 py-0.5 rounded-md bg-white border border-rose-200 font-medium">Last Pulse: {selectedPatient.vitals.heartRate || 'N/A'} bpm</span>
+                      <span className="px-2 py-0.5 rounded-md bg-white border border-rose-200 font-medium">Last Temp: {selectedPatient.vitals.temperature || 'N/A'} °F</span>
+                      <span className="px-2 py-0.5 rounded-md bg-white border border-rose-200 font-medium">SpO2: {selectedPatient.vitals.oxygenLevel || 'N/A'}%</span>
+                      <span className="px-2 py-0.5 rounded-md bg-white border border-rose-200 font-medium">Weight: {selectedPatient.vitals.weightKg || 'N/A'} kg</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isEditModalOpen && isNurseOrAdmin && isPatientCheckedIn(selectedPatient?.id) && (
+            <>
+              <div className="pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <Activity className="w-4 h-4 text-emerald-600" />
+                    Clinical Vitals Intake
+                  </h4>
+                  <Badge variant="success" size="sm" dot>
+                    Patient Checked In • {user?.role === 'nurse' ? 'Registered Nurse' : 'Hospital Admin'} Authorized
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <Input
+                    label="Blood Pressure"
+                    value={formData.bloodPressure}
+                    onChange={(e) => setFormData({ ...formData, bloodPressure: e.target.value })}
+                    placeholder="120/80 mmHg"
+                  />
+                  <Input
+                    label="Heart Rate (bpm)"
+                    type="number"
+                    value={formData.heartRate}
+                    onChange={(e) => setFormData({ ...formData, heartRate: Number(e.target.value) })}
+                    placeholder="72"
+                  />
+                  <Input
+                    label="Temp (°F)"
+                    type="number"
+                    step="0.1"
+                    value={formData.temperature}
+                    onChange={(e) => setFormData({ ...formData, temperature: Number(e.target.value) })}
+                    placeholder="98.6"
+                  />
+                  <Input
+                    label="SpO2 (%)"
+                    type="number"
+                    value={formData.oxygenLevel}
+                    onChange={(e) => setFormData({ ...formData, oxygenLevel: Number(e.target.value) })}
+                    placeholder="99"
+                  />
+                  <Input
+                    label="Weight (kg)"
+                    type="number"
+                    step="0.1"
+                    value={formData.weightKg}
+                    onChange={(e) => setFormData({ ...formData, weightKg: Number(e.target.value) })}
+                    placeholder="70"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <HeartPulse className="w-4 h-4 text-rose-500" />
+                    Clinical Warnings & Medical History
+                  </h4>
+                  <Badge variant="success" size="sm" dot>
+                    Intake Open
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Input
+                    label="Known Drug / Food Allergies (Comma separated)"
+                    value={formData.allergies}
+                    onChange={(e) => setFormData({ ...formData, allergies: e.target.value })}
+                    placeholder="e.g. Penicillin, Peanuts"
+                  />
+                  <Input
+                    label="Past Medical Conditions"
+                    value={formData.medicalHistory}
+                    onChange={(e) => setFormData({ ...formData, medicalHistory: e.target.value })}
+                    placeholder="e.g. Hypertension, Asthma"
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Input
               label="Patient Portal Password"
@@ -554,26 +817,6 @@ export const PatientManagement: React.FC = () => {
                 value={formData.emergencyContactRelation}
                 onChange={(e) => setFormData({ ...formData, emergencyContactRelation: e.target.value })}
                 placeholder="Spouse / Parent"
-              />
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-100">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-              Clinical Warnings & Medical History
-            </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Input
-                label="Known Drug / Food Allergies (Comma separated)"
-                value={formData.allergies}
-                onChange={(e) => setFormData({ ...formData, allergies: e.target.value })}
-                placeholder="e.g. Penicillin, Peanuts"
-              />
-              <Input
-                label="Past Medical Conditions"
-                value={formData.medicalHistory}
-                onChange={(e) => setFormData({ ...formData, medicalHistory: e.target.value })}
-                placeholder="e.g. Hypertension, Asthma"
               />
             </div>
           </div>

@@ -7,6 +7,8 @@ import {
   formatDisplayDate,
   addDays,
   getHospitalTodayDate,
+  getHospitalMinutesSinceMidnight,
+  getHospitalLocalTime,
   getScheduleDateConstraints,
   findNextConsultingDate,
   generateDoctorTimeSlots,
@@ -477,5 +479,287 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
     const nextDate = findNextConsultingDate(baseSchedule, '2026-10-17');
     assert.equal(nextDate, '2026-10-19');
     assert.equal(getDayOfWeekName(nextDate!), 'Monday');
+  });
+
+  // Test 11: Exact 9:34 AM Time-Based Passed Slot Rule (Requirement 1, 2, 7)
+  test('Requirements 1, 2, 7: At 9:34 AM local time, 9:00 AM and 9:30 AM slots are marked Passed; future slots are not Passed', () => {
+    // Create a schedule that operates Mon-Sun from 08:00 AM to 02:00 PM with 30-min slots
+    const dailySchedule: DoctorSchedule = {
+      ...baseSchedule,
+      workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+      consultationStartTime: '08:00 AM',
+      consultationEndTime: '02:00 PM',
+      breaks: [],
+    };
+
+    // Reference time: 2026-10-17 09:34:00 in Asia/Kolkata (+05:30)
+    // 09:34 AM IST is 04:04 AM UTC on 2026-10-17
+    const mockRefDate = new Date('2026-10-17T09:34:00+05:30');
+    const todayStr = getHospitalTodayDate('Asia/Kolkata', mockRefDate);
+    assert.equal(todayStr, '2026-10-17');
+
+    const minutesNow = getHospitalMinutesSinceMidnight('Asia/Kolkata', mockRefDate);
+    assert.equal(minutesNow, 9 * 60 + 34); // 574 minutes
+
+    // Settings with minAdvanceBookingHours: 0 (immediate booking permitted up to slot start)
+    const zeroNoticeSettings: AppointmentSettings = {
+      ...baseSettings,
+      minAdvanceBookingHours: 0,
+    };
+
+    const result = generateDoctorTimeSlots(
+      dailySchedule,
+      todayStr,
+      [],
+      [],
+      undefined,
+      zeroNoticeSettings,
+      'Asia/Kolkata',
+      mockRefDate
+    );
+
+    // 08:00 AM, 08:30 AM, 09:00 AM, 09:30 AM slots must all be marked 'passed'
+    const slot0900 = result.slots.find((s) => s.time === '09:00 AM');
+    assert.equal(slot0900?.isAvailable, false);
+    assert.equal(slot0900?.status, 'passed');
+    assert.equal(slot0900?.reason, 'Slot time has already passed today');
+
+    const slot0930 = result.slots.find((s) => s.time === '09:30 AM');
+    assert.equal(slot0930?.isAvailable, false);
+    assert.equal(slot0930?.status, 'passed');
+    assert.equal(slot0930?.reason, 'Slot time has already passed today');
+
+    // 10:00 AM slot start time is 10:00 AM (600 mins) > 9:34 AM (574 mins) -> NOT Passed!
+    const slot1000 = result.slots.find((s) => s.time === '10:00 AM');
+    assert.notEqual(slot1000?.status, 'passed');
+    assert.equal(slot1000?.isAvailable, true);
+    assert.equal(slot1000?.status, 'available');
+
+    // 10:30 AM, 11:00 AM, 11:30 AM must also be available
+    const slot1030 = result.slots.find((s) => s.time === '10:30 AM');
+    assert.equal(slot1030?.isAvailable, true);
+
+    // On tomorrow's date, 09:00 AM and 09:30 AM must NOT be marked passed
+    const tomorrowStr = addDays(todayStr, 1);
+    const tomorrowResult = generateDoctorTimeSlots(
+      dailySchedule,
+      tomorrowStr,
+      [],
+      [],
+      undefined,
+      zeroNoticeSettings,
+      'Asia/Kolkata',
+      mockRefDate
+    );
+    const tomorrowSlot0900 = tomorrowResult.slots.find((s) => s.time === '09:00 AM');
+    assert.equal(tomorrowSlot0900?.isAvailable, true);
+    assert.equal(tomorrowSlot0900?.status, 'available');
+  });
+
+  // Test 12: Clearly distinguishes all 6 statuses (Requirement 5)
+  test('Requirement 5: Clearly distinguishes Passed, Doctor Booked, Chamber Occupied, Scheduled Break, Specialist Leave, and Available', () => {
+    const mockRefDate = new Date('2026-10-17T09:34:00+05:30');
+    const todayStr = '2026-10-17';
+
+    const testSchedule: DoctorSchedule = {
+      ...baseSchedule,
+      workingDays: ['Saturday'],
+      consultationStartTime: '09:00 AM',
+      consultationEndTime: '02:00 PM',
+      slotDurationMinutes: 30,
+      opdRoomId: 'ROOM-101',
+      breaks: [
+        { id: 'BRK-LUNCH', name: 'Lunch Break', startTime: '12:00 PM', endTime: '12:30 PM' },
+      ],
+    };
+
+    const appointments: Appointment[] = [
+      // Doctor Booked at 10:30 AM
+      {
+        id: 'APT-DOC',
+        hospitalId: 'HOSP-001',
+        patientId: 'PAT-1',
+        patientName: 'John Doe',
+        patientPhone: '555-1111',
+        patientAge: 40,
+        patientGender: 'Male',
+        doctorId: testSchedule.doctorId,
+        doctorName: 'Dr. John Test',
+        doctorSpecialization: 'Cardiologist',
+        departmentId: 'DEP-101',
+        departmentName: 'Cardiology',
+        opdRoomId: 'ROOM-101',
+        appointmentDate: todayStr,
+        appointmentTime: '10:30 AM',
+        type: 'Consultation',
+        status: 'Confirmed',
+        fee: 150,
+        paymentStatus: 'Paid',
+        reason: 'Review',
+        createdAt: '2026-10-10',
+      },
+      // Chamber Occupied by another doctor at 11:00 AM
+      {
+        id: 'APT-CHAMBER',
+        hospitalId: 'HOSP-001',
+        patientId: 'PAT-2',
+        patientName: 'Jane Smith',
+        patientPhone: '555-2222',
+        patientAge: 35,
+        patientGender: 'Female',
+        doctorId: 'DOC-ANOTHER',
+        doctorName: 'Dr. Jane Other',
+        doctorSpecialization: 'Neurologist',
+        departmentId: 'DEP-102',
+        departmentName: 'Neurology',
+        opdRoomId: 'ROOM-101', // Same OPD chamber
+        appointmentDate: todayStr,
+        appointmentTime: '11:00 AM',
+        type: 'Consultation',
+        status: 'Confirmed',
+        fee: 150,
+        paymentStatus: 'Paid',
+        reason: 'Consultation',
+        createdAt: '2026-10-10',
+      },
+    ];
+
+    const unavailabilities: DoctorUnavailablePeriod[] = [
+      // Specialist Leave at 11:30 AM - 12:00 PM
+      {
+        id: 'UNAV-LEAVE',
+        hospitalId: 'HOSP-001',
+        doctorId: testSchedule.doctorId,
+        type: 'Leave',
+        title: 'Clinical Case Conference',
+        startDate: todayStr,
+        endDate: todayStr,
+        startTime: '11:30 AM',
+        endTime: '12:00 PM',
+        isAllDay: false,
+      },
+    ];
+
+    const result = generateDoctorTimeSlots(
+      testSchedule,
+      todayStr,
+      appointments,
+      unavailabilities,
+      'ROOM-101',
+      { ...baseSettings, minAdvanceBookingHours: 0, appointmentBufferMinutes: 0 },
+      'Asia/Kolkata',
+      mockRefDate
+    );
+
+    // 1. Passed (09:00 AM and 09:30 AM at 9:34 AM)
+    const slot0900 = result.slots.find((s) => s.time === '09:00 AM');
+    assert.equal(slot0900?.status, 'passed');
+
+    // 2. Available (10:00 AM)
+    const slot1000 = result.slots.find((s) => s.time === '10:00 AM');
+    assert.equal(slot1000?.status, 'available');
+    assert.equal(slot1000?.isAvailable, true);
+
+    // 3. Doctor Booked (10:30 AM)
+    const slot1030 = result.slots.find((s) => s.time === '10:30 AM');
+    assert.equal(slot1030?.status, 'booked_doctor');
+    assert.equal(slot1030?.isAvailable, false);
+
+    // 4. Chamber Occupied (11:00 AM)
+    const slot1100 = result.slots.find((s) => s.time === '11:00 AM');
+    assert.equal(slot1100?.status, 'occupied_room');
+    assert.equal(slot1100?.isAvailable, false);
+
+    // 5. Specialist Leave (11:30 AM)
+    const slot1130 = result.slots.find((s) => s.time === '11:30 AM');
+    assert.equal(slot1130?.status, 'leave');
+    assert.equal(slot1130?.isAvailable, false);
+
+    // 6. Scheduled Break (12:00 PM)
+    const slot1200 = result.slots.find((s) => s.time === '12:00 PM');
+    assert.equal(slot1200?.status, 'break');
+    assert.equal(slot1200?.isAvailable, false);
+  });
+
+  // Test 13: Stale state prevention and past-slot booking rejection (Requirement 6)
+  test('Requirement 6: Strictly rejects booking attempts for passed slots, even if frontend state was stale', () => {
+    const mockRefDate = new Date('2026-10-17T09:34:00+05:30');
+    const todayStr = '2026-10-17';
+
+    const dailySchedule: DoctorSchedule = {
+      ...baseSchedule,
+      workingDays: ['Saturday'],
+      consultationStartTime: '08:00 AM',
+      consultationEndTime: '02:00 PM',
+      breaks: [],
+    };
+
+    // Stale booking attempt for 09:00 AM (already passed at 9:34 AM)
+    const validation0900 = validateBookingAvailability(
+      {
+        doctorId: dailySchedule.doctorId,
+        appointmentDate: todayStr,
+        appointmentTime: '09:00 AM',
+      },
+      dailySchedule,
+      [],
+      [],
+      { ...baseSettings, minAdvanceBookingHours: 0 },
+      'Asia/Kolkata',
+      mockRefDate
+    );
+    assert.equal(validation0900.isValid, false);
+    assert.match(validation0900.errorMessage || '', /already passed/i);
+
+    // Stale booking attempt for 09:30 AM (also passed at 9:34 AM)
+    const validation0930 = validateBookingAvailability(
+      {
+        doctorId: dailySchedule.doctorId,
+        appointmentDate: todayStr,
+        appointmentTime: '09:30 AM',
+      },
+      dailySchedule,
+      [],
+      [],
+      { ...baseSettings, minAdvanceBookingHours: 0 },
+      'Asia/Kolkata',
+      mockRefDate
+    );
+    assert.equal(validation0930.isValid, false);
+    assert.match(validation0930.errorMessage || '', /already passed/i);
+
+    // Future booking attempt for 10:00 AM with zero notice policy succeeds
+    const validation1000 = validateBookingAvailability(
+      {
+        doctorId: dailySchedule.doctorId,
+        appointmentDate: todayStr,
+        appointmentTime: '10:00 AM',
+      },
+      dailySchedule,
+      [],
+      [],
+      { ...baseSettings, minAdvanceBookingHours: 0 },
+      'Asia/Kolkata',
+      mockRefDate
+    );
+    assert.equal(validation1000.isValid, true);
+  });
+
+  // Test 14: Hospital Timezone dynamic calculation (Requirement 1, 7)
+  test('Requirements 1 & 7: Dynamic timezone calculations without hardcoded times or UTC date offset errors', () => {
+    // When it is 2026-10-17 00:30 UTC:
+    // In Asia/Kolkata (+05:30): it is 2026-10-17 06:00 AM (360 mins)
+    // In America/New_York (-04:00): it is 2026-10-16 08:30 PM (1230 mins)
+    const refUtc = new Date('2026-10-17T00:30:00Z');
+
+    const kolkataDate = getHospitalTodayDate('Asia/Kolkata', refUtc);
+    const kolkataMins = getHospitalMinutesSinceMidnight('Asia/Kolkata', refUtc);
+    assert.equal(kolkataDate, '2026-10-17');
+    assert.equal(kolkataMins, 6 * 60);
+
+    const nyDate = getHospitalTodayDate('America/New_York', refUtc);
+    const nyMins = getHospitalMinutesSinceMidnight('America/New_York', refUtc);
+    assert.equal(nyDate, '2026-10-16');
+    assert.equal(nyMins, 20 * 60 + 30);
   });
 });

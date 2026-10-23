@@ -84,15 +84,15 @@ export function getHospitalTimezone(
   }
 }
 
-export function getHospitalTodayDate(timeZone?: string): string {
+export function getHospitalTodayDate(timeZone?: string, referenceDate: Date = new Date()): string {
   try {
-    const tz = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const tz = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
-    }).formatToParts(new Date());
+    }).formatToParts(referenceDate);
 
     const year = parts.find((p) => p.type === 'year')?.value;
     const month = parts.find((p) => p.type === 'month')?.value;
@@ -103,31 +103,42 @@ export function getHospitalTodayDate(timeZone?: string): string {
   } catch (e) {
     // Fallback if formatting fails
   }
-  const now = new Date();
+  const now = referenceDate;
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
 
-export function getHospitalMinutesSinceMidnight(timeZone?: string): number {
+export function getHospitalMinutesSinceMidnight(timeZone?: string, referenceDate: Date = new Date()): number {
   try {
-    const tz = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const tz = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
       hour: 'numeric',
       minute: 'numeric',
       hour12: false,
-    }).formatToParts(new Date());
+      hourCycle: 'h23',
+    }).formatToParts(referenceDate);
 
     let hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
     if (hour === 24) hour = 0;
     const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
     return hour * 60 + minute;
   } catch (e) {
-    const now = new Date();
+    const now = referenceDate;
     return now.getHours() * 60 + now.getMinutes();
   }
+}
+
+export function getHospitalLocalTime(
+  timeZone?: string,
+  referenceDate: Date = new Date()
+): { dateStr: string; minutesSinceMidnight: number; displayTime: string } {
+  const dateStr = getHospitalTodayDate(timeZone, referenceDate);
+  const minutesSinceMidnight = getHospitalMinutesSinceMidnight(timeZone, referenceDate);
+  const displayTime = minutesToTime(minutesSinceMidnight);
+  return { dateStr, minutesSinceMidnight, displayTime };
 }
 
 export interface ScheduleDateConstraints {
@@ -143,9 +154,10 @@ export interface ScheduleDateConstraints {
 export function getScheduleDateConstraints(
   schedule: DoctorSchedule | undefined,
   settings?: AppointmentSettings,
-  timeZone?: string
+  timeZone?: string,
+  referenceDate?: Date
 ): ScheduleDateConstraints {
-  const todayDate = getHospitalTodayDate(timeZone);
+  const todayDate = getHospitalTodayDate(timeZone, referenceDate);
   let minDate = todayDate;
 
   if (settings && !settings.allowSameDayBooking) {
@@ -226,7 +238,15 @@ export function findNextConsultingDate(
 export interface GeneratedSlot {
   time: string;
   isAvailable: boolean;
-  status: 'available' | 'booked_doctor' | 'occupied_room' | 'break' | 'leave' | 'outside_hours';
+  status:
+    | 'available'
+    | 'passed'
+    | 'booked_doctor'
+    | 'occupied_room'
+    | 'break'
+    | 'leave'
+    | 'notice_required'
+    | 'outside_hours';
   reason?: string;
   appointmentId?: string;
 }
@@ -246,7 +266,8 @@ export interface SlotGenerationResult {
 
 /**
  * Generates all time slots for a given doctor on a specific date based on their schedule,
- * excluding breaks, doctor leaves, holidays, unavailable periods, and already-booked doctor or room slots.
+ * excluding passed slots, booking notice limits, breaks, doctor leaves, holidays, unavailable periods,
+ * and already-booked doctor or room slots.
  */
 export function generateDoctorTimeSlots(
   schedule: DoctorSchedule | undefined,
@@ -255,7 +276,8 @@ export function generateDoctorTimeSlots(
   doctorUnavailabilities: DoctorUnavailablePeriod[],
   selectedOPDRoomId?: string,
   settings?: AppointmentSettings,
-  timeZone?: string
+  timeZone?: string,
+  referenceDate?: Date
 ): SlotGenerationResult {
   if (!schedule) {
     return {
@@ -267,7 +289,7 @@ export function generateDoctorTimeSlots(
     };
   }
 
-  const todayStr = getHospitalTodayDate(timeZone);
+  const todayStr = getHospitalTodayDate(timeZone, referenceDate);
 
   // 1. Past date validation
   if (dateStr < todayStr) {
@@ -373,8 +395,8 @@ export function generateDoctorTimeSlots(
     (a) => a.appointmentDate === dateStr && a.status !== 'Cancelled'
   );
 
-  const nowMins = dateStr === todayStr ? getHospitalMinutesSinceMidnight(timeZone) : -1;
-  const minNoticeThresholdMins = nowMins >= 0 ? nowMins + minNoticeHours * 60 : -1;
+  const isToday = dateStr === todayStr;
+  const nowMins = isToday ? getHospitalMinutesSinceMidnight(timeZone, referenceDate) : -1;
 
   const slots: GeneratedSlot[] = [];
 
@@ -383,21 +405,45 @@ export function generateDoctorTimeSlots(
     const slotStartMins = m;
     const slotEndMins = m + slotDuration;
 
-    // Notice window and past-slot check for today
-    if (minNoticeThresholdMins >= 0 && slotStartMins < minNoticeThresholdMins) {
+    // 1. Time-based Passed Slot Rule:
+    // Mark a slot as Passed ONLY when its start time is at or before current hospital-local time on selected date.
+    if (isToday && slotStartMins <= nowMins) {
       slots.push({
         time: slotTime,
         isAvailable: false,
-        status: 'outside_hours',
-        reason:
-          slotStartMins <= nowMins
-            ? 'Slot time has already passed today'
-            : `Requires at least ${minNoticeHours} hour(s) advance booking notice`,
+        status: 'passed',
+        reason: 'Slot time has already passed today',
       });
       continue;
     }
 
-    // Check breaks
+    // 2. Minimum Advance Booking Notice Policy:
+    // Enforce booking notice window on un-passed candidate slots
+    if (minNoticeHours > 0) {
+      const minNoticeMins = minNoticeHours * 60;
+      let minutesNotice: number;
+      if (isToday) {
+        minutesNotice = slotStartMins - nowMins;
+      } else {
+        const [tYear, tMonth, tDay] = todayStr.split('-').map(Number);
+        const [dYear, dMonth, dDay] = dateStr.split('-').map(Number);
+        const daysDiff =
+          (Date.UTC(dYear, dMonth - 1, dDay) - Date.UTC(tYear, tMonth - 1, tDay)) / (1000 * 60 * 60 * 24);
+        const currMins = getHospitalMinutesSinceMidnight(timeZone, referenceDate);
+        minutesNotice = daysDiff * 24 * 60 + (slotStartMins - currMins);
+      }
+      if (minutesNotice < minNoticeMins) {
+        slots.push({
+          time: slotTime,
+          isAvailable: false,
+          status: 'notice_required',
+          reason: `Requires at least ${minNoticeHours} hour(s) advance booking notice`,
+        });
+        continue;
+      }
+    }
+
+    // 3. Check Scheduled Breaks
     let isDuringBreak = false;
     let breakName = '';
     if (schedule.breaks && schedule.breaks.length > 0) {
@@ -422,7 +468,7 @@ export function generateDoctorTimeSlots(
       continue;
     }
 
-    // Check partial-day leaves
+    // 4. Check Partial-Day Specialist Leaves
     let isPartialLeave = false;
     let leaveReason = '';
     for (const u of matchingUnavailabilities) {
@@ -442,12 +488,12 @@ export function generateDoctorTimeSlots(
         time: slotTime,
         isAvailable: false,
         status: 'leave',
-        reason: `Unavailable: ${leaveReason}`,
+        reason: `Specialist Leave: ${leaveReason}`,
       });
       continue;
     }
 
-    // Check doctor conflict (already booked or buffer conflict)
+    // 5. Check Doctor conflict (already booked or buffer conflict)
     const conflictingDoctorAppt = dayAppointments.find((a) => {
       if (a.doctorId !== schedule.doctorId) return false;
       const apptStart = timeToMinutes(a.appointmentTime);
@@ -465,14 +511,14 @@ export function generateDoctorTimeSlots(
         isAvailable: false,
         status: 'booked_doctor',
         reason: isDirectMatch
-          ? `Booked for ${conflictingDoctorAppt.patientName} (${conflictingDoctorAppt.id})`
-          : `Post-consultation buffer required (${bufferMins} min turnaround)`,
+          ? `Doctor Booked: consultation for ${conflictingDoctorAppt.patientName} (${conflictingDoctorAppt.id})`
+          : `Doctor Booked: post-consultation buffer required (${bufferMins} min turnaround)`,
         appointmentId: conflictingDoctorAppt.id,
       });
       continue;
     }
 
-    // Check OPD room conflict (room occupied by any doctor in this slot or buffer)
+    // 6. Check OPD room conflict (room occupied by any doctor in this slot or buffer)
     const targetRoomId = selectedOPDRoomId || schedule.opdRoomId;
     if (targetRoomId) {
       const conflictingRoomAppt = dayAppointments.find((a) => {
@@ -492,15 +538,15 @@ export function generateDoctorTimeSlots(
           isAvailable: false,
           status: 'occupied_room',
           reason: isDirectMatch
-            ? `OPD Chamber occupied by ${conflictingRoomAppt.doctorName}`
-            : `OPD Chamber turnaround buffer time (${bufferMins} min)`,
+            ? `Chamber Occupied by ${conflictingRoomAppt.doctorName}`
+            : `Chamber Occupied: turnaround buffer time (${bufferMins} min)`,
           appointmentId: conflictingRoomAppt.id,
         });
         continue;
       }
     }
 
-    // Slot is open and available
+    // 7. Slot is open and available
     slots.push({
       time: slotTime,
       isAvailable: true,
@@ -531,11 +577,12 @@ export function validateBookingAvailability(
   existingAppointments: Appointment[],
   doctorUnavailabilities: DoctorUnavailablePeriod[],
   settings?: AppointmentSettings,
-  timeZone?: string
+  timeZone?: string,
+  referenceDate?: Date
 ): { isValid: boolean; errorMessage?: string } {
   const { doctorId, opdRoomId, appointmentDate, appointmentTime, id: currentId } = appointment;
 
-  const todayStr = getHospitalTodayDate(timeZone);
+  const todayStr = getHospitalTodayDate(timeZone, referenceDate);
 
   // 1. Past date check
   if (appointmentDate < todayStr) {
@@ -587,18 +634,37 @@ export function validateBookingAvailability(
   const slotEnd = slotMins + slotDuration;
   const bufferMins = Math.max(0, settings?.appointmentBufferMinutes || 0);
 
-  // Notice window for same-day bookings
-  if (appointmentDate === todayStr && settings?.minAdvanceBookingHours) {
-    const nowMins = getHospitalMinutesSinceMidnight(timeZone);
-    const minNoticeLimit = nowMins + settings.minAdvanceBookingHours * 60;
-    if (slotMins < minNoticeLimit) {
+  // 4. Past slot & notice window validation
+  if (appointmentDate === todayStr) {
+    const nowMins = getHospitalMinutesSinceMidnight(timeZone, referenceDate);
+    if (slotMins <= nowMins) {
       return {
         isValid: false,
-        errorMessage:
-          slotMins <= nowMins
-            ? 'Selected time slot has already passed today.'
-            : `Requires at least ${settings.minAdvanceBookingHours} hour(s) advance booking notice.`,
+        errorMessage: 'Selected consultation time slot has already passed today.',
       };
+    }
+    const minNoticeHours = Math.max(0, settings?.minAdvanceBookingHours || 0);
+    if (minNoticeHours > 0 && slotMins < nowMins + minNoticeHours * 60) {
+      return {
+        isValid: false,
+        errorMessage: `Requires at least ${minNoticeHours} hour(s) advance booking notice.`,
+      };
+    }
+  } else if (settings?.minAdvanceBookingHours) {
+    const minNoticeHours = Math.max(0, settings.minAdvanceBookingHours);
+    if (minNoticeHours > 0) {
+      const [tYear, tMonth, tDay] = todayStr.split('-').map(Number);
+      const [dYear, dMonth, dDay] = appointmentDate.split('-').map(Number);
+      const daysDiff =
+        (Date.UTC(dYear, dMonth - 1, dDay) - Date.UTC(tYear, tMonth - 1, tDay)) / (1000 * 60 * 60 * 24);
+      const nowMins = getHospitalMinutesSinceMidnight(timeZone, referenceDate);
+      const minutesNotice = daysDiff * 24 * 60 + (slotMins - nowMins);
+      if (minutesNotice < minNoticeHours * 60) {
+        return {
+          isValid: false,
+          errorMessage: `Requires at least ${minNoticeHours} hour(s) advance booking notice.`,
+        };
+      }
     }
   }
 

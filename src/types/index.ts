@@ -1,6 +1,7 @@
 export type UserRole =
   | 'super_admin'
   | 'super_admin_manager'
+  | 'superadmin_manager'
   | 'sales_executive'
   | 'hospital_admin'
   | 'doctor'
@@ -131,6 +132,7 @@ export interface HospitalSubscription {
   utrNumber?: string;
   paymentScreenshot?: string;
   requestedTier?: SubscriptionPlanTier;
+  requestedInterval?: BillingInterval;
   paymentSubmittedAt?: string;
 }
 
@@ -140,6 +142,7 @@ export type HospitalType = 'General Hospital' | 'Specialty Clinic' | 'Multi-Spec
 export interface Hospital {
   id: string; // e.g. "HOSP-001"
   name: string;
+  slug?: string;
   regNumber: string;
   type: HospitalType;
   email: string;
@@ -244,6 +247,8 @@ export interface Patient {
     oxygenLevel: number;
     weightKg: number;
     recordedAt: string;
+    recordedBy?: string;
+    recordedRole?: string;
   };
 }
 
@@ -269,7 +274,7 @@ export interface Prescription {
 }
 
 export type AppointmentType = 'General Checkup' | 'Consultation' | 'Follow-up' | 'Emergency' | 'Surgery' | 'Diagnostic';
-export type AppointmentStatus = 'Scheduled' | 'Confirmed' | 'Checked In' | 'Completed' | 'Cancelled' | 'No Show';
+export type AppointmentStatus = 'Scheduled' | 'Confirmed' | 'Checked In' | 'In Consultation' | 'Completed' | 'Cancelled' | 'No Show';
 
 export interface Appointment {
   id: string; // e.g. "APT-2026-01"
@@ -294,6 +299,81 @@ export interface Appointment {
   notes?: string;
   fee: number;
   paymentStatus: 'Paid' | 'Unpaid';
+  checkedInAt?: string;
+  consultationStartedAt?: string;
+  consultationCompletedAt?: string;
+  consultationId?: string;
+  parentAppointmentId?: string;
+  isFollowUp?: boolean;
+  followUpReason?: string;
+  rescheduledFromDate?: string;
+  rescheduledFromTime?: string;
+  rescheduleReason?: string;
+  createdAt: string;
+}
+
+export interface Consultation {
+  id: string; // e.g. "CON-2026-01"
+  hospitalId: string;
+  appointmentId?: string;
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  doctorName: string;
+  status: 'Draft' | 'Finalized';
+  chiefComplaint?: string;
+  symptoms?: string;
+  examination?: string;
+  vitals?: {
+    bloodPressure?: string;
+    heartRate?: number;
+    temperature?: number;
+    oxygenLevel?: number;
+    weightKg?: number;
+    recordedAt?: string;
+  };
+  diagnosis?: string;
+  treatmentPlan?: string;
+  prescriptionItems?: {
+    medicineName: string;
+    dosage: string;
+    frequency: string;
+    duration: string;
+    instructions: string;
+  }[];
+  followUpInstructions?: string;
+  needsFollowUp?: boolean;
+  followUpDate?: string;
+  followUpIntervalDays?: number;
+  followUpReason?: string;
+  notes?: string;
+  startedAt?: string;
+  finalizedAt?: string;
+  updatedAt?: string;
+}
+
+export interface FollowUpRequest {
+  id: string; // e.g. "FLW-1001"
+  hospitalId: string;
+  consultationId: string;
+  originalAppointmentId: string;
+  patientId: string;
+  patientName: string;
+  patientPhone: string;
+  patientAge?: number;
+  patientGender?: Gender;
+  doctorId: string;
+  doctorName: string;
+  departmentId?: string;
+  departmentName: string;
+  suggestedDate: string; // YYYY-MM-DD
+  intervalDays?: number;
+  reason: string;
+  notes?: string;
+  status: 'Pending' | 'Scheduled' | 'Completed' | 'Cancelled';
+  scheduledAppointmentId?: string;
+  scheduledDate?: string;
+  scheduledTime?: string;
   createdAt: string;
 }
 
@@ -377,6 +457,8 @@ export interface Doctor {
   roomNumber: string;
   opdRoomId?: string;
   opdRoomName?: string;
+  availabilityStatus?: string;
+  department?: string;
 }
 
 export interface Staff {
@@ -465,10 +547,12 @@ export interface Admission {
   departmentName: string;
   wardType: WardType;
   bedNumber: string;
+  roomNumber?: string;
   admissionDate: string;
   dischargeDate?: string;
   admissionType: 'Emergency' | 'Elective' | 'Transfer' | 'Maternity';
   reason: string;
+  diagnosis?: string;
   status: AdmissionStatus;
   notes?: string;
   initialDeposit: number;
@@ -476,11 +560,13 @@ export interface Admission {
 
 export type InvoiceStatus = 'Paid' | 'Pending' | 'Partially Paid' | 'Overdue' | 'Cancelled';
 export type PaymentMethod = 'Cash' | 'Credit Card' | 'Debit Card' | 'Insurance' | 'Bank Transfer' | 'UPI';
+export type EncounterType = 'OPD' | 'IPD' | 'Emergency' | 'Daycare' | 'Pharmacy' | 'Diagnostic';
+export type PaymentType = 'Self Pay' | 'Insurance / TPA' | 'Corporate';
 
 export interface InvoiceItem {
   id: string;
   description: string;
-  category: 'Consultation' | 'Bed Charge' | 'Pharmacy' | 'Laboratory' | 'Procedure' | 'Nursing' | 'Ambulance';
+  category: 'Consultation' | 'Bed Charge' | 'Pharmacy' | 'Laboratory' | 'Procedure' | 'Nursing' | 'Ambulance' | string;
   quantity: number;
   unitPrice: number;
   total: number;
@@ -499,12 +585,26 @@ export interface Invoice {
   taxRate: number; // percentage
   taxAmount: number;
   discount: number;
+  discountReason?: string;
   totalAmount: number;
   amountPaid: number;
   status: InvoiceStatus;
   paymentMethod?: PaymentMethod;
   transactionRef?: string;
   notes?: string;
+  createdAt?: string;
+
+  // Real Hospital Clinical & Billing Metadata
+  encounterType?: EncounterType;
+  doctorId?: string;
+  doctorName?: string;
+  departmentName?: string;
+  paymentType?: PaymentType;
+  insuranceProvider?: string;
+  policyNumber?: string;
+  claimApprovalNumber?: string;
+  collectedBy?: string; // Cashier / Accountant name who collected pay
+  cashierDesk?: string; // Counter / Desk ID (e.g., OPD Cashier #1)
 }
 
 export interface Medicine {
@@ -514,7 +614,7 @@ export interface Medicine {
   genericName: string;
   sku: string;
   batchNumber: string;
-  category: 'Antibiotics' | 'Analgesics' | 'Cardiovascular' | 'Antidiabetic' | 'Respiratory' | 'Vitamins' | 'Emergency Drugs';
+  category: 'Antibiotics' | 'Analgesics' | 'Cardiovascular' | 'Antidiabetic' | 'Respiratory' | 'Vitamins' | 'Emergency Drugs' | string;
   stockQuantity: number;
   minThreshold: number;
   unitPrice: number;
@@ -522,6 +622,10 @@ export interface Medicine {
   manufacturer: string;
   locationRack: string;
   requiresPrescription: boolean;
+  stock?: number;
+  unit?: string;
+  price?: number;
+  status?: string;
 }
 
 export type LabTestStatus = 'Ordered' | 'Pending Sample' | 'Sample Collected' | 'In Progress' | 'Processing' | 'Completed' | 'Cancelled';
@@ -559,6 +663,8 @@ export interface LabOrder {
   notes?: string;
   resultValue?: string;
   referenceRange?: string;
+  normalRange?: string;
+  results?: any;
   resultStatus?: 'Normal' | 'Abnormal' | 'Critical';
   labTechnicianNotes?: string;
   fee: number;
@@ -775,8 +881,8 @@ export interface AmbulanceDriver {
   licenseExpiry: string;
   assignedAmbulanceId?: string;
   assignedAmbulanceReg?: string;
-  availabilityStatus: 'On Duty & Available' | 'On Active Trip' | 'Off Duty' | 'On Break';
-  status: 'active' | 'inactive';
+  availabilityStatus: 'On Duty & Available' | 'On Active Trip' | 'Off Duty' | 'On Break' | string;
+  status: 'active' | 'inactive' | string;
   completedTrips: number;
   emergencyExperienceYears: number;
   avatarUrl?: string;
@@ -789,9 +895,11 @@ export type EmergencyRequestStatus =
   | 'Patient Picked Up'
   | 'Arrived at Hospital'
   | 'Completed'
-  | 'Cancelled';
+  | 'Cancelled'
+  | 'Pending'
+  | string;
 
-export type EmergencyPriority = 'Low' | 'Medium' | 'High' | 'Critical / Code Blue';
+export type EmergencyPriority = 'Low' | 'Medium' | 'High' | 'Critical / Code Blue' | 'CRITICAL / CODE BLUE' | string;
 
 export interface EmergencyRequest {
   id: string; // e.g. "EMR-7001"
@@ -800,12 +908,15 @@ export interface EmergencyRequest {
   patientId?: string; // Optional if registered patient
   patientName: string;
   patientPhone: string;
+  callerPhone?: string;
   pickupLocation: string;
   destinationHospital: string;
-  emergencyType: 'Cardiac Arrest / Chest Pain' | 'Trauma / Accident' | 'Respiratory Distress' | 'Maternity / Labor' | 'Stroke Code' | 'General Emergency Transfer';
+  destination?: string;
+  emergencyType: 'Cardiac Arrest / Chest Pain' | 'Trauma / Accident' | 'Respiratory Distress' | 'Maternity / Labor' | 'Stroke Code' | 'General Emergency Transfer' | string;
   priority: EmergencyPriority;
   requestDate: string;
   requestTime: string;
+  requestedAt?: string;
   assignedAmbulanceId?: string;
   assignedAmbulanceReg?: string;
   assignedDriverId?: string;

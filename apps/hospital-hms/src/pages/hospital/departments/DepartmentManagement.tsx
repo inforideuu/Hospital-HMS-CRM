@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Layers,
   Plus,
@@ -45,18 +45,31 @@ export const DepartmentManagement: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedDept, setSelectedDept] = useState<Department | null>(null);
   const [deleteConfirmDeptId, setDeleteConfirmDeptId] = useState<string | null>(null);
+  const [isClearAllDialogOpen, setIsClearAllDialogOpen] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
     code: '',
     headDoctorId: '',
     description: '',
-    phoneExtension: 'Ext. 401',
+    phoneExtension: '',
   });
 
   const refreshData = () => {
     setDepartments(MockStorage.getDepartments(hospId));
   };
+
+  useEffect(() => {
+    refreshData();
+    MockStorage.syncWithBackend?.();
+    const handleUpdate = () => refreshData();
+    window.addEventListener('pulse_storage_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, [hospId]);
 
   const filtered = departments.filter((d) =>
     d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -67,10 +80,10 @@ export const DepartmentManagement: React.FC = () => {
   const handleOpenAdd = () => {
     setFormData({
       name: '',
-      code: `DEP-0${departments.length + 1}`,
+      code: '',
       headDoctorId: '',
-      description: 'Clinical specialty care and diagnostics.',
-      phoneExtension: `Ext. 40${departments.length + 1}`,
+      description: '',
+      phoneExtension: '',
     });
     setIsAddModalOpen(true);
   };
@@ -116,9 +129,8 @@ export const DepartmentManagement: React.FC = () => {
       MockStorage.saveDepartment(updated);
       showToast('Department Updated', `${updated.name} configuration saved.`);
       setIsEditModalOpen(false);
-    } else {
       const newDept: Department = {
-        id: `DEP-${100 + departments.length + 1}`,
+        id: `DEP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
         hospitalId: hospId,
         name: formData.name,
         code: formData.code,
@@ -165,14 +177,43 @@ export const DepartmentManagement: React.FC = () => {
         subtitle="Configure hospital divisions, medical specialties, department leadership, and staffing allocations."
         breadcrumbs={[{ label: 'Hospital HMS', href: '/hospital/dashboard' }, { label: 'Departments' }]}
         actions={
-          <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
-            Create Department
-          </Button>
+          <div className="flex items-center gap-2">
+            {departments.length > 0 && isHospitalAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsClearAllDialogOpen(true)}
+                leftIcon={<Trash2 className="w-3.5 h-3.5 text-rose-500" />}
+                className="text-rose-600 border-rose-200 hover:bg-rose-50"
+              >
+                Delete All Existing
+              </Button>
+            )}
+            <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
+              Create Department
+            </Button>
+          </div>
         }
       />
 
       {/* Department Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {filtered.length === 0 ? (
+        <Card className="p-12 text-center bg-slate-50/70 border border-dashed border-slate-200 rounded-2xl">
+          <Layers className="w-12 h-12 text-slate-400 mx-auto mb-3" />
+          <h3 className="text-base font-bold text-slate-800">No Clinical Departments Found</h3>
+          <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+            {searchQuery
+              ? 'No clinical departments matched your search filter.'
+              : 'No clinical departments are currently configured. Create a department to begin structuring your clinical divisions.'}
+          </p>
+          <div className="mt-4">
+            <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
+              Create First Department
+            </Button>
+          </div>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filtered.map((dept) => {
           // Dynamic actual counts registered in mockStorage for this department
           const realDocs = doctors.filter((d) => d.departmentId === dept.id || d.departmentName.toLowerCase() === dept.name.toLowerCase()).length;
@@ -255,6 +296,7 @@ export const DepartmentManagement: React.FC = () => {
           );
         })}
       </div>
+      )}
 
       {/* Add / Edit Modal */}
       <Modal
@@ -353,6 +395,22 @@ export const DepartmentManagement: React.FC = () => {
         title="Delete Clinical Department?"
         message="Are you sure you want to delete this clinical department? This action is restricted to Hospital Admin."
         confirmText="Delete Department"
+        variant="danger"
+      />
+
+      {/* Delete All Existing Confirmation */}
+      <ConfirmDialog
+        isOpen={isClearAllDialogOpen}
+        onClose={() => setIsClearAllDialogOpen(false)}
+        onConfirm={() => {
+          MockStorage.clearDepartments(hospId);
+          showToast('Departments Purged', 'All clinical department records have been deleted.');
+          setIsClearAllDialogOpen(false);
+          refreshData();
+        }}
+        title="Delete All Existing Departments?"
+        message="Are you sure you want to permanently delete all department records for this hospital? This will reset the departments directory to empty."
+        confirmText="Yes, Delete All"
         variant="danger"
       />
     </div>

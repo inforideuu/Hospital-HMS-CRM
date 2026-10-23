@@ -246,7 +246,11 @@ export const PlatformUsers: React.FC = () => {
         avatar: finalAvatar,
         password: formData.password && formData.password !== '••••••••' ? formData.password : selectedUser.password,
       };
-      MockStorage.saveUser(updated);
+      const userRes = MockStorage.saveUser(updated);
+      if (!userRes.success) {
+        showToast('Duplicate Account', userRes.error || 'A user with this email already exists in this scope.', 'error');
+        return;
+      }
 
       // Bi-directional sync with Hospital entity
       if (formData.role === 'hospital_admin' && formData.hospitalId && selectedHospital) {
@@ -277,7 +281,11 @@ export const PlatformUsers: React.FC = () => {
         status: 'active',
         createdAt: new Date().toISOString().split('T')[0],
       };
-      MockStorage.saveUser(newUser);
+      const userRes = MockStorage.saveUser(newUser);
+      if (!userRes.success) {
+        showToast('Duplicate Account', userRes.error || 'A user with this email already exists in this scope.', 'error');
+        return;
+      }
 
       // Bi-directional sync with Hospital entity
       if (formData.role === 'hospital_admin' && formData.hospitalId && selectedHospital) {

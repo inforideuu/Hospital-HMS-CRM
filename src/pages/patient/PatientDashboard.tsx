@@ -50,7 +50,7 @@ export const PatientDashboard: React.FC = () => {
     temperature: 98.6,
     oxygenLevel: 98,
     weightKg: 68.5,
-    recordedAt: '2026-09-24 08:30',
+    recordedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
   };
 
   return (

@@ -180,7 +180,39 @@ export const StaffManagement: React.FC = () => {
         setIsUpgradeModalOpen(true);
         return;
       }
-      showToast('Staff Updated', `${updated.name} profile updated.`);
+
+      // Update corresponding User login credentials
+      const trimmedEmail = (formData.email || '').trim();
+      if (trimmedEmail) {
+        const users = MockStorage.getUsers();
+        const existingUser = users.find(
+          (u) =>
+            (u.email && u.email.toLowerCase() === selectedStaff.email.toLowerCase()) ||
+            (u.email && u.email.toLowerCase() === trimmedEmail.toLowerCase())
+        );
+        const userToSave: User = {
+          id: existingUser?.id || `USR-${Date.now().toString(36).substring(2, 7)}`,
+          name: formData.name,
+          email: trimmedEmail,
+          password: formData.password || existingUser?.password || 'Staff@1234',
+          role: formData.systemRole,
+          portal: 'hospital',
+          hospitalId: hospId,
+          hospitalName: currentHospital?.name || 'Hospital',
+          department: formData.department,
+          phone: formData.phone,
+          avatar: formData.avatarUrl,
+          status: 'active',
+          createdAt: existingUser?.createdAt || new Date().toISOString(),
+        };
+        const userRes = MockStorage.saveUser(userToSave);
+        if (!userRes.success) {
+          showToast('Duplicate Account', userRes.error || 'A user with this email already exists in this hospital.', 'error');
+          return;
+        }
+      }
+
+      showToast('Staff Updated', `${updated.name} profile and login credentials updated.`);
       setIsEditModalOpen(false);
     } else {
       const newStaff: Staff = {
@@ -214,7 +246,12 @@ export const StaffManagement: React.FC = () => {
         status: 'active',
         createdAt: new Date().toISOString(),
       };
-      MockStorage.saveUser(newUser);
+      const userRes = MockStorage.saveUser(newUser);
+      if (!userRes.success) {
+        MockStorage.deleteStaff(newStaff.id);
+        showToast('Duplicate Account', userRes.error || 'A user with this email already exists in this hospital.', 'error');
+        return;
+      }
 
       showToast('Staff Onboarded & Login Created', `${newStaff.name} added as ${newStaff.role} with login (${formData.email}).`);
       setIsAddModalOpen(false);

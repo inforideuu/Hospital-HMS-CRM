@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "tsx --test src/utils/appointmentScheduling.test.ts"
+    "test": "tsx --test src/utils/doctorConsultationWorkflow.test.ts src/utils/appointmentScheduling.test.ts src/utils/tenantAuth.test.ts src/utils/followUpWorkflow.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

@@ -74,6 +74,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     (c) => c.onboardingStatus === 'Pending Onboarding' || c.subscriptionStatus === 'Pending Setup'
   ).length;
 
+  const activeTicketCount = MockStorage.getSupportTickets().filter(
+    (t) => t.status === 'open' || t.status === 'in_progress'
+  ).length;
+
   const platformNavItems: NavItem[] = [
     { label: 'Overview', path: '/platform/dashboard', icon: <LayoutDashboard className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Hospital Management', path: '/platform/hospitals', icon: <Building2 className="w-4 h-4" />, badge: String(MockStorage.getHospitals().length), roles: ['super_admin', 'super_admin_manager'] },
@@ -81,7 +85,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { label: 'Subscriptions & Plans', path: '/platform/subscriptions', icon: <CreditCard className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Users & Access', path: '/platform/users', icon: <Users className="w-4 h-4" />, roles: ['super_admin'] },
     { label: 'Hospital Website Builder', path: '/platform/websites', icon: <Globe className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
-    { label: 'Support Center', path: '/platform/support', icon: <HelpCircle className="w-4 h-4" />, badge: '3', roles: ['super_admin', 'super_admin_manager'] },
+    { label: 'Support Center', path: '/platform/support', icon: <HelpCircle className="w-4 h-4" />, badge: activeTicketCount > 0 ? String(activeTicketCount) : undefined, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Reports & Analytics', path: '/platform/reports', icon: <BarChart3 className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Platform Settings', path: '/platform/settings', icon: <Settings className="w-4 h-4" />, roles: ['super_admin'] },
   ];
@@ -272,6 +276,84 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   ];
 
+  const doctorNavItems: NavItem[] = [
+    {
+      label: 'Doctor Dashboard',
+      path: '/hospital/dashboard',
+      icon: <LayoutDashboard className="w-4 h-4" />,
+      roles: ['doctor'],
+    },
+    {
+      label: 'My Appointments',
+      path: '/hospital/doctor/appointments',
+      icon: <Calendar className="w-4 h-4" />,
+      roles: ['doctor'],
+    },
+    {
+      label: "Today's Patient Queue",
+      path: '/hospital/doctor/queue',
+      icon: <Clock className="w-4 h-4" />,
+      badge: 'Live',
+      roles: ['doctor'],
+    },
+    {
+      label: 'Patient & EHR',
+      path: '/hospital/patients',
+      icon: <UserPlus className="w-4 h-4" />,
+      roles: ['doctor'],
+      badge: String(patientCount),
+      featureKeyword: 'patients_ehr',
+    },
+    {
+      label: 'Consultation Workspace',
+      path: '/hospital/consultation',
+      icon: <Stethoscope className="w-4 h-4" />,
+      roles: ['doctor'],
+    },
+    {
+      label: 'Admissions & Beds',
+      path: '/hospital/admissions',
+      icon: <BedDouble className="w-4 h-4" />,
+      roles: ['doctor'],
+      badge: 'IPD',
+      featureKeyword: 'admissions_beds',
+    },
+    {
+      label: 'Laboratory Diagnostics',
+      path: '/hospital/laboratory',
+      icon: <FlaskConical className="w-4 h-4" />,
+      roles: ['doctor'],
+      featureKeyword: 'laboratory_diagnostics',
+    },
+    {
+      label: 'Ambulance & 911 Desk',
+      path: '/hospital/ambulance',
+      icon: <Ambulance className="w-4 h-4" />,
+      roles: ['doctor'],
+      badge: '911',
+      featureKeyword: 'ambulance_emergency',
+    },
+    {
+      label: 'Pharmacy & Stock',
+      path: '/hospital/pharmacy',
+      icon: <Pill className="w-4 h-4" />,
+      roles: ['doctor'],
+      featureKeyword: 'pharmacy_stock',
+    },
+    {
+      label: 'My Schedule',
+      path: '/hospital/doctor/schedule',
+      icon: <Calendar className="w-4 h-4" />,
+      roles: ['doctor'],
+    },
+    {
+      label: 'My Profile',
+      path: '/hospital/doctor/profile',
+      icon: <User className="w-4 h-4" />,
+      roles: ['doctor'],
+    },
+  ];
+
   const currentNavItems =
     portalType === 'platform'
       ? platformNavItems
@@ -281,6 +363,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ? patientNavItems
       : portalType === 'driver'
       ? driverNavItems
+      : user?.role === 'doctor'
+      ? doctorNavItems
       : isEnterpriseOrgUser
       ? hospitalNavItems.filter((item) => item.path !== '/hospital/enterprise')
       : hospitalNavItems;
@@ -400,6 +484,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               item.featureKeyword &&
               !MockStorage.isFeatureEnabledForHospital(hospId, item.featureKeyword);
 
+            const accessCheck = isFeatureDisabled
+              ? MockStorage.checkPathAccess(hospId, item.path)
+              : null;
+            const requiredPackage = accessCheck?.requiredTierName || 'Professional Hospital';
+            const upgradeMessage = `Upgrade to ${requiredPackage} package to access`;
+
             return (
               <NavLink
                 key={item.path}
@@ -408,9 +498,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   if (isFeatureDisabled) {
                     e.preventDefault();
                     showToast(
-                      'Feature Unavailable',
-                      `The feature "${item.label}" has been disabled in your hospital plan by Platform Superadmin.`,
-                      'error'
+                      'Upgrade Required',
+                      `The feature "${item.label}" is locked. ${upgradeMessage}.`,
+                      'warning'
                     );
                     return;
                   }
@@ -419,29 +509,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-150 group relative ${
                     isFeatureDisabled
-                      ? 'text-slate-500 opacity-60 bg-slate-900/40 cursor-not-allowed border border-slate-800/40'
+                      ? 'text-slate-500 opacity-60 bg-slate-900/40 cursor-not-allowed border border-slate-800/40 hover:opacity-100 hover:border-amber-500/30'
                       : isActive
                       ? 'bg-brand-600 text-white font-semibold shadow-md shadow-brand-600/30'
                       : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
                   } ${isCollapsed ? 'justify-center px-0' : ''}`
                 }
-                title={isCollapsed ? (isFeatureDisabled ? `${item.label} (Disabled by Admin)` : item.label) : undefined}
+                title={isFeatureDisabled ? upgradeMessage : isCollapsed ? item.label : undefined}
               >
                 <div
                   className={`shrink-0 transition-transform duration-200 group-hover:scale-110 ${
-                    isFeatureDisabled ? 'text-slate-600' : isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-200'
+                    isFeatureDisabled ? 'text-slate-600 group-hover:text-amber-400' : isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-200'
                   }`}
                 >
-                  {isFeatureDisabled ? <Lock className="w-4 h-4 text-rose-400" /> : item.icon}
+                  {isFeatureDisabled ? <Lock className="w-4 h-4 text-rose-400 group-hover:text-amber-400 transition-colors" /> : item.icon}
                 </div>
 
                 {!isCollapsed && (
                   <>
-                    <span className={`truncate flex-1 ${isFeatureDisabled ? 'line-through text-slate-500 font-normal' : ''}`}>
+                    <span className={`truncate flex-1 ${isFeatureDisabled ? 'line-through text-slate-500 font-normal group-hover:text-slate-300' : ''}`}>
                       {item.label}
                     </span>
                     {isFeatureDisabled ? (
-                      <span className="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                      <span className="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 group-hover:bg-amber-500/20 group-hover:text-amber-300 group-hover:border-amber-500/40 transition-colors">
                         Locked
                       </span>
                     ) : (
@@ -460,10 +550,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </>
                 )}
 
+                {/* Floating Upgrade Tooltip on Hover for Locked Menu Item (Expanded Mode) */}
+                {!isCollapsed && isFeatureDisabled && (
+                  <div className="absolute left-full ml-3 px-3 py-1.5 bg-slate-900/95 backdrop-blur-md text-amber-300 text-xs font-semibold rounded-lg shadow-2xl whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-all duration-200 z-50 border border-amber-500/40 flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>{upgradeMessage}</span>
+                  </div>
+                )}
+
                 {/* Tooltip for collapsed mode */}
                 {isCollapsed && (
-                  <div className="absolute left-full ml-3 px-2.5 py-1 bg-slate-800 text-white text-xs rounded-md shadow-xl whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 border border-slate-700">
-                    {item.label} {isFeatureDisabled && '(Disabled in Plan)'}
+                  <div className="absolute left-full ml-3 px-2.5 py-1.5 bg-slate-800 text-white text-xs rounded-md shadow-xl whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 border border-slate-700">
+                    {isFeatureDisabled ? (
+                      <span className="text-amber-300 flex items-center gap-1.5 font-medium">
+                        <Lock className="w-3 h-3 text-amber-400" />
+                        {item.label}: {upgradeMessage}
+                      </span>
+                    ) : (
+                      item.label
+                    )}
                   </div>
                 )}
               </NavLink>

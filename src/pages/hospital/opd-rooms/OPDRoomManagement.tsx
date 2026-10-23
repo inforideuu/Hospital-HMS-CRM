@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   DoorOpen,
   Plus,
@@ -39,7 +39,7 @@ export const OPDRoomManagement: React.FC = () => {
     user?.role === 'super_admin_manager';
 
   const [opdRooms, setOpdRooms] = useState<OPDRoom[]>(() => MockStorage.getOPDRooms(hospId));
-  const departments = MockStorage.getDepartments(hospId);
+  const [departments, setDepartments] = useState<Department[]>(() => MockStorage.getDepartments(hospId));
   const doctors = MockStorage.getDoctors(hospId);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,6 +49,7 @@ export const OPDRoomManagement: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<OPDRoom | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isClearAllDialogOpen, setIsClearAllDialogOpen] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -60,8 +61,22 @@ export const OPDRoomManagement: React.FC = () => {
   });
 
   const refreshData = () => {
-    setOpdRooms(MockStorage.getOPDRooms(hospId));
-  };
+  setOpdRooms(MockStorage.getOPDRooms(hospId));
+  setDepartments(MockStorage.getDepartments(hospId)); 
+};
+
+
+  useEffect(() => {
+    refreshData();
+    MockStorage.syncWithBackend?.();
+    const handleUpdate = () => refreshData();
+    window.addEventListener('pulse_storage_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, [hospId]);
 
   const filtered = opdRooms.filter((room) => {
     const matchesSearch =
@@ -74,17 +89,20 @@ export const OPDRoomManagement: React.FC = () => {
   });
 
   const handleOpenAdd = () => {
-    const defaultDept = departments[0];
-    setFormData({
-      name: '',
-      code: `OPD-${(opdRooms.length + 1) * 100 + 1}`,
-      departmentId: defaultDept?.id || '',
-      location: 'Ground Floor – Block A',
-      status: 'Available',
-      description: 'Standard outpatient consultation room with diagnostic equipment.',
-    });
-    setIsAddModalOpen(true);
-  };
+  const currentDepts = MockStorage.getDepartments(hospId);
+  setDepartments(currentDepts);
+  const defaultDept = currentDepts[0];
+  setFormData({
+    name: '',
+    code: '',
+    departmentId: defaultDept?.id || '',
+    location: '',
+    status: 'Available',
+    description: '',
+  });
+  setIsAddModalOpen(true);
+};
+
 
   const handleOpenEdit = (room: OPDRoom) => {
     setSelectedRoom(room);
@@ -123,7 +141,7 @@ export const OPDRoomManagement: React.FC = () => {
       setIsEditModalOpen(false);
     } else {
       const newRoom: OPDRoom = {
-        id: `OPD-${Date.now().toString(36).substring(2, 7)}`,
+        id: `OPD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
         hospitalId: hospId,
         ...formData,
         departmentName: dept.name,
@@ -159,9 +177,22 @@ export const OPDRoomManagement: React.FC = () => {
         subtitle="Manage outpatient consultation rooms, department allocations, and clinical chamber availability."
         breadcrumbs={[{ label: 'Hospital HMS', href: '/hospital/dashboard' }, { label: 'OPD Rooms' }]}
         actions={
-          <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
-            Create OPD Room
-          </Button>
+          <div className="flex items-center gap-2">
+            {opdRooms.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsClearAllDialogOpen(true)}
+                leftIcon={<Trash2 className="w-3.5 h-3.5 text-rose-500" />}
+                className="text-rose-600 border-rose-200 hover:bg-rose-50"
+              >
+                Delete All Existing
+              </Button>
+            )}
+            <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
+              Create OPD Room
+            </Button>
+          </div>
         }
       />
 
@@ -415,6 +446,22 @@ export const OPDRoomManagement: React.FC = () => {
         title="Delete OPD Room?"
         message="Are you sure you want to delete this OPD room? Doctors assigned to this chamber will need relocation."
         confirmText="Yes, Delete Room"
+      />
+
+      {/* Delete All Existing Confirmation */}
+      <ConfirmDialog
+        isOpen={isClearAllDialogOpen}
+        onClose={() => setIsClearAllDialogOpen(false)}
+        onConfirm={() => {
+          MockStorage.clearOPDRooms(hospId);
+          showToast('OPD Rooms Purged', 'All OPD rooms and consultation chambers have been deleted.');
+          setIsClearAllDialogOpen(false);
+          refreshData();
+        }}
+        title="Delete All Existing OPD Rooms?"
+        message="Are you sure you want to permanently delete all OPD consultation rooms for this hospital? This will reset the chambers directory to empty."
+        confirmText="Yes, Delete All"
+        variant="danger"
       />
     </div>
   );

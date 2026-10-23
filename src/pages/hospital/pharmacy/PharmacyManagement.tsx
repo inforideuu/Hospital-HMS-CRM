@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Pill,
   Plus,
@@ -29,6 +29,12 @@ import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
 import { Pagination } from '../../../components/ui/Pagination';
 import { EmptyState } from '../../../components/ui/EmptyState';
 
+const getFutureDate = (yearsAhead = 2) => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() + yearsAhead);
+  return d.toISOString().split('T')[0];
+};
+
 export const PharmacyManagement: React.FC = () => {
   const { currentHospital } = useAuth();
   const { showToast } = useNotification();
@@ -44,6 +50,7 @@ export const PharmacyManagement: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedMed, setSelectedMed] = useState<Medicine | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isClearAllDialogOpen, setIsClearAllDialogOpen] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -52,17 +59,29 @@ export const PharmacyManagement: React.FC = () => {
     batchNumber: '',
     category: 'Antibiotics' as Medicine['category'],
     stockQuantity: 100,
-    minThreshold: 50,
-    unitPrice: 15.0,
-    expiryDate: '2027-12-31',
+    minThreshold: 20,
+    unitPrice: 10.0,
+    expiryDate: getFutureDate(2),
     manufacturer: '',
-    locationRack: 'Rack A-01',
+    locationRack: '',
     requiresPrescription: true,
   });
 
   const refreshData = () => {
     setMedicines(MockStorage.getMedicines(hospId));
   };
+
+  useEffect(() => {
+    refreshData();
+    MockStorage.syncWithBackend?.();
+    const handleUpdate = () => refreshData();
+    window.addEventListener('pulse_storage_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, [hospId]);
 
   const lowStockMeds = medicines.filter((m) => m.stockQuantity <= m.minThreshold);
   const totalStockUnits = medicines.reduce((acc, m) => acc + m.stockQuantity, 0);
@@ -77,22 +96,22 @@ export const PharmacyManagement: React.FC = () => {
     return matchesSearch && matchesCat;
   });
 
-  const totalPages = Math.ceil(filtered.length / pageSize);
+  const totalPages = Math.ceil(filtered.length / pageSize) || 1;
   const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const handleOpenAdd = () => {
     setFormData({
       name: '',
       genericName: '',
-      sku: `MED-${Math.floor(100 + Math.random() * 900)}`,
-      batchNumber: `BAT-2026-${Math.floor(100 + Math.random() * 900)}`,
+      sku: `MED-${Math.floor(1000 + Math.random() * 9000)}`,
+      batchNumber: `BAT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
       category: 'Antibiotics',
-      stockQuantity: 200,
-      minThreshold: 50,
-      unitPrice: 18.5,
-      expiryDate: '2028-06-30',
-      manufacturer: 'Pfizer Health',
-      locationRack: 'Rack B-03',
+      stockQuantity: 100,
+      minThreshold: 20,
+      unitPrice: 15.0,
+      expiryDate: getFutureDate(2),
+      manufacturer: '',
+      locationRack: '',
       requiresPrescription: true,
     });
     setIsAddModalOpen(true);
@@ -131,7 +150,7 @@ export const PharmacyManagement: React.FC = () => {
       setIsEditModalOpen(false);
     } else {
       const newMed: Medicine = {
-        id: `MED-${100 + medicines.length + 1}`,
+        id: `MED-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
         hospitalId: hospId,
         ...formData,
       };
@@ -159,6 +178,17 @@ export const PharmacyManagement: React.FC = () => {
         breadcrumbs={[{ label: 'Hospital HMS', href: '/hospital/dashboard' }, { label: 'Pharmacy' }]}
         actions={
           <div className="flex items-center gap-2">
+            {medicines.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsClearAllDialogOpen(true)}
+                leftIcon={<Trash2 className="w-3.5 h-3.5 text-rose-500" />}
+                className="text-rose-600 border-rose-200 hover:bg-rose-50"
+              >
+                Delete All Existing
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -250,10 +280,28 @@ export const PharmacyManagement: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paginated.map((med) => {
-                const isLow = med.stockQuantity <= med.minThreshold;
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-slate-500">
+                    <div className="max-w-sm mx-auto flex flex-col items-center">
+                      <Pill className="w-10 h-10 text-slate-300 mb-2" />
+                      <p className="font-bold text-slate-700 text-sm">No Pharmaceutical Inventory Records</p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        {searchQuery || categoryFilter !== 'all'
+                          ? 'No medications match the specified filter criteria.'
+                          : 'Pharmacy inventory is currently empty. Add medication stocks to start tracking dispensary.'}
+                      </p>
+                      <Button variant="outline" size="sm" onClick={handleOpenAdd} className="mt-3">
+                        + Add First Medicine
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                paginated.map((med) => {
+                  const isLow = med.stockQuantity <= med.minThreshold;
 
-                return (
+                  return (
                   <tr key={med.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="px-5 py-3.5">
                       <p className="font-bold text-slate-900 leading-tight">{med.name}</p>
@@ -316,7 +364,7 @@ export const PharmacyManagement: React.FC = () => {
                     </td>
                   </tr>
                 );
-              })}
+              }))}
             </tbody>
           </table>
         </div>
@@ -450,6 +498,22 @@ export const PharmacyManagement: React.FC = () => {
         title="Remove Drug from Pharmacy Catalog?"
         message="Are you sure you want to remove this pharmaceutical item from active dispensary records?"
         confirmText="Yes, Remove Drug"
+      />
+
+      {/* Delete All Existing Confirmation */}
+      <ConfirmDialog
+        isOpen={isClearAllDialogOpen}
+        onClose={() => setIsClearAllDialogOpen(false)}
+        onConfirm={() => {
+          MockStorage.clearMedicines(hospId);
+          showToast('Pharmacy Stock Purged', 'All pharmaceutical medicine items have been deleted.');
+          setIsClearAllDialogOpen(false);
+          refreshData();
+        }}
+        title="Delete All Existing Medicines?"
+        message="Are you sure you want to permanently delete all medicine inventory records for this hospital? This will reset the dispensary catalog to empty."
+        confirmText="Yes, Delete All"
+        variant="danger"
       />
     </div>
   );

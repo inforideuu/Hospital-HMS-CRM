@@ -27,7 +27,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 export const PatientAppointments: React.FC = () => {
   const { user } = useAuth();
   const { showToast } = useNotification();
-  const patientId = user?.patientId || 'PAT-1001';
+  const patientId = user?.patientId || '';
 
   const [appointments, setAppointments] = useState<Appointment[]>(() =>
     MockStorage.getAppointments(undefined, patientId)
@@ -42,10 +42,10 @@ export const PatientAppointments: React.FC = () => {
 
   // Booking Form State
   const [formData, setFormData] = useState({
-    hospitalId: hospitals[0]?.id || 'HOSP-001',
-    departmentId: departments[0]?.id || 'DEP-101',
-    doctorId: doctors[0]?.id || 'DOC-101',
-    appointmentDate: '2026-09-26',
+    hospitalId: hospitals[0]?.id || '',
+    departmentId: departments[0]?.id || '',
+    doctorId: doctors[0]?.id || '',
+    appointmentDate: new Date().toISOString().split('T')[0],
     appointmentTime: '10:00 AM',
     type: 'Consultation' as AppointmentType,
     reason: '',
@@ -67,19 +67,20 @@ export const PatientAppointments: React.FC = () => {
     const hosp = hospitals.find((h) => h.id === formData.hospitalId);
     const doc = doctors.find((d) => d.id === formData.doctorId);
     const dept = departments.find((d) => d.id === formData.departmentId);
+    const patientProfile = patientId ? MockStorage.getPatientById(patientId) : undefined;
 
     const newApt: Appointment = {
-      id: `APT-2026-${Math.floor(10 + Math.random() * 90)}`,
+      id: `APT-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
       hospitalId: formData.hospitalId,
-      patientId,
-      patientName: user?.name || 'Eleanor Vance',
-      patientPhone: user?.phone || '+1 (555) 301-4492',
-      patientAge: 48,
-      patientGender: 'Female',
-      doctorId: doc?.id || 'DOC-101',
-      doctorName: doc?.name || 'Dr. Specialist Lead',
+      patientId: patientId || user?.id || 'PAT-USER',
+      patientName: patientProfile?.name || user?.name || 'Patient',
+      patientPhone: patientProfile?.phone || user?.phone || '',
+      patientAge: patientProfile?.age || (user as any)?.age || 30,
+      patientGender: patientProfile?.gender || (user as any)?.gender || 'Other',
+      doctorId: doc?.id || formData.doctorId,
+      doctorName: doc?.name || 'Doctor',
       doctorSpecialization: doc?.specialization || 'Clinical Specialist',
-      departmentId: dept?.id || 'DEP-101',
+      departmentId: dept?.id || formData.departmentId || '',
       departmentName: dept?.name || 'General OPD',
       appointmentDate: formData.appointmentDate,
       appointmentTime: formData.appointmentTime,

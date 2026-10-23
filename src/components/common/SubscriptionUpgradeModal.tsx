@@ -186,7 +186,8 @@ export const SubscriptionUpgradeModal: React.FC<SubscriptionUpgradeModalProps> =
         utrNumber.trim(),
         appliedCoupon?.code,
         appliedCoupon ? basePrice : undefined,
-        paymentScreenshot
+        paymentScreenshot,
+        billingCycle
       );
       showToast(
         'Payment Submitted for Approval',

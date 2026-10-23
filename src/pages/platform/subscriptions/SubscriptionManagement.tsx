@@ -42,6 +42,7 @@ export const SubscriptionManagement: React.FC = () => {
   const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
   const [newTier, setNewTier] = useState<SubscriptionPlanTier>('enterprise');
+  const [newInterval, setNewInterval] = useState<BillingInterval>('monthly');
 
   // Plan Management Modal State
   const [editingPlan, setEditingPlan] = useState<SubscriptionPlan | null>(null);
@@ -190,6 +191,7 @@ export const SubscriptionManagement: React.FC = () => {
   const handleOpenUpgrade = (sub: HospitalSubscription) => {
     setSelectedSub(sub);
     setNewTier(sub.planTier);
+    setNewInterval(sub.interval || 'monthly');
     setIsUpgradeModalOpen(true);
   };
 
@@ -198,16 +200,27 @@ export const SubscriptionManagement: React.FC = () => {
     if (selectedSub) {
       const plan = plans.find((p) => p.tier === newTier);
       const isPaid = newTier !== 'trial';
-      const amount = selectedSub.interval === 'yearly' ? (plan?.priceYearly || 4990) : (plan?.priceMonthly || 499);
-      const nowStr = new Date().toISOString().split('T')[0];
+      const amount = newInterval === 'yearly' ? (plan?.priceYearly || 49990) : (plan?.priceMonthly || 4999);
+      const now = new Date();
+      const nowStr = now.toISOString().split('T')[0];
+
+      // Calculate renewal date based on selected interval (1 month for monthly, 1 year for yearly)
+      const renewalDateObj = new Date(now);
+      if (newInterval === 'yearly') {
+        renewalDateObj.setFullYear(renewalDateObj.getFullYear() + 1);
+      } else {
+        renewalDateObj.setMonth(renewalDateObj.getMonth() + 1);
+      }
+
       const updated: HospitalSubscription = {
         ...selectedSub,
         planTier: newTier,
         planName: plan?.name || 'Professional Hospital',
+        interval: newInterval,
         amount,
         upgradedDate: nowStr,
         activatedDate: selectedSub.activatedDate || nowStr,
-        renewalDate: new Date(Date.now() + (selectedSub.interval === 'yearly' ? 365 : 30) * 86400000).toISOString().split('T')[0],
+        renewalDate: renewalDateObj.toISOString().split('T')[0],
         status: isPaid ? (selectedSub.status === 'trialing' ? 'active' : selectedSub.status) : 'trialing',
         paymentMethod: isPaid && selectedSub.paymentMethod?.toLowerCase().includes('trial')
           ? 'UPI QR Code'
@@ -544,7 +557,7 @@ export const SubscriptionManagement: React.FC = () => {
                 </p>
 
                 <div className="flex items-baseline gap-1 mb-6 pb-4 border-b border-slate-200/20">
-                  <span className="text-3xl sm:text-4xl font-black">${price.toLocaleString()}</span>
+                  <span className="text-3xl sm:text-4xl font-black">₹{price.toLocaleString('en-IN')}</span>
                   <span className={`text-xs ${plan.isPopular ? 'text-slate-400' : 'text-slate-500'}`}>/{billingCycle === 'yearly' ? 'year' : 'month'}</span>
                 </div>
 
@@ -657,7 +670,7 @@ export const SubscriptionManagement: React.FC = () => {
                     </td>
 
                     <td className="px-4 py-4">
-                      <p className="font-bold text-slate-900">${sub.amount.toLocaleString()}</p>
+                      <p className="font-bold text-slate-900">₹{sub.amount.toLocaleString('en-IN')}</p>
                       <p className="text-[11px] text-slate-500 capitalize">{sub.interval} interval</p>
                     </td>
 
@@ -980,7 +993,7 @@ export const SubscriptionManagement: React.FC = () => {
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Monthly ($)</label>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Monthly (₹)</label>
                 <input
                   type="number"
                   className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-bold"
@@ -989,7 +1002,7 @@ export const SubscriptionManagement: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Yearly ($)</label>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Yearly (₹)</label>
                 <input
                   type="number"
                   className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-bold"
@@ -1197,15 +1210,26 @@ export const SubscriptionManagement: React.FC = () => {
             </div>
           </div>
 
-          <Select
-            label="Select Subscription Tier"
-            value={newTier}
-            onChange={(e) => setNewTier(e.target.value as SubscriptionPlanTier)}
-          >
-            <option value="basic">Starter Clinic ($199/mo or $1,990/yr)</option>
-            <option value="standard">Professional Hospital ($499/mo or $4,990/yr)</option>
-            <option value="enterprise">Enterprise Health Network ($1,199/mo or $11,990/yr)</option>
-          </Select>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Select
+              label="Select Subscription Tier"
+              value={newTier}
+              onChange={(e) => setNewTier(e.target.value as SubscriptionPlanTier)}
+            >
+              <option value="basic">Starter Clinic (₹4,999/mo or ₹49,990/yr)</option>
+              <option value="standard">Professional Hospital (₹14,999/mo or ₹149,990/yr)</option>
+              <option value="enterprise">Enterprise Health Network (₹29,999/mo or ₹299,990/yr)</option>
+            </Select>
+
+            <Select
+              label="Billing Interval"
+              value={newInterval}
+              onChange={(e) => setNewInterval(e.target.value as BillingInterval)}
+            >
+              <option value="monthly">Monthly (1 Month Cycle)</option>
+              <option value="yearly">Yearly (1 Year Cycle)</option>
+            </Select>
+          </div>
 
           <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
             <Button type="button" variant="outline" size="sm" onClick={() => setIsUpgradeModalOpen(false)}>

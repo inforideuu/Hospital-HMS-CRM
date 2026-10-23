@@ -334,7 +334,7 @@ export const SubscriptionManagement: React.FC = () => {
                     </td>
 
                     <td className="px-4 py-4">
-                      <p className="font-bold text-slate-900">${sub.amount.toLocaleString()}</p>
+                      <p className="font-bold text-slate-900">₹{sub.amount.toLocaleString('en-IN')}</p>
                       <p className="text-[11px] text-slate-500 capitalize">{sub.interval} interval</p>
                     </td>
 

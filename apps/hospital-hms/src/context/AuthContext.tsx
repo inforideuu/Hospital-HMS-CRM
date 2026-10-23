@@ -11,7 +11,7 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   currentHospital: Hospital | null;
-  login: (email: string, role?: UserRole, targetHospitalId?: string) => LoginResult;
+  login: (email: string, passwordOrRole?: string | UserRole, targetHospitalId?: string) => LoginResult;
   logout: () => void;
   switchRole: (role: UserRole) => void;
   switchHospital: (hospitalId: string) => void;
@@ -44,12 +44,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return () => window.removeEventListener('pulse_storage_updated', handleStorageChange);
   }, []);
 
-  const login = (email: string, explicitRole?: UserRole, targetHospitalId?: string): LoginResult => {
+  const login = (email: string, passwordOrRole?: string | UserRole, targetHospitalId?: string): LoginResult => {
     const allUsers = MockStorage.getUsers();
     let foundUser = allUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
 
-    if (!foundUser && explicitRole) {
-      foundUser = allUsers.find((u) => u.role === explicitRole);
+    if (!foundUser && passwordOrRole) {
+      foundUser = allUsers.find((u) => u.role === passwordOrRole);
     }
 
     if (!foundUser) {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Calendar,
   Clock,
@@ -9,11 +9,13 @@ import {
   CheckCircle2,
   AlertCircle,
   FileText,
+  RotateCw,
 } from 'lucide-react';
 import { MockStorage } from '../../services/mockStorage';
+import { ApiService } from '../../services/apiService';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
-import { Appointment, AppointmentType } from '../../types';
+import { Appointment, AppointmentType, FollowUpRequest } from '../../types';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -27,10 +29,13 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 export const PatientAppointments: React.FC = () => {
   const { user } = useAuth();
   const { showToast } = useNotification();
-  const patientId = user?.patientId || 'PAT-1001';
+  const patientId = user?.patientId || '';
 
   const [appointments, setAppointments] = useState<Appointment[]>(() =>
     MockStorage.getAppointments(undefined, patientId)
+  );
+  const [followUpRequests, setFollowUpRequests] = useState<FollowUpRequest[]>(() =>
+    MockStorage.getFollowUpRequests()
   );
   const hospitals = MockStorage.getHospitals();
   const doctors = MockStorage.getDoctors();
@@ -42,10 +47,10 @@ export const PatientAppointments: React.FC = () => {
 
   // Booking Form State
   const [formData, setFormData] = useState({
-    hospitalId: hospitals[0]?.id || 'HOSP-001',
-    departmentId: departments[0]?.id || 'DEP-101',
-    doctorId: doctors[0]?.id || 'DOC-101',
-    appointmentDate: '2026-09-26',
+    hospitalId: hospitals[0]?.id || '',
+    departmentId: departments[0]?.id || '',
+    doctorId: doctors[0]?.id || '',
+    appointmentDate: new Date().toISOString().split('T')[0],
     appointmentTime: '10:00 AM',
     type: 'Consultation' as AppointmentType,
     reason: '',
@@ -53,7 +58,26 @@ export const PatientAppointments: React.FC = () => {
 
   const refreshData = () => {
     setAppointments(MockStorage.getAppointments(undefined, patientId));
+    setFollowUpRequests(MockStorage.getFollowUpRequests());
   };
+
+  useEffect(() => {
+    refreshData();
+    MockStorage.syncWithBackend?.().then?.(() => refreshData()).catch?.(() => {});
+    const handleUpdate = () => refreshData();
+    window.addEventListener('pulse_storage_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, [patientId]);
+
+  const pendingDoctorFollowUps = followUpRequests.filter(
+    (f) =>
+      (f.patientId === patientId || (user?.phone && f.patientPhone === user.phone)) &&
+      f.status === 'Pending'
+  );
 
   const upcomingList = appointments.filter(
     (a) => a.status === 'Scheduled' || a.status === 'Confirmed' || a.status === 'Checked In'
@@ -67,19 +91,20 @@ export const PatientAppointments: React.FC = () => {
     const hosp = hospitals.find((h) => h.id === formData.hospitalId);
     const doc = doctors.find((d) => d.id === formData.doctorId);
     const dept = departments.find((d) => d.id === formData.departmentId);
+    const patientProfile = patientId ? MockStorage.getPatientById(patientId) : undefined;
 
     const newApt: Appointment = {
-      id: `APT-2026-${Math.floor(10 + Math.random() * 90)}`,
+      id: `APT-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
       hospitalId: formData.hospitalId,
-      patientId,
-      patientName: user?.name || 'Eleanor Vance',
-      patientPhone: user?.phone || '+1 (555) 301-4492',
-      patientAge: 48,
-      patientGender: 'Female',
-      doctorId: doc?.id || 'DOC-101',
-      doctorName: doc?.name || 'Dr. Specialist Lead',
+      patientId: patientId || user?.id || 'PAT-USER',
+      patientName: patientProfile?.name || user?.name || 'Patient',
+      patientPhone: patientProfile?.phone || user?.phone || '',
+      patientAge: patientProfile?.age || (user as any)?.age || 30,
+      patientGender: patientProfile?.gender || (user as any)?.gender || 'Other',
+      doctorId: doc?.id || formData.doctorId,
+      doctorName: doc?.name || 'Doctor',
       doctorSpecialization: doc?.specialization || 'Clinical Specialist',
-      departmentId: dept?.id || 'DEP-101',
+      departmentId: dept?.id || formData.departmentId || '',
       departmentName: dept?.name || 'General OPD',
       appointmentDate: formData.appointmentDate,
       appointmentTime: formData.appointmentTime,
@@ -92,6 +117,18 @@ export const PatientAppointments: React.FC = () => {
     };
 
     MockStorage.saveAppointment(newApt);
+    ApiService.createAppointment({
+      id: newApt.id,
+      hospital: newApt.hospitalId,
+      patient: newApt.patientId,
+      doctor: newApt.doctorId,
+      date: newApt.appointmentDate,
+      time: newApt.appointmentTime,
+      type: newApt.type,
+      status: newApt.status,
+      notes: newApt.reason,
+    }).catch(() => {});
+
     showToast('Appointment Booked', `Confirmed with ${newApt.doctorName} on ${newApt.appointmentDate}.`);
     setIsBookModalOpen(false);
     refreshData();
@@ -100,6 +137,7 @@ export const PatientAppointments: React.FC = () => {
   const handleCancelConfirm = () => {
     if (cancelConfirmId) {
       MockStorage.updateAppointmentStatus(cancelConfirmId, 'Cancelled');
+      ApiService.updateAppointmentStatus(cancelConfirmId, 'Cancelled').catch(() => {});
       showToast('Appointment Cancelled', 'Your consultation slot has been released.');
       setCancelConfirmId(null);
       refreshData();
@@ -118,6 +156,35 @@ export const PatientAppointments: React.FC = () => {
           </Button>
         }
       />
+
+      {/* Step 3: Pending Doctor Follow-Up Notice Banner */}
+      {pendingDoctorFollowUps.length > 0 && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-teal-500/10 via-cyan-500/10 to-indigo-500/10 border border-teal-200 shadow-xs space-y-2.5">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 rounded-lg bg-teal-600 text-white">
+              <RotateCw className="w-4 h-4" />
+            </span>
+            <div>
+              <h4 className="font-bold text-sm text-teal-950">Step 3: Clinical Follow-Up Initiated by Doctor</h4>
+              <p className="text-xs text-teal-800">
+                Your attending clinician recommended a follow-up consultation. Hospital reception desk is scheduling your slot.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+            {pendingDoctorFollowUps.map((req) => (
+              <div key={req.id} className="p-3 rounded-xl bg-white/95 border border-teal-200 text-xs shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900">{req.doctorName}</span>
+                  <Badge variant="cyan" size="sm">Target: {req.suggestedDate}</Badge>
+                </div>
+                <p className="text-slate-600 mt-1 font-medium">Objective: {req.reason}</p>
+                {req.notes && <p className="text-slate-400 text-[11px] mt-0.5">Note: {req.notes}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <Card>
         <div className="p-4 border-b border-slate-100">
@@ -149,13 +216,35 @@ export const PatientAppointments: React.FC = () => {
                       <Calendar className="w-6 h-6" />
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="font-bold text-sm text-slate-900">{apt.doctorName}</h4>
                         <Badge variant="indigo" size="sm">{apt.status}</Badge>
+                        {(apt.isFollowUp || apt.type === 'Follow-up') && (
+                          <Badge variant="cyan" size="sm">
+                            Step 3: Follow-Up Confirmed
+                          </Badge>
+                        )}
+                        {apt.rescheduledFromDate && (
+                          <span className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full font-mono font-medium">
+                            Rescheduled from {apt.rescheduledFromDate}
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-teal-700 font-medium">{apt.doctorSpecialization}</p>
                       <p className="text-[11px] text-slate-500 mt-0.5">{apt.departmentName}</p>
-                      <p className="text-xs text-slate-600 mt-2"><span className="font-semibold text-slate-700">Reason:</span> {apt.reason}</p>
+                      <p className="text-xs text-slate-600 mt-2">
+                        <span className="font-semibold text-slate-700">Reason:</span> {apt.reason}
+                      </p>
+                      {apt.followUpReason && apt.followUpReason !== apt.reason && (
+                        <p className="text-xs text-teal-800 mt-0.5">
+                          <span className="font-semibold text-teal-900">Doctor's Follow-Up Objective:</span> {apt.followUpReason}
+                        </p>
+                      )}
+                      {apt.rescheduleReason && (
+                        <p className="text-[11px] text-amber-800 mt-0.5 italic">
+                          Reschedule Note: {apt.rescheduleReason}
+                        </p>
+                      )}
                     </div>
                   </div>
 

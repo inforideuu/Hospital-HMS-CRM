@@ -32,15 +32,37 @@ import { Tabs } from '../../../components/ui/Tabs';
 import { NotFound } from '../../auth/NotFound';
 import { isCapabilityAllowedForTier } from '../../../constants/planCapabilities';
 
+import { Modal } from '../../../components/ui/Modal';
+import { Input } from '../../../components/ui/Input';
+import { Patient } from '../../../types';
+
 export const PatientDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { currentHospital } = useAuth();
+  const { currentHospital, user } = useAuth();
   const { showToast } = useNotification();
   const hospId = currentHospital?.id || 'HOSP-001';
 
-  const patient = MockStorage.getPatientById(id || '');
+  const isNurseOrAdmin =
+    user?.role === 'nurse' ||
+    user?.role === 'hospital_admin' ||
+    user?.role === 'super_admin';
+
+  const [patient, setPatient] = useState<Patient | undefined>(() => MockStorage.getPatientById(id || ''));
+  const [isVitalsModalOpen, setIsVitalsModalOpen] = useState(false);
+  const [vitalsForm, setVitalsForm] = useState({
+    bloodPressure: '120/80 mmHg',
+    heartRate: 72,
+    temperature: 98.6,
+    oxygenLevel: 99,
+    weightKg: 70,
+    allergies: '',
+    medicalHistory: '',
+  });
+
   const appointments = MockStorage.getAppointments(hospId).filter((a) => a.patientId === id);
+  const consultations = MockStorage.getConsultations(hospId).filter((c) => c.patientId === id);
+  const prescriptions = MockStorage.getPrescriptions(id, hospId);
   const admissions = MockStorage.getAdmissions(hospId).filter((a) => a.patientId === id);
   const invoices = MockStorage.getInvoices(hospId).filter((i) => i.patientId === id);
   const labOrders = MockStorage.getLabOrders(hospId).filter((l) => l.patientId === id);
@@ -49,9 +71,83 @@ export const PatientDetail: React.FC = () => {
   const currentTier = currentHospital?.planTier;
   const hasBedCapability = isCapabilityAllowedForTier(currentTier, 'admissions_beds');
 
+  const isPatientCheckedIn =
+    patient?.status === 'Inpatient' ||
+    appointments.some(
+      (a) =>
+        a.status === 'Checked In' ||
+        a.status === 'In Consultation' ||
+        a.status === 'Completed'
+    );
+
   if (!patient) {
     return <NotFound />;
   }
+
+  const handleOpenVitalsModal = () => {
+    if (!isNurseOrAdmin) {
+      showToast(
+        'Access Restricted',
+        'Only Registered Nurses and Hospital Admins are authorized to record or update Clinical Vitals Intake and Clinical Warnings.',
+        'error'
+      );
+      return;
+    }
+    if (!isPatientCheckedIn) {
+      showToast(
+        'Check-In Required',
+        'Clinical Vitals Intake and Clinical Warnings can only be entered after the patient has checked in at reception.',
+        'warning'
+      );
+      return;
+    }
+    setVitalsForm({
+      bloodPressure: patient.vitals?.bloodPressure || '120/80 mmHg',
+      heartRate: patient.vitals?.heartRate || 72,
+      temperature: patient.vitals?.temperature || 98.6,
+      oxygenLevel: patient.vitals?.oxygenLevel || 99,
+      weightKg: patient.vitals?.weightKg || 70,
+      allergies: Array.isArray(patient.allergies) ? patient.allergies.join(', ') : '',
+      medicalHistory: Array.isArray(patient.medicalHistory) ? patient.medicalHistory.join(', ') : '',
+    });
+    setIsVitalsModalOpen(true);
+  };
+
+  const handleSaveVitals = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!patient) return;
+    if (!isNurseOrAdmin || !isPatientCheckedIn) {
+      showToast('Validation Error', 'Authorized Nurse/Admin role and patient check-in required.', 'error');
+      return;
+    }
+
+    const allergiesArray = vitalsForm.allergies
+      ? vitalsForm.allergies.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    const historyArray = vitalsForm.medicalHistory
+      ? vitalsForm.medicalHistory.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    const updated: Patient = {
+      ...patient,
+      allergies: allergiesArray,
+      medicalHistory: historyArray,
+      vitals: {
+        bloodPressure: vitalsForm.bloodPressure || '120/80 mmHg',
+        heartRate: Number(vitalsForm.heartRate) || 72,
+        temperature: Number(vitalsForm.temperature) || 98.6,
+        oxygenLevel: Number(vitalsForm.oxygenLevel) || 99,
+        weightKg: Number(vitalsForm.weightKg) || 70,
+        recordedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
+        recordedBy: user?.name,
+        recordedRole: user?.role === 'nurse' ? 'Registered Nurse' : 'Hospital Admin',
+      },
+    };
+    MockStorage.savePatient(updated);
+    setPatient(updated);
+    setIsVitalsModalOpen(false);
+    showToast('Clinical Intake Recorded', `Vitals and clinical warnings for ${patient.name} successfully saved to EHR.`);
+  };
 
   const vitals = patient.vitals || {
     bloodPressure: '120/80 mmHg',
@@ -59,7 +155,7 @@ export const PatientDetail: React.FC = () => {
     temperature: 98.6,
     oxygenLevel: 99,
     weightKg: 70,
-    recordedAt: '2026-09-24 08:30',
+    recordedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
   };
 
   return (
@@ -88,6 +184,14 @@ export const PatientDetail: React.FC = () => {
               leftIcon={<ArrowLeft className="w-3.5 h-3.5" />}
             >
               Back to Patients
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleOpenVitalsModal}
+              leftIcon={<Activity className="w-3.5 h-3.5" />}
+            >
+              Update Vitals
             </Button>
             <Button
               variant="outline"
@@ -198,6 +302,18 @@ export const PatientDetail: React.FC = () => {
                   <span className="text-slate-500">Email Address</span>
                   <span className="text-slate-700 truncate max-w-[150px]">{patient.email}</span>
                 </div>
+                {patient.assignedDoctorName && (
+                  <div className="flex justify-between py-1 border-b border-slate-100">
+                    <span className="text-slate-500">Assigned Doctor</span>
+                    <span className="font-bold text-indigo-600">{patient.assignedDoctorName}</span>
+                  </div>
+                )}
+                {patient.roomBedNumber && (
+                  <div className="flex justify-between py-1 border-b border-slate-100">
+                    <span className="text-slate-500">Room / Bed</span>
+                    <span className="font-bold text-slate-800">{patient.roomBedNumber}</span>
+                  </div>
+                )}
                 <div className="py-1">
                   <span className="text-slate-500 block mb-0.5">Address:</span>
                   <span className="text-slate-700">{patient.address}</span>
@@ -236,7 +352,9 @@ export const PatientDetail: React.FC = () => {
             <div className="p-4 border-b border-slate-100">
               <Tabs
                 tabs={[
-                  { id: 'appointments', label: 'Consultations', count: appointments.length, icon: <Calendar className="w-3.5 h-3.5" /> },
+                  { id: 'appointments', label: 'Consultations & OPD', count: appointments.length, icon: <Calendar className="w-3.5 h-3.5" /> },
+                  { id: 'clinical_notes', label: 'EHR Clinical Notes', count: consultations.length, icon: <FileText className="w-3.5 h-3.5" /> },
+                  { id: 'prescriptions', label: 'Prescriptions', count: prescriptions.length, icon: <Activity className="w-3.5 h-3.5" /> },
                   ...(hasBedCapability ? [{ id: 'admissions', label: 'IPD Stays', count: admissions.length, icon: <BedDouble className="w-3.5 h-3.5" /> }] : []),
                   { id: 'billing', label: 'Invoices', count: invoices.length, icon: <Receipt className="w-3.5 h-3.5" /> },
                   { id: 'laboratory', label: 'Diagnostics', count: labOrders.length, icon: <FlaskConical className="w-3.5 h-3.5" /> },
@@ -262,14 +380,146 @@ export const PatientDetail: React.FC = () => {
                             <span className="text-slate-400">•</span>
                             <span className="text-slate-600">{apt.departmentName}</span>
                           </div>
-                          <Badge variant="indigo" size="sm">{apt.status}</Badge>
+                          <Badge
+                            variant={
+                              apt.status === 'Completed'
+                                ? 'success'
+                                : apt.status === 'In Consultation'
+                                ? 'indigo'
+                                : apt.status === 'Checked In'
+                                ? 'warning'
+                                : 'neutral'
+                            }
+                            size="sm"
+                          >
+                            {apt.status}
+                          </Badge>
                         </div>
                         <p className="text-slate-500 mt-1">Reason: <span className="text-slate-700">{apt.reason}</span></p>
                         {apt.notes && <p className="text-[11px] text-slate-500 mt-1 italic">Notes: {apt.notes}</p>}
                         <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-400">
                           <span>{apt.appointmentDate} at {apt.appointmentTime}</span>
-                          <span>Fee: ${apt.fee} ({apt.paymentStatus})</span>
+                          <div className="flex items-center gap-2">
+                            <span>Fee: ${apt.fee} ({apt.paymentStatus})</span>
+                            {apt.status === 'Checked In' && (
+                              <button
+                                onClick={() => navigate(`/hospital/consultation/${apt.id}`)}
+                                className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg transition-colors"
+                              >
+                                Start Consultation
+                              </button>
+                            )}
+                            {apt.status === 'In Consultation' && (
+                              <button
+                                onClick={() => navigate(`/hospital/consultation/${apt.id}`)}
+                                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors"
+                              >
+                                Resume Workspace
+                              </button>
+                            )}
+                          </div>
                         </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* Tab: Clinical Notes from Consultations */}
+              {activeTab === 'clinical_notes' && (
+                <div className="space-y-4">
+                  {consultations.length === 0 ? (
+                    <p className="text-xs text-slate-400 py-6 text-center">No clinical consultation notes recorded yet.</p>
+                  ) : (
+                    consultations.map((c) => (
+                      <div key={c.id} className="p-4 rounded-xl border border-slate-200 bg-white space-y-3 text-xs shadow-xs">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <div>
+                            <span className="font-bold text-slate-900 text-sm">Dr. {c.doctorName}</span>
+                            <span className="text-slate-400 ml-2">({c.status})</span>
+                          </div>
+                          <span className="text-slate-500 font-mono text-[11px]">
+                            {c.finalizedAt ? new Date(c.finalizedAt).toLocaleString() : c.startedAt ? new Date(c.startedAt).toLocaleString() : ''}
+                          </span>
+                        </div>
+
+                        {c.chiefComplaint && (
+                          <div>
+                            <span className="font-semibold text-slate-700">Chief Complaint: </span>
+                            <span className="text-slate-800">{c.chiefComplaint}</span>
+                          </div>
+                        )}
+
+                        {c.diagnosis && (
+                          <div className="p-2.5 bg-teal-50/60 rounded-lg border border-teal-100">
+                            <span className="font-semibold text-teal-900">Diagnosis: </span>
+                            <span className="text-teal-950 font-bold">{c.diagnosis}</span>
+                          </div>
+                        )}
+
+                        {c.symptoms && (
+                          <div>
+                            <span className="font-semibold text-slate-700">Presenting Symptoms: </span>
+                            <span className="text-slate-600">{c.symptoms}</span>
+                          </div>
+                        )}
+
+                        {c.examination && (
+                          <div>
+                            <span className="font-semibold text-slate-700">Physical Examination: </span>
+                            <span className="text-slate-600">{c.examination}</span>
+                          </div>
+                        )}
+
+                        {c.treatmentPlan && (
+                          <div>
+                            <span className="font-semibold text-slate-700">Treatment Plan: </span>
+                            <span className="text-slate-600">{c.treatmentPlan}</span>
+                          </div>
+                        )}
+
+                        {c.followUpInstructions && (
+                          <div className="p-2 bg-slate-50 rounded text-slate-600">
+                            <span className="font-semibold text-slate-700">Follow-up: </span>
+                            {c.followUpInstructions}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* Tab: Prescriptions */}
+              {activeTab === 'prescriptions' && (
+                <div className="space-y-3">
+                  {prescriptions.length === 0 ? (
+                    <p className="text-xs text-slate-400 py-6 text-center">No prescriptions on record for this patient.</p>
+                  ) : (
+                    prescriptions.map((p) => (
+                      <div key={p.id} className="p-4 rounded-xl border border-slate-200 bg-white text-xs space-y-3 shadow-xs">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <div>
+                            <span className="font-bold text-slate-900">Prescription {p.id}</span>
+                            <span className="text-slate-500 ml-2">by Dr. {p.doctorName}</span>
+                          </div>
+                          <Badge variant={p.status === 'Active' ? 'success' : 'neutral'} size="sm">
+                            {p.status}
+                          </Badge>
+                        </div>
+                        <div className="font-medium text-slate-700">Diagnosis: {p.diagnosis}</div>
+                        <div className="space-y-1.5">
+                          {p.medications.map((m, idx) => (
+                            <div key={idx} className="p-2 bg-slate-50 rounded-lg flex items-center justify-between">
+                              <div>
+                                <span className="font-bold text-slate-800">{m.medicineName}</span>
+                                <span className="text-slate-500 ml-2">({m.dosage})</span>
+                              </div>
+                              <span className="text-slate-600">{m.frequency} • {m.duration}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {p.notes && <p className="text-[11px] text-slate-500 italic">Instructions: {p.notes}</p>}
                       </div>
                     ))
                   )}
@@ -361,6 +611,104 @@ export const PatientDetail: React.FC = () => {
           </Card>
         </div>
       </div>
+
+      {/* Dynamic Vitals & Clinical Intake Update Modal */}
+      <Modal
+        isOpen={isVitalsModalOpen}
+        onClose={() => setIsVitalsModalOpen(false)}
+        title="Clinical Vitals & Medical History Intake"
+        subtitle={`Recording clinical intake for ${patient.name}`}
+      >
+        <form onSubmit={handleSaveVitals} className="space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <Activity className="w-4 h-4 text-emerald-600" />
+              Clinical Vitals Intake
+            </h4>
+            <Badge variant="success" size="sm" dot>
+              {user?.role === 'nurse' ? 'Registered Nurse' : 'Hospital Admin'} Authorized
+            </Badge>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Input
+              label="Blood Pressure"
+              value={vitalsForm.bloodPressure}
+              onChange={(e) => setVitalsForm({ ...vitalsForm, bloodPressure: e.target.value })}
+              placeholder="120/80 mmHg"
+              required
+            />
+            <Input
+              label="Pulse / Heart Rate (bpm)"
+              type="number"
+              value={vitalsForm.heartRate}
+              onChange={(e) => setVitalsForm({ ...vitalsForm, heartRate: Number(e.target.value) })}
+              placeholder="72"
+              required
+            />
+            <Input
+              label="Body Temp (°F)"
+              type="number"
+              step="0.1"
+              value={vitalsForm.temperature}
+              onChange={(e) => setVitalsForm({ ...vitalsForm, temperature: Number(e.target.value) })}
+              placeholder="98.6"
+              required
+            />
+            <Input
+              label="Oxygen Saturation SpO2 (%)"
+              type="number"
+              value={vitalsForm.oxygenLevel}
+              onChange={(e) => setVitalsForm({ ...vitalsForm, oxygenLevel: Number(e.target.value) })}
+              placeholder="99"
+              required
+            />
+            <Input
+              label="Body Weight (kg)"
+              type="number"
+              step="0.1"
+              value={vitalsForm.weightKg}
+              onChange={(e) => setVitalsForm({ ...vitalsForm, weightKg: Number(e.target.value) })}
+              placeholder="70"
+              required
+            />
+          </div>
+
+          <div className="pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <HeartPulse className="w-4 h-4 text-rose-500" />
+                Clinical Warnings & Medical History
+              </h4>
+              <span className="text-[11px] text-slate-400">Post Check-In Intake</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input
+                label="Known Drug / Food Allergies"
+                value={vitalsForm.allergies}
+                onChange={(e) => setVitalsForm({ ...vitalsForm, allergies: e.target.value })}
+                placeholder="e.g. Penicillin, Peanuts, Sulfa"
+              />
+              <Input
+                label="Past Medical Conditions"
+                value={vitalsForm.medicalHistory}
+                onChange={(e) => setVitalsForm({ ...vitalsForm, medicalHistory: e.target.value })}
+                placeholder="e.g. Hypertension, Type 2 Diabetes"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <Button type="button" variant="outline" size="sm" onClick={() => setIsVitalsModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" size="sm">
+              Save Clinical Intake
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 };
+

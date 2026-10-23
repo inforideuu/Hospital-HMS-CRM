@@ -47,7 +47,7 @@ import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Select } from '../../../components/ui/Select';
 import { Badge } from '../../../components/ui/Badge';
-import { Hospital, HospitalSubscription, HospitalWebsite, User, SupportTicket, Patient, Appointment, Bed, OPDRoom } from '../../../types';
+import { Hospital, HospitalSubscription, HospitalWebsite, User, SupportTicket, Patient, Appointment, Bed, OPDRoom, Admission } from '../../../types';
 import { isCapabilityAllowedForTier } from '../../../constants/planCapabilities';
 
 export const ReportsAnalytics: React.FC = () => {
@@ -72,6 +72,7 @@ export const ReportsAnalytics: React.FC = () => {
 
   const [hospitalPatients, setHospitalPatients] = useState<Patient[]>([]);
   const [hospitalAppointments, setHospitalAppointments] = useState<Appointment[]>([]);
+  const [hospitalAdmissions, setHospitalAdmissions] = useState<Admission[]>([]);
   const [hospitalBeds, setHospitalBeds] = useState<Bed[]>([]);
   const [hospitalOpdRooms, setHospitalOpdRooms] = useState<OPDRoom[]>([]);
 
@@ -84,19 +85,27 @@ export const ReportsAnalytics: React.FC = () => {
 
     const patients = MockStorage.getPatients(currentHospitalId);
     const appointments = MockStorage.getAppointments(currentHospitalId);
+    const admissions = MockStorage.getAdmissions(currentHospitalId);
     const beds = MockStorage.getBeds(currentHospitalId);
     const opdRooms = MockStorage.getOPDRooms(currentHospitalId);
 
     setHospitalPatients(patients);
     setHospitalAppointments(appointments);
+    setHospitalAdmissions(admissions);
     setHospitalBeds(beds);
     setHospitalOpdRooms(opdRooms);
   };
 
   useEffect(() => {
     loadData();
-    window.addEventListener('pulse_storage_updated', loadData);
-    return () => window.removeEventListener('pulse_storage_updated', loadData);
+    MockStorage.syncWithBackend?.();
+    const handleUpdate = () => loadData();
+    window.addEventListener('pulse_storage_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
   }, [currentHospitalId]);
 
   // Platform Telemetry Aggregations
@@ -143,14 +152,37 @@ export const ReportsAnalytics: React.FC = () => {
   const maintenanceOpdRooms = hospitalOpdRooms.filter((r) => r.status === 'Maintenance').length;
   const opdChamberOccupancyRate = totalOpdRoomsCount > 0 ? Math.round((occupiedOpdRooms / totalOpdRoomsCount) * 100) : 0;
 
-  const hospitalOpdIpdTrend = [
-    { month: 'Apr', opd: Math.max(12, totalConsultationsCount * 2), ipd: hasBedFacility ? Math.max(4, occupiedBedsCount) : 0 },
-    { month: 'May', opd: Math.max(18, totalConsultationsCount * 3), ipd: hasBedFacility ? Math.max(6, occupiedBedsCount + 1) : 0 },
-    { month: 'Jun', opd: Math.max(24, totalConsultationsCount * 4), ipd: hasBedFacility ? Math.max(9, occupiedBedsCount + 2) : 0 },
-    { month: 'Jul', opd: Math.max(30, totalConsultationsCount * 5), ipd: hasBedFacility ? Math.max(12, occupiedBedsCount + 3) : 0 },
-    { month: 'Aug', opd: Math.max(42, totalConsultationsCount * 6), ipd: hasBedFacility ? Math.max(15, occupiedBedsCount + 4) : 0 },
-    { month: 'Sep', opd: totalConsultationsCount, ipd: hasBedFacility ? occupiedBedsCount : 0 },
-  ];
+  // Dynamically compute monthly patient volume across the last 6 months
+  const now = new Date();
+  const monthsWindow: { month: string; yearMonth: string }[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthName = d.toLocaleDateString('en-US', { month: 'short' });
+    const yearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    monthsWindow.push({ month: monthName, yearMonth });
+  }
+
+  const hospitalOpdIpdTrend = monthsWindow.map(({ month, yearMonth }) => {
+    // Dynamic OPD volume: count of actual hospital appointments in this yearMonth
+    const opd = hospitalAppointments.filter((a) => {
+      const dateStr = a.appointmentDate || (a as any).date || (a.createdAt ? a.createdAt.split('T')[0] : '');
+      return dateStr && dateStr.startsWith(yearMonth);
+    }).length;
+
+    // Dynamic IPD volume: count of actual hospital admissions in this yearMonth
+    const ipd = hasBedFacility
+      ? hospitalAdmissions.filter((adm) => {
+          const dateStr = adm.admissionDate || (adm as any).date || ((adm as any).createdAt ? (adm as any).createdAt.split('T')[0] : '');
+          return dateStr && dateStr.startsWith(yearMonth);
+        }).length
+      : 0;
+
+    return {
+      month,
+      opd,
+      ipd,
+    };
+  });
 
   const bedOccupancyData = [
     { name: 'Occupied Beds', value: occupiedBedsCount, color: '#4f46e5' },

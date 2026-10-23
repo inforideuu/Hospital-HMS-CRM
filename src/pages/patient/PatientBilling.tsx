@@ -14,6 +14,7 @@ import {
   CreditCard,
   Search,
   DollarSign,
+  IndianRupee,
   Calendar,
   FileText,
   Printer,
@@ -130,22 +131,22 @@ export const PatientBilling: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard
           title="Total Invoiced"
-          value={`$${totalBilled.toLocaleString()}`}
+          value={`₹${totalBilled.toLocaleString('en-IN')}`}
           icon={<Receipt className="w-5 h-5" />}
           accentColor="indigo"
           subtext="All recorded treatments"
         />
         <StatCard
           title="Total Paid"
-          value={`$${totalPaid.toLocaleString()}`}
+          value={`₹${totalPaid.toLocaleString('en-IN')}`}
           icon={<CheckCircle2 className="w-5 h-5" />}
           accentColor="emerald"
           subtext="Settled transactions"
         />
         <StatCard
           title="Outstanding Balance"
-          value={`$${totalOutstanding.toLocaleString()}`}
-          icon={<DollarSign className="w-5 h-5" />}
+          value={`₹${totalOutstanding.toLocaleString('en-IN')}`}
+          icon={<IndianRupee className="w-5 h-5" />}
           accentColor="amber"
           subtext="Pending settlement"
         />
@@ -233,9 +234,9 @@ export const PatientBilling: React.FC = () => {
                   <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-100 justify-between lg:justify-end">
                     <div className="text-left sm:text-right space-y-0.5">
                       <p className="text-xs text-slate-400 font-semibold uppercase">Total Amount</p>
-                      <p className="text-lg font-black text-slate-900">${inv.totalAmount.toLocaleString()}</p>
+                      <p className="text-lg font-black text-slate-900">₹{inv.totalAmount.toLocaleString('en-IN')}</p>
                       {balanceDue > 0 ? (
-                        <p className="text-xs font-semibold text-rose-600">Balance: ${balanceDue.toLocaleString()}</p>
+                        <p className="text-xs font-semibold text-rose-600">Balance: ₹{balanceDue.toLocaleString('en-IN')}</p>
                       ) : (
                         <p className="text-xs font-semibold text-emerald-600">Paid in full</p>
                       )}
@@ -331,8 +332,8 @@ export const PatientBilling: React.FC = () => {
                           <span className="block text-[10px] text-slate-400">{item.category}</span>
                         </td>
                         <td className="py-2.5 px-3 text-center text-slate-600">{item.quantity}</td>
-                        <td className="py-2.5 px-3 text-right text-slate-600">${item.unitPrice.toFixed(2)}</td>
-                        <td className="py-2.5 px-3 text-right font-semibold text-slate-900">${item.total.toFixed(2)}</td>
+                        <td className="py-2.5 px-3 text-right text-slate-600">₹{item.unitPrice.toFixed(2)}</td>
+                        <td className="py-2.5 px-3 text-right font-semibold text-slate-900">₹{item.total.toFixed(2)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -344,29 +345,29 @@ export const PatientBilling: React.FC = () => {
             <div className="bg-slate-50 p-4 rounded-xl space-y-1.5 text-xs text-slate-600">
               <div className="flex justify-between">
                 <span>Subtotal:</span>
-                <span className="font-semibold text-slate-900">${selectedInvoice.subtotal.toFixed(2)}</span>
+                <span className="font-semibold text-slate-900">₹{selectedInvoice.subtotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>Taxes & Hospital Surcharges ({selectedInvoice.taxRate}%):</span>
-                <span>+${selectedInvoice.taxAmount.toFixed(2)}</span>
+                <span>+₹{selectedInvoice.taxAmount.toFixed(2)}</span>
               </div>
               {selectedInvoice.discount > 0 && (
                 <div className="flex justify-between text-emerald-600">
                   <span>Insurance Co-Pay / Hospital Discount:</span>
-                  <span>-${selectedInvoice.discount.toFixed(2)}</span>
+                  <span>-₹{selectedInvoice.discount.toFixed(2)}</span>
                 </div>
               )}
               <div className="flex justify-between text-sm font-bold text-slate-900 pt-2 border-t border-slate-200">
                 <span>Total Amount:</span>
-                <span>${selectedInvoice.totalAmount.toFixed(2)}</span>
+                <span>₹{selectedInvoice.totalAmount.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-xs font-semibold text-teal-700">
                 <span>Amount Paid:</span>
-                <span>-${selectedInvoice.amountPaid.toFixed(2)}</span>
+                <span>-₹{selectedInvoice.amountPaid.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-sm font-extrabold text-rose-600 pt-1 border-t border-slate-200">
                 <span>Remaining Balance Due:</span>
-                <span>${(selectedInvoice.totalAmount - selectedInvoice.amountPaid).toFixed(2)}</span>
+                <span>₹{(selectedInvoice.totalAmount - selectedInvoice.amountPaid).toFixed(2)}</span>
               </div>
             </div>
 
@@ -393,9 +394,8 @@ export const PatientBilling: React.FC = () => {
           <div className="space-y-5">
             <div className="p-4 bg-teal-50 rounded-xl border border-teal-100 flex items-center justify-between">
               <div>
-                <p className="text-xs text-teal-700 font-semibold">Payment for Invoice #{payInvoice.id}</p>
                 <p className="text-xl font-black text-slate-900 mt-0.5">
-                  ${(payInvoice.totalAmount - payInvoice.amountPaid).toFixed(2)}
+                  ₹{(payInvoice.totalAmount - payInvoice.amountPaid).toFixed(2)}
                 </p>
               </div>
               <ShieldCheck className="w-8 h-8 text-teal-600" />
@@ -453,7 +453,7 @@ export const PatientBilling: React.FC = () => {
                 isLoading={isProcessing}
                 leftIcon={<ShieldCheck className="w-4 h-4" />}
               >
-                Pay ${(payInvoice.totalAmount - payInvoice.amountPaid).toFixed(2)}
+                Pay ₹{(payInvoice.totalAmount - payInvoice.amountPaid).toFixed(2)}
               </Button>
             </div>
           </div>
