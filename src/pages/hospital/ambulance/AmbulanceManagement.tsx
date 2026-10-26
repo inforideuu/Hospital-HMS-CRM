@@ -903,7 +903,7 @@ export const AmbulanceManagement: React.FC = () => {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Cost ($)</label>
+              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Cost (₹)</label>
               <Input
                 type="number"
                 value={newMaintenance.cost}

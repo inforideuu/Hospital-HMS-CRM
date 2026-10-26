@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   HeartPulse,
@@ -24,6 +24,8 @@ import {
   TrendingUp,
   Stethoscope,
   IndianRupee,
+  ShoppingCart,
+  ClipboardList,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -45,11 +47,15 @@ import { PageHeader } from '../../../components/ui/PageHeader';
 import { StatCard } from '../../../components/ui/StatCard';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
+import { Badge } from '../../../components/ui/Badge';
 import { Patient, Appointment, Invoice, Bed, Admission, Doctor, HospitalSubscription, OPDRoom } from '../../../types';
 import { SubscriptionUpgradeModal } from '../../../components/common/SubscriptionUpgradeModal';
 import { isCapabilityAllowedForTier } from '../../../constants/planCapabilities';
 import { QrCode, Sparkles, CheckCircle } from 'lucide-react';
 import { DoctorDashboard } from '../doctor/DoctorDashboard';
+import { LaboratoryDashboard } from '../laboratory/LaboratoryDashboard';
+import { NurseDashboard } from '../nurse/NurseDashboard';
+import { PharmacistDashboard } from '../pharmacist/PharmacistDashboard';
 
 export const HospitalDashboard: React.FC = () => {
   const { user, currentHospital } = useAuth();
@@ -58,6 +64,21 @@ export const HospitalDashboard: React.FC = () => {
   // If authenticated user is a doctor, show the dedicated Doctor Dashboard
   if (user?.role === 'doctor') {
     return <DoctorDashboard />;
+  }
+
+  // If authenticated user is a lab technician, show the dedicated Laboratory Dashboard
+  if (user?.role === 'lab_technician') {
+    return <LaboratoryDashboard />;
+  }
+
+  // If authenticated user is a nurse, show the dedicated Nurse Station Dashboard
+  if (user?.role === 'nurse') {
+    return <NurseDashboard />;
+  }
+
+  // If authenticated user is a pharmacist, show the dedicated Pharmacist Dashboard
+  if (user?.role === 'pharmacist') {
+    return <PharmacistDashboard />;
   }
 
   const hospId = currentHospital?.id || 'hosp-1';
@@ -98,8 +119,9 @@ export const HospitalDashboard: React.FC = () => {
   const hasBedCapability = isCapabilityAllowedForTier(currentTier, 'admissions_beds');
 
   // Real bed capacity & status for current hospital
-  const currentPlan = subscription ? MockStorage.getPlanByTier(subscription.planTier) : undefined;
-  const totalBedsCount = currentHospital?.totalBeds || (beds.length > 0 ? beds.length : (hasBedCapability ? (currentPlan?.maxBeds || 20) : 0));
+  const currentPlan = MockStorage.getPlanByTier(currentTier);
+  const planMaxBeds = currentPlan?.maxBeds ?? (hasBedCapability ? 120 : 0);
+  const totalBedsCount = beds.length > 0 ? beds.length : (currentHospital?.totalBeds || planMaxBeds);
   const occupiedBeds = beds.filter((b) => b.status === 'Occupied').length || admissions.filter((a) => a.status === 'Active').length;
   const maintenanceBeds = beds.filter((b) => b.status === 'Maintenance').length;
   const availableBeds = Math.max(0, totalBedsCount - occupiedBeds - maintenanceBeds);
@@ -115,6 +137,45 @@ export const HospitalDashboard: React.FC = () => {
     (acc, i) => (i.status !== 'Paid' ? acc + ((i.totalAmount || 0) - (i.amountPaid || 0)) : acc),
     0
   );
+
+  // Pharmacy Revenue Split: Hospital Patients (Doctor Rx) vs Walk-in Patients (OTC)
+  const pharmacyInvoices = useMemo(() => {
+    return invoices.filter(
+      (inv) =>
+        inv.items.some(
+          (item) => item.category === 'Pharmacy' || item.description?.toLowerCase().includes('rx') || item.description?.toLowerCase().includes('batch')
+        ) ||
+        inv.id.includes('PHARM') ||
+        inv.id.includes('OTC') ||
+        inv.notes?.toLowerCase().includes('pharmacy')
+    );
+  }, [invoices]);
+
+  const walkInPharmacyInvoices = useMemo(() => {
+    return pharmacyInvoices.filter(
+      (inv) =>
+        inv.id.includes('OTC') ||
+        inv.patientId?.startsWith('WALK-IN') ||
+        inv.patientName?.toLowerCase().includes('walk-in') ||
+        inv.notes?.toLowerCase().includes('walk-in') ||
+        inv.notes?.toLowerCase().includes('otc')
+    );
+  }, [pharmacyInvoices]);
+
+  const hospitalPatientPharmacyInvoices = useMemo(() => {
+    return pharmacyInvoices.filter((inv) => !walkInPharmacyInvoices.includes(inv));
+  }, [pharmacyInvoices, walkInPharmacyInvoices]);
+
+  const pharmacyWalkInRevenue = useMemo(() => {
+    return walkInPharmacyInvoices.reduce((acc, i) => acc + (i.amountPaid || i.totalAmount || 0), 0);
+  }, [walkInPharmacyInvoices]);
+
+  const pharmacyHospitalPatientRevenue = useMemo(() => {
+    return hospitalPatientPharmacyInvoices.reduce((acc, i) => acc + (i.amountPaid || i.totalAmount || 0), 0);
+  }, [hospitalPatientPharmacyInvoices]);
+
+  const totalPharmacyRevenue = pharmacyWalkInRevenue + pharmacyHospitalPatientRevenue;
+  const clinicalServicesRevenue = Math.max(0, totalRevenue - totalPharmacyRevenue);
 
   // Dynamic Weekly Trends derived strictly from actual appointments registered for this hospital
   const daysOfWeek = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -301,11 +362,19 @@ export const HospitalDashboard: React.FC = () => {
         {hasBedCapability ? (
           <StatCard
             title="Bed Occupancy"
-            value={`${occupiedBeds} / ${totalBedsCount}`}
-            subtext={`${availableBeds} beds available`}
+            value={beds.length > 0 ? `${occupiedBeds} / ${beds.length}` : `${occupiedBeds} / ${planMaxBeds}`}
+            subtext={
+              beds.length > 0
+                ? `${availableBeds} beds available (Max ${planMaxBeds})`
+                : `${planMaxBeds} beds available (${currentPlan.name})`
+            }
             icon={<BedDouble className="w-5 h-5 text-amber-600" />}
             accentColor="amber"
-            trend={{ value: `${totalBedsCount > 0 ? Math.round((occupiedBeds / totalBedsCount) * 100) : 0}%`, direction: 'neutral', label: 'capacity' }}
+            trend={{
+              value: `${totalBedsCount > 0 ? Math.round((occupiedBeds / totalBedsCount) * 100) : 0}%`,
+              direction: 'neutral',
+              label: beds.length > 0 ? 'in-use' : 'capacity',
+            }}
           />
         ) : (
           <StatCard
@@ -324,10 +393,15 @@ export const HospitalDashboard: React.FC = () => {
         <StatCard
           title="Total Revenue"
           value={`₹${totalRevenue.toLocaleString('en-IN')}`}
-          subtext={`₹${pendingRevenue.toLocaleString('en-IN')} pending`}
+          subtext={`Pharmacy: ₹${totalPharmacyRevenue.toLocaleString('en-IN')} (Rx: ₹${pharmacyHospitalPatientRevenue.toLocaleString('en-IN')} | OTC: ₹${pharmacyWalkInRevenue.toLocaleString('en-IN')})`}
           icon={<IndianRupee className="w-5 h-5 text-emerald-600" />}
           accentColor="emerald"
-          trend={{ value: '84%', direction: 'up', label: 'Collection rate' }}
+          trend={{
+            value: `${totalRevenue > 0 ? Math.round((totalPharmacyRevenue / totalRevenue) * 100) : 0}%`,
+            direction: 'up',
+            label: 'Pharmacy share',
+          }}
+          onClick={() => navigate('/hospital/billing')}
         />
       </div>
 
@@ -416,6 +490,139 @@ export const HospitalDashboard: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Revenue Breakdown & Pharmacy Split Section */}
+      <Card>
+        <CardHeader
+          title={
+            <div className="flex items-center gap-2">
+              <Receipt className="w-5 h-5 text-emerald-600" />
+              <span>Hospital Revenue Distribution & Pharmacy Audit</span>
+            </div>
+          }
+          subtitle="Real-time financial audit separating Clinical Consultations from Central Pharmacy (Hospital Patients vs Walk-in Counter)"
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/hospital/billing')}
+              rightIcon={<ArrowRight className="w-4 h-4" />}
+            >
+              View Invoices & Audit
+            </Button>
+          }
+        />
+        <CardContent className="space-y-5">
+          {/* Visual Revenue Proportion Stacked Bar */}
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between text-xs font-bold text-slate-700">
+              <span>Overall Revenue Streams Proportion</span>
+              <span>Total Collections: ₹{totalRevenue.toLocaleString('en-IN')}</span>
+            </div>
+            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden flex">
+              <div
+                className="bg-indigo-600 h-full transition-all duration-500"
+                style={{ width: `${totalRevenue > 0 ? (clinicalServicesRevenue / totalRevenue) * 100 : 0}%` }}
+                title={`Clinical Services: ₹${clinicalServicesRevenue.toLocaleString('en-IN')}`}
+              />
+              <div
+                className="bg-emerald-500 h-full transition-all duration-500"
+                style={{ width: `${totalRevenue > 0 ? (pharmacyHospitalPatientRevenue / totalRevenue) * 100 : 0}%` }}
+                title={`Pharmacy Hospital Patients: ₹${pharmacyHospitalPatientRevenue.toLocaleString('en-IN')}`}
+              />
+              <div
+                className="bg-teal-400 h-full transition-all duration-500"
+                style={{ width: `${totalRevenue > 0 ? (pharmacyWalkInRevenue / totalRevenue) * 100 : 0}%` }}
+                title={`Pharmacy Walk-in Patients: ₹${pharmacyWalkInRevenue.toLocaleString('en-IN')}`}
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 pt-1">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 shrink-0" />
+                <span>Clinical Consultations & Bed Charges ({totalRevenue > 0 ? Math.round((clinicalServicesRevenue / totalRevenue) * 100) : 0}%)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                <span>Pharmacy: Hospital Patients ({totalRevenue > 0 ? Math.round((pharmacyHospitalPatientRevenue / totalRevenue) * 100) : 0}%)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-teal-400 shrink-0" />
+                <span>Pharmacy: Walk-in Retail ({totalRevenue > 0 ? Math.round((pharmacyWalkInRevenue / totalRevenue) * 100) : 0}%)</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 3 Detail Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Stream 1: Clinical Services */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700">
+                  <Stethoscope className="w-4 h-4" />
+                </div>
+                <Badge variant="neutral">
+                  {totalRevenue > 0 ? Math.round((clinicalServicesRevenue / totalRevenue) * 100) : 0}% of Total
+                </Badge>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Clinical & Hospital Services</p>
+                <h4 className="text-xl font-bold text-slate-900 mt-0.5">
+                  ₹{clinicalServicesRevenue.toLocaleString('en-IN')}
+                </h4>
+                <p className="text-xs text-slate-500 mt-1">
+                  Doctor consultations, OPD appointments, IPD bed admissions, and diagnostic lab investigations.
+                </p>
+              </div>
+            </div>
+
+            {/* Stream 2: Pharmacy - Hospital Patients */}
+            <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-700">
+                  <ClipboardList className="w-4 h-4" />
+                </div>
+                <Badge variant="success">
+                  {totalPharmacyRevenue > 0 ? Math.round((pharmacyHospitalPatientRevenue / totalPharmacyRevenue) * 100) : 0}% of Pharmacy
+                </Badge>
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Pharmacy: Hospital Patients</p>
+                </div>
+                <h4 className="text-xl font-bold text-emerald-950 mt-0.5">
+                  ₹{pharmacyHospitalPatientRevenue.toLocaleString('en-IN')}
+                </h4>
+                <p className="text-xs text-emerald-800 mt-1">
+                  Doctor e-prescriptions fulfilled for registered hospital outpatients (OPD) and admitted inpatients (IPD) ({hospitalPatientPharmacyInvoices.length} orders).
+                </p>
+              </div>
+            </div>
+
+            {/* Stream 3: Pharmacy - Walk-in OTC Patients */}
+            <div className="bg-teal-50/60 border border-teal-200/80 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="w-8 h-8 rounded-lg bg-teal-100 flex items-center justify-center text-teal-700">
+                  <ShoppingCart className="w-4 h-4" />
+                </div>
+                <Badge variant="info">
+                  {totalPharmacyRevenue > 0 ? Math.round((pharmacyWalkInRevenue / totalPharmacyRevenue) * 100) : 0}% of Pharmacy
+                </Badge>
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-semibold text-teal-800 uppercase tracking-wider">Pharmacy: Walk-in Patients</p>
+                </div>
+                <h4 className="text-xl font-bold text-teal-950 mt-0.5">
+                  ₹{pharmacyWalkInRevenue.toLocaleString('en-IN')}
+                </h4>
+                <p className="text-xs text-teal-800 mt-1">
+                  Direct retail POS sales at the dispensary counter for non-prescription drugs, first aid, and OTC healthcare ({walkInPharmacyInvoices.length} sales).
+                </p>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <SubscriptionUpgradeModal
         isOpen={isUpgradeModalOpen}

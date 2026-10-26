@@ -59,8 +59,7 @@ export const DoctorPatientQueue: React.FC = () => {
   const doctorName = doctorProfile?.name || user?.name || 'Dr. Specialist';
 
   const loadData = () => {
-    const allDoctors = MockStorage.getDoctors(hospId);
-    setDoctors(allDoctors.length > 0 ? allDoctors : MockStorage.getDoctors());
+    setDoctors(MockStorage.getDoctors(hospId));
     setAppointments(MockStorage.getAppointments(hospId));
   };
 

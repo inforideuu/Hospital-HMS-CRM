@@ -78,7 +78,7 @@ export const CapabilityLockedNotice: React.FC<CapabilityLockedNoticeProps> = ({
               onClick={() => navigate('/hospital/dashboard')}
               className="w-full sm:w-auto border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 font-bold"
             >
-              Back to Hospital Dashboard
+              Back to Dashboard
             </Button>
             <Button
               variant="primary"

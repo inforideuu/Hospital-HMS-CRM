@@ -16,6 +16,8 @@ import {
   RefreshCw,
   Tag,
   Sparkles,
+  Percent,
+  Calculator,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
@@ -291,11 +293,356 @@ export const HospitalSettings: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* Clinical Scheduling & Billing Config */}
+          {/* Hospital Taxation & GST Percentage Configuration */}
+          <Card className="border-indigo-100 shadow-sm overflow-hidden">
+            <CardHeader
+              title={
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600">
+                    <Receipt className="w-5 h-5" />
+                  </div>
+                  <span>Hospital Taxation & GST Percentage Configuration</span>
+                </div>
+              }
+              subtitle="All hospital-related GST percentages are chosen and controlled by the Hospital Admin. Configure GST rates across clinical departments, pharmacy dispensary, laboratory tests, and inpatient folios."
+              action={
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-600">GST Billing:</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.enableGSTBilling !== false}
+                      onChange={(e) => setSettings({ ...settings, enableGSTBilling: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                  </label>
+                  <span className={`text-xs font-bold ${settings.enableGSTBilling !== false ? 'text-emerald-700' : 'text-slate-400'}`}>
+                    {settings.enableGSTBilling !== false ? 'Enabled' : 'Exempt / Disabled'}
+                  </span>
+                </div>
+              }
+            />
+            <CardContent className="space-y-6">
+              {/* GST Registration & Tax Jurisdiction */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <Input
+                  label="Hospital GSTIN / Tax Registration Number *"
+                  placeholder="e.g. 29ABCDE1234F1Z5 or GST-2026-001"
+                  value={settings.taxRegistrationNumber || ''}
+                  onChange={(e) => setSettings({ ...settings, taxRegistrationNumber: e.target.value })}
+                  helperText="Official 15-digit GST Identification Number printed on patient tax invoices"
+                />
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    GST Computation Scheme / Tax Type
+                  </label>
+                  <select
+                    value={settings.gstType || 'CGST_SGST'}
+                    onChange={(e) => setSettings({ ...settings, gstType: e.target.value as 'CGST_SGST' | 'IGST' })}
+                    className="w-full text-xs p-2.5 rounded-lg border border-slate-300 bg-white font-medium focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="CGST_SGST">Intra-State: CGST (50%) + SGST (50%) Split</option>
+                    <option value="IGST">Inter-State: Integrated GST (IGST 100%)</option>
+                  </select>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Defines how tax line items appear on printed receipts and GST summary reports.
+                  </p>
+                </div>
+              </div>
+
+              {/* Departmental GST Rates Grid */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <Percent className="w-4 h-4 text-indigo-600" />
+                    Departmental GST Percentage Presets & Rates
+                  </h4>
+                  <span className="text-[11px] text-slate-500">Click a preset badge or enter custom %</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* 1. Pharmacy / Medicines GST */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 transition-all space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                          Pharmacy & Medicines GST
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Prescription fulfillment, OTC dispensary, formulary consumables
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          value={settings.pharmacyGSTRate ?? 5}
+                          onChange={(e) => setSettings({ ...settings, pharmacyGSTRate: Math.max(0, Number(e.target.value) || 0) })}
+                          className="w-16 p-1.5 text-center text-xs font-black border border-slate-300 rounded-lg bg-slate-50"
+                        />
+                        <span className="text-xs font-bold text-slate-600">%</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100">
+                      <span className="text-[10px] text-slate-400 font-semibold uppercase">Presets:</span>
+                      {[0, 5, 12, 18].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => setSettings({ ...settings, pharmacyGSTRate: rate })}
+                          className={`text-[11px] px-2 py-0.5 rounded-md font-bold transition-all ${
+                            (settings.pharmacyGSTRate ?? 5) === rate
+                              ? 'bg-emerald-600 text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {rate}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 2. OPD Consultation GST */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 transition-all space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                          OPD Doctor Consultation GST
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Medical specialist fees, OPD checkups (Healthcare Exempt is 0%)
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          value={settings.consultationGSTRate ?? 0}
+                          onChange={(e) => setSettings({ ...settings, consultationGSTRate: Math.max(0, Number(e.target.value) || 0) })}
+                          className="w-16 p-1.5 text-center text-xs font-black border border-slate-300 rounded-lg bg-slate-50"
+                        />
+                        <span className="text-xs font-bold text-slate-600">%</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100">
+                      <span className="text-[10px] text-slate-400 font-semibold uppercase">Presets:</span>
+                      {[0, 5, 12, 18].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => setSettings({ ...settings, consultationGSTRate: rate })}
+                          className={`text-[11px] px-2 py-0.5 rounded-md font-bold transition-all ${
+                            (settings.consultationGSTRate ?? 0) === rate
+                              ? 'bg-indigo-600 text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {rate === 0 ? '0% (Exempt)' : `${rate}%`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 3. Laboratory & Diagnostic Tests GST */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 transition-all space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
+                          Laboratory & Diagnostic Tests GST
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Pathology, Blood tests, Radiology, MRI, CT Scans, Ultrasound
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          value={settings.labDiagnosticGSTRate ?? 5}
+                          onChange={(e) => setSettings({ ...settings, labDiagnosticGSTRate: Math.max(0, Number(e.target.value) || 0) })}
+                          className="w-16 p-1.5 text-center text-xs font-black border border-slate-300 rounded-lg bg-slate-50"
+                        />
+                        <span className="text-xs font-bold text-slate-600">%</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100">
+                      <span className="text-[10px] text-slate-400 font-semibold uppercase">Presets:</span>
+                      {[0, 5, 12, 18].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => setSettings({ ...settings, labDiagnosticGSTRate: rate })}
+                          className={`text-[11px] px-2 py-0.5 rounded-md font-bold transition-all ${
+                            (settings.labDiagnosticGSTRate ?? 5) === rate
+                              ? 'bg-cyan-600 text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {rate}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 4. Inpatient Bed & Room Charges GST */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 transition-all space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                          Inpatient Bed & Room Charges GST
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          ICU, Deluxe, Special Room tariffs (per day admission charges)
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          value={settings.ipdRoomGSTRate ?? 5}
+                          onChange={(e) => setSettings({ ...settings, ipdRoomGSTRate: Math.max(0, Number(e.target.value) || 0) })}
+                          className="w-16 p-1.5 text-center text-xs font-black border border-slate-300 rounded-lg bg-slate-50"
+                        />
+                        <span className="text-xs font-bold text-slate-600">%</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100">
+                      <span className="text-[10px] text-slate-400 font-semibold uppercase">Presets:</span>
+                      {[0, 5, 12, 18].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => setSettings({ ...settings, ipdRoomGSTRate: rate })}
+                          className={`text-[11px] px-2 py-0.5 rounded-md font-bold transition-all ${
+                            (settings.ipdRoomGSTRate ?? 5) === rate
+                              ? 'bg-purple-600 text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {rate}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 5. General Hospital / Default Billing GST */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 transition-all space-y-3 md:col-span-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                          General Hospital Services & Default Billing GST
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Standard fallback tax rate applied to general hospital bills, nursing, procedures, and miscellaneous items
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          value={settings.defaultGSTRate ?? 5}
+                          onChange={(e) => setSettings({ ...settings, defaultGSTRate: Math.max(0, Number(e.target.value) || 0) })}
+                          className="w-16 p-1.5 text-center text-xs font-black border border-slate-300 rounded-lg bg-slate-50"
+                        />
+                        <span className="text-xs font-bold text-slate-600">%</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100">
+                      <span className="text-[10px] text-slate-400 font-semibold uppercase">Presets:</span>
+                      {[0, 5, 12, 18, 28].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => setSettings({ ...settings, defaultGSTRate: rate })}
+                          className={`text-[11px] px-2 py-0.5 rounded-md font-bold transition-all ${
+                            (settings.defaultGSTRate ?? 5) === rate
+                              ? 'bg-amber-600 text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {rate}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Dynamic Live Tax Preview Calculation */}
+              <div className="bg-gradient-to-r from-slate-50 to-indigo-50/40 p-4 rounded-xl border border-indigo-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-xs text-slate-800 flex items-center gap-1.5">
+                    <Calculator className="w-4 h-4 text-indigo-600" />
+                    <span>Live Tax Computation Preview (Hospital Admin Rate Check)</span>
+                  </div>
+                  <span className="text-[11px] text-indigo-700 font-semibold">
+                    Scheme: {settings.gstType === 'IGST' ? 'IGST (Full)' : 'CGST + SGST (50/50 Split)'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs pt-1">
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-500 uppercase font-bold block">Pharmacy (₹1,000)</span>
+                    <span className="font-bold text-slate-800 mt-0.5 block">
+                      +₹{((1000 * (settings.enableGSTBilling !== false ? (settings.pharmacyGSTRate ?? 5) : 0)) / 100).toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-emerald-600 font-mono">
+                      Rate: {settings.enableGSTBilling !== false ? settings.pharmacyGSTRate ?? 5 : 0}%
+                    </span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-500 uppercase font-bold block">OPD Consult (₹800)</span>
+                    <span className="font-bold text-slate-800 mt-0.5 block">
+                      +₹{((800 * (settings.enableGSTBilling !== false ? (settings.consultationGSTRate ?? 0) : 0)) / 100).toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-indigo-600 font-mono">
+                      Rate: {settings.enableGSTBilling !== false ? settings.consultationGSTRate ?? 0 : 0}%
+                    </span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-500 uppercase font-bold block">Lab Tests (₹1,500)</span>
+                    <span className="font-bold text-slate-800 mt-0.5 block">
+                      +₹{((1500 * (settings.enableGSTBilling !== false ? (settings.labDiagnosticGSTRate ?? 5) : 0)) / 100).toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-cyan-600 font-mono">
+                      Rate: {settings.enableGSTBilling !== false ? settings.labDiagnosticGSTRate ?? 5 : 0}%
+                    </span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-500 uppercase font-bold block">IPD Room (₹4,000)</span>
+                    <span className="font-bold text-slate-800 mt-0.5 block">
+                      +₹{((4000 * (settings.enableGSTBilling !== false ? (settings.ipdRoomGSTRate ?? 5) : 0)) / 100).toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-purple-600 font-mono">
+                      Rate: {settings.enableGSTBilling !== false ? settings.ipdRoomGSTRate ?? 5 : 0}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Clinical Scheduling & Invoicing Parameters */}
           <Card>
             <CardHeader
-              title="Clinical Scheduling & Invoicing Parameters"
-              subtitle="Default time slots and taxation parameters"
+              title="Clinical Scheduling & Invoicing Preferences"
+              subtitle="Default consultation durations, SMS alerts, and invoice payment terms"
             />
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -304,11 +651,12 @@ export const HospitalSettings: React.FC = () => {
                   type="number"
                   value={settings.consultationSlotMinutes}
                   onChange={(e) => setSettings({ ...settings, consultationSlotMinutes: Number(e.target.value) })}
+                  helperText="Default duration configured for doctors on the roster"
                 />
                 <Input
-                  label="Tax Identification / EIN Number"
-                  value={settings.taxRegistrationNumber}
-                  onChange={(e) => setSettings({ ...settings, taxRegistrationNumber: e.target.value })}
+                  label="Hospital Currency Display"
+                  value={settings.defaultCurrency || 'INR (₹)'}
+                  onChange={(e) => setSettings({ ...settings, defaultCurrency: e.target.value })}
                 />
               </div>
 

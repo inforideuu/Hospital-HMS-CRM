@@ -91,7 +91,10 @@ export const HospitalDashboard: React.FC = () => {
   const todayAppointments = appointments.length;
 
   // Real bed capacity & status for current hospital
-  const totalBedsCount = currentHospital?.totalBeds || (beds.length > 0 ? beds.length : 20);
+  const currentTier = currentHospital?.planTier || 'trial';
+  const currentPlan = MockStorage.getPlanByTier(currentTier);
+  const planMaxBeds = currentPlan?.maxBeds ?? 120;
+  const totalBedsCount = beds.length > 0 ? beds.length : (currentHospital?.totalBeds || planMaxBeds);
   const occupiedBeds = beds.filter((b) => b.status === 'Occupied').length || admissions.filter((a) => a.status === 'Active').length;
   const maintenanceBeds = beds.filter((b) => b.status === 'Maintenance').length;
   const availableBeds = Math.max(0, totalBedsCount - occupiedBeds - maintenanceBeds);
@@ -266,11 +269,15 @@ export const HospitalDashboard: React.FC = () => {
         />
         <StatCard
           title="Bed Occupancy"
-          value={`${occupiedBeds} / ${totalBedsCount}`}
-          subtext={`${availableBeds} beds available`}
+          value={beds.length > 0 ? `${occupiedBeds} / ${beds.length}` : `${occupiedBeds} / ${planMaxBeds}`}
+          subtext={
+            beds.length > 0
+              ? `${availableBeds} beds available in wards (Max ${planMaxBeds})`
+              : `${planMaxBeds} beds available (${currentPlan.name})`
+          }
           icon={<BedDouble className="w-5 h-5 text-amber-600" />}
           accentColor="amber"
-          trend={{ value: `${Math.round((occupiedBeds / totalBedsCount) * 100)}%`, direction: 'neutral', label: 'capacity' }}
+          trend={{ value: `${totalBedsCount > 0 ? Math.round((occupiedBeds / totalBedsCount) * 100) : 0}%`, direction: 'neutral', label: 'capacity' }}
         />
         <StatCard
           title="Total Revenue"

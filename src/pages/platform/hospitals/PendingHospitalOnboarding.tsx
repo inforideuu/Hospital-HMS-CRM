@@ -101,9 +101,9 @@ export const PendingHospitalOnboarding: React.FC = () => {
       adminPhone: selectedCustomer.phone,
       planTier: formData.planTier || 'trial',
       status: 'active',
-      totalDoctors: plan?.maxDoctors || 3,
+      totalDoctors: plan ? plan.maxDoctors : 3,
       totalPatients: 0,
-      totalBeds: formData.totalBeds || plan?.maxBeds || 20,
+      totalBeds: formData.totalBeds !== undefined && formData.totalBeds > 0 ? formData.totalBeds : (plan ? plan.maxBeds : 20),
       createdAt: new Date().toISOString().split('T')[0],
       websiteUrl: `https://${slug}.pulsecorehealth.com`,
       domainStatus: 'connected',
@@ -305,7 +305,7 @@ export const PendingHospitalOnboarding: React.FC = () => {
                   setFormData({
                     ...formData,
                     planTier: newTier,
-                    totalBeds: selectedPlan?.maxBeds || formData.totalBeds,
+                    totalBeds: selectedPlan ? selectedPlan.maxBeds : 0,
                   });
                 }}
                 required

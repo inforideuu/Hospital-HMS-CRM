@@ -540,7 +540,7 @@ export const AdmissionsManagement: React.FC = () => {
             </Select>
 
             <Input
-              label="Initial Admission Deposit ($)"
+              label="Initial Admission Deposit (₹)"
               type="number"
               value={formData.initialDeposit}
               onChange={(e) => setFormData({ ...formData, initialDeposit: Number(e.target.value) })}
@@ -613,7 +613,7 @@ export const AdmissionsManagement: React.FC = () => {
             </Select>
 
             <Input
-              label="Base Daily Rate ($)"
+              label="Base Daily Rate (₹)"
               type="number"
               value={wardFormData.dailyRate}
               onChange={(e) => setWardFormData({ ...wardFormData, dailyRate: Number(e.target.value) })}
@@ -701,7 +701,7 @@ export const AdmissionsManagement: React.FC = () => {
             />
 
             <Input
-              label="Daily Rate ($)"
+              label="Daily Rate (₹)"
               type="number"
               value={bedFormData.dailyRate}
               onChange={(e) => setBedFormData({ ...bedFormData, dailyRate: Number(e.target.value) })}

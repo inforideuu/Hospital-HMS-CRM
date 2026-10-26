@@ -36,10 +36,7 @@ export const DoctorManagement: React.FC = () => {
   const { showToast } = useNotification();
   const hospId = currentHospital?.id || 'HOSP-001';
 
-  const [doctors, setDoctors] = useState<Doctor[]>(() => {
-    const raw = MockStorage.getDoctors(hospId);
-    return raw.length > 0 ? raw : MockStorage.getDoctors();
-  });
+  const [doctors, setDoctors] = useState<Doctor[]>(() => MockStorage.getDoctors(hospId));
   const departments = MockStorage.getDepartments(hospId);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -66,8 +63,7 @@ export const DoctorManagement: React.FC = () => {
   });
 
   const refreshData = () => {
-    const raw = MockStorage.getDoctors(hospId);
-    setDoctors(raw.length > 0 ? raw : MockStorage.getDoctors());
+    setDoctors(MockStorage.getDoctors(hospId));
   };
 
   useEffect(() => {

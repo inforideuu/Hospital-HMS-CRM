@@ -135,6 +135,18 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenMobileMenu, portalType }) 
       }
       return [{ label: 'Platform HQ', href: '/platform/dashboard' }, { label: 'Super Admin Dashboard' }];
     }
+    if (path.includes('/nurse/dashboard') || (path === '/hospital/dashboard' && user?.role === 'nurse')) {
+      return [{ label: 'HMS Workspace', href: '/hospital/dashboard' }, { label: 'Nurse Dashboard' }];
+    }
+    if (path.includes('/doctor/dashboard') || (path === '/hospital/dashboard' && user?.role === 'doctor')) {
+      return [{ label: 'HMS Workspace', href: '/hospital/dashboard' }, { label: 'Doctor Dashboard' }];
+    }
+    if (path.includes('/laboratory/dashboard') || (path === '/hospital/dashboard' && user?.role === 'lab_technician')) {
+      return [{ label: 'HMS Workspace', href: '/hospital/dashboard' }, { label: 'Laboratory Dashboard' }];
+    }
+    if (path.includes('/pharmacist/dashboard') || (path === '/hospital/dashboard' && user?.role === 'pharmacist')) {
+      return [{ label: 'HMS Workspace', href: '/hospital/dashboard' }, { label: 'Pharmacist Dashboard' }];
+    }
     return [{ label: 'HMS Workspace', href: '/hospital/dashboard' }, { label: 'Operations' }];
   };
 

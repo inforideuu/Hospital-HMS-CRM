@@ -230,10 +230,14 @@ export const SubscriptionManagement: React.FC = () => {
       };
       MockStorage.saveSubscription(updated);
 
-      // Also update hospital record
+      // Also update hospital record with plan tier and capacity limits
       const hosp = MockStorage.getHospitalById(selectedSub.hospitalId);
       if (hosp) {
         hosp.planTier = newTier;
+        if (plan) {
+          hosp.totalBeds = plan.maxBeds;
+          hosp.totalDoctors = plan.maxDoctors;
+        }
         MockStorage.saveHospital(hosp);
       }
 

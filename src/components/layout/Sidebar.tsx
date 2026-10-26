@@ -33,6 +33,10 @@ import {
   Lock,
   Network,
   GitBranch,
+  Tag,
+  Plus,
+  ClipboardList,
+  ShoppingCart,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { MockStorage } from '../../services/mockStorage';
@@ -137,6 +141,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
       featureKeyword: 'opd_rooms',
     },
     {
+      label: 'Nurse Dashboard',
+      path: '/hospital/nurse/dashboard',
+      icon: <Activity className="w-4 h-4 text-emerald-500" />,
+      roles: ['hospital_admin', 'nurse'],
+      badge: (() => {
+        const orders = hospId ? MockStorage.getLabOrders(hospId) : [];
+        const pending = orders.filter((o) => o.status === 'Ordered' || o.status === 'Pending Sample' || o.status === 'Doctor Reviewed').length;
+        return pending > 0 ? `${pending} Tasks` : undefined;
+      })(),
+    },
+    {
       label: 'Admissions & Beds',
       path: '/hospital/admissions',
       icon: <BedDouble className="w-4 h-4" />,
@@ -167,7 +182,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Laboratory Diagnostics',
       path: '/hospital/laboratory',
       icon: <FlaskConical className="w-4 h-4" />,
-      roles: ['hospital_admin', 'lab_technician', 'doctor'],
+      roles: ['hospital_admin', 'lab_technician', 'doctor', 'nurse'],
       featureKeyword: 'laboratory_diagnostics',
     },
     {
@@ -354,6 +369,171 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   ];
 
+  const pendingLabOrdersCount = hospId
+    ? MockStorage.getLabOrders(hospId).filter(
+        (o) =>
+          o.status === 'Ordered' ||
+          o.status === 'Pending Sample' ||
+          o.status === 'Sample Collected' ||
+          o.status === 'In Progress' ||
+          o.status === 'Processing'
+      ).length
+    : 0;
+
+  const activeCatalogCount = hospId
+    ? MockStorage.getLabCatalog(hospId).filter((t) => t.status !== 'inactive').length
+    : 0;
+
+  const labTechnicianNavItems: NavItem[] = [
+    {
+      label: 'Laboratory Dashboard',
+      path: '/hospital/dashboard',
+      icon: <LayoutDashboard className="w-4 h-4 text-teal-400" />,
+      roles: ['lab_technician'],
+    },
+    {
+      label: 'Diagnostic Work Orders',
+      path: '/hospital/laboratory/orders',
+      icon: <FlaskConical className="w-4 h-4 text-sky-400" />,
+      badge: pendingLabOrdersCount > 0 ? String(pendingLabOrdersCount) : undefined,
+      roles: ['lab_technician'],
+    },
+    {
+      label: 'Place Lab Order',
+      path: '/hospital/laboratory/new-order',
+      icon: <Plus className="w-4 h-4 text-emerald-400" />,
+      roles: ['lab_technician'],
+    },
+    {
+      label: 'Test Catalog',
+      path: '/hospital/laboratory/catalog',
+      icon: <Tag className="w-4 h-4 text-amber-400" />,
+      badge: activeCatalogCount > 0 ? `${activeCatalogCount} Tests` : undefined,
+      roles: ['lab_technician'],
+    },
+  ];
+
+  const nurseNavItems: NavItem[] = [
+    {
+      label: 'Nurse Dashboard',
+      path: '/hospital/dashboard',
+      icon: <LayoutDashboard className="w-4 h-4 text-emerald-500" />,
+      roles: ['nurse'],
+      badge: (() => {
+        const orders = hospId ? MockStorage.getLabOrders(hospId) : [];
+        const pending = orders.filter((o) => o.status === 'Ordered' || o.status === 'Pending Sample' || o.status === 'Doctor Reviewed').length;
+        return pending > 0 ? `${pending} Tasks` : undefined;
+      })(),
+    },
+    {
+      label: 'Patients & EHR',
+      path: '/hospital/patients',
+      icon: <UserPlus className="w-4 h-4" />,
+      roles: ['nurse'],
+      badge: String(patientCount),
+      featureKeyword: 'patients_ehr',
+    },
+    {
+      label: 'Appointments & OPD',
+      path: '/hospital/appointments',
+      icon: <Calendar className="w-4 h-4" />,
+      roles: ['nurse'],
+      badge: 'Today',
+      featureKeyword: 'appointments_opd',
+    },
+    {
+      label: "Today's Patient Queue",
+      path: '/hospital/doctor/queue',
+      icon: <Clock className="w-4 h-4" />,
+      badge: 'Live',
+      roles: ['nurse'],
+    },
+    {
+      label: 'Admissions & Beds',
+      path: '/hospital/admissions',
+      icon: <BedDouble className="w-4 h-4" />,
+      roles: ['nurse'],
+      badge: 'IPD',
+      featureKeyword: 'admissions_beds',
+    },
+    {
+      label: 'Laboratory Diagnostics',
+      path: '/hospital/laboratory',
+      icon: <FlaskConical className="w-4 h-4" />,
+      roles: ['nurse'],
+      featureKeyword: 'laboratory_diagnostics',
+    },
+    {
+      label: 'OPD Rooms',
+      path: '/hospital/opd-rooms',
+      icon: <Building2 className="w-4 h-4" />,
+      roles: ['nurse'],
+      featureKeyword: 'opd_rooms',
+    },
+    {
+      label: 'Ambulance & 911 Desk',
+      path: '/hospital/ambulance',
+      icon: <Ambulance className="w-4 h-4" />,
+      roles: ['nurse'],
+      badge: '911',
+      featureKeyword: 'ambulance_emergency',
+    },
+  ];
+
+  const pendingPrescriptionsCount = hospId
+    ? MockStorage.getPrescriptions(undefined, hospId).filter((p) => p.status === 'Active' || !p.dispensedAt).length
+    : 0;
+
+  const lowStockMedsCount = hospId
+    ? MockStorage.getMedicines(hospId).filter((m) => m.stockQuantity <= (m.minThreshold || 25)).length
+    : 0;
+
+  const pharmacistNavItems: NavItem[] = [
+    {
+      label: 'Pharmacist Dashboard',
+      path: '/hospital/dashboard',
+      icon: <LayoutDashboard className="w-4 h-4 text-emerald-400" />,
+      roles: ['pharmacist'],
+    },
+    {
+      label: 'Prescription Queue',
+      path: '/hospital/pharmacy?tab=prescriptions',
+      icon: <ClipboardList className="w-4 h-4 text-sky-400" />,
+      badge: pendingPrescriptionsCount > 0 ? `${pendingPrescriptionsCount} Pending` : undefined,
+      roles: ['pharmacist'],
+      featureKeyword: 'pharmacy_stock',
+    },
+    {
+      label: 'Walk-in / OTC POS',
+      path: '/hospital/pharmacy?tab=pos',
+      icon: <ShoppingCart className="w-4 h-4 text-teal-400" />,
+      roles: ['pharmacist'],
+      featureKeyword: 'pharmacy_stock',
+    },
+    {
+      label: 'Medicine Stock & Batches',
+      path: '/hospital/pharmacy?tab=inventory',
+      icon: <Pill className="w-4 h-4 text-indigo-400" />,
+      badge: lowStockMedsCount > 0 ? `${lowStockMedsCount} Low` : undefined,
+      roles: ['pharmacist'],
+      featureKeyword: 'pharmacy_stock',
+    },
+    {
+      label: 'Expiry & Quarantine',
+      path: '/hospital/pharmacy?tab=expiry',
+      icon: <ShieldAlert className="w-4 h-4 text-purple-400" />,
+      roles: ['pharmacist'],
+      featureKeyword: 'pharmacy_stock',
+    },
+    {
+      label: 'Dispense Invoices',
+      path: '/hospital/pharmacy?tab=invoices',
+      icon: <Receipt className="w-4 h-4 text-amber-400" />,
+      roles: ['pharmacist'],
+      featureKeyword: 'pharmacy_stock',
+    },
+  ];
+
   const currentNavItems =
     portalType === 'platform'
       ? platformNavItems
@@ -365,6 +545,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ? driverNavItems
       : user?.role === 'doctor'
       ? doctorNavItems
+      : user?.role === 'lab_technician'
+      ? labTechnicianNavItems
+      : user?.role === 'nurse'
+      ? nurseNavItems
+      : user?.role === 'pharmacist'
+      ? pharmacistNavItems
       : isEnterpriseOrgUser
       ? hospitalNavItems.filter((item) => item.path !== '/hospital/enterprise')
       : hospitalNavItems;
@@ -420,7 +606,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Navigation Items */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-700">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-700">
           {/* Step 4: Enterprise Health Network 7 Navigation Items for Org Admins */}
           {isEnterpriseOrgUser && (
             <div className="space-y-1 mb-4 pb-3 border-b border-slate-800/80">

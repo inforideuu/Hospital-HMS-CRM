@@ -261,7 +261,7 @@ export const PatientBilling: React.FC = () => {
                           leftIcon={<CreditCard className="w-4 h-4" />}
                           onClick={() => handleOpenPay(inv)}
                         >
-                          Pay Now (${balanceDue})
+                          Pay Now (₹{balanceDue})
                         </Button>
                       )}
                     </div>

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Receipt,
   Plus,
@@ -24,6 +25,11 @@ import {
   Edit2,
   UserCheck,
   RefreshCw,
+  Pill,
+  ShoppingCart,
+  Layers,
+  ArrowRight,
+  ChevronRight,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
@@ -36,6 +42,7 @@ import {
   Patient,
   EncounterType,
   PaymentType,
+  BillingCategory,
 } from '../../../types';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
@@ -48,6 +55,32 @@ import { Pagination } from '../../../components/ui/Pagination';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { BillingSoftwareAddonModal } from '../../../components/common/BillingSoftwareAddonModal';
 import { PatientCombobox } from '../../../components/common/PatientCombobox';
+
+export const getInvoiceBillingCategory = (inv: Invoice): BillingCategory => {
+  if (inv.billingCategory) return inv.billingCategory;
+  if (
+    inv.id.startsWith('INV-OTC') ||
+    inv.patientId?.startsWith('WALK-IN') ||
+    inv.patientName?.toLowerCase().includes('walk-in') ||
+    inv.notes?.toLowerCase().includes('walk-in') ||
+    inv.notes?.toLowerCase().includes('otc')
+  ) {
+    return 'Walk-in Pharmacy';
+  }
+  if (
+    inv.id.startsWith('INV-PHARM') ||
+    Boolean(inv.prescriptionId) ||
+    inv.notes?.toLowerCase().includes('prescription') ||
+    inv.notes?.toLowerCase().includes('dispensed') ||
+    inv.encounterType === 'Pharmacy' ||
+    (inv.items && inv.items.length > 0 && inv.items.every((it) => it.category === 'Pharmacy') && !inv.patientName?.toLowerCase().includes('walk-in'))
+  ) {
+    return 'Pharmacy Service';
+  }
+  return 'Hospital Service';
+};
+
+export type ActiveStreamTab = 'all' | 'hospital' | 'pharmacy' | 'walkin';
 
 export const generateReceiptReference = (method?: PaymentMethod): string => {
   const rand = Math.floor(100000 + Math.random() * 900000);
@@ -76,6 +109,23 @@ export const BillingManagement: React.FC = () => {
   const hospId = currentHospital?.id || 'HOSP-001';
 
   const [invoices, setInvoices] = useState<Invoice[]>(() => MockStorage.getInvoices(hospId));
+  const settings = MockStorage.getHospitalSettings(hospId);
+
+  // Stream Navigation & Synchronization via URL
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlStream = searchParams.get('stream') as ActiveStreamTab | null;
+  const [activeStream, setActiveStream] = useState<ActiveStreamTab>(() => {
+    if (urlStream && ['all', 'hospital', 'pharmacy', 'walkin'].includes(urlStream)) {
+      return urlStream;
+    }
+    return 'all';
+  });
+
+  useEffect(() => {
+    if (urlStream && ['all', 'hospital', 'pharmacy', 'walkin'].includes(urlStream)) {
+      setActiveStream(urlStream);
+    }
+  }, [urlStream]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -103,7 +153,12 @@ export const BillingManagement: React.FC = () => {
   const [payCashierDesk, setPayCashierDesk] = useState('Main OPD Cashier Desk');
   const [payTxnRef, setPayTxnRef] = useState('');
 
-  // Create / Edit Invoice Form State (Real Hospital Fields)
+  // Create / Edit Invoice Form State (Stream Classification & Fields)
+  const [formCategory, setFormCategory] = useState<BillingCategory>('Hospital Service');
+  const [walkInCustomerName, setWalkInCustomerName] = useState<string>('');
+  const [walkInCustomerPhone, setWalkInCustomerPhone] = useState<string>('');
+  const [prescriptionId, setPrescriptionId] = useState<string>('');
+
   const [selectedPatientId, setSelectedPatientId] = useState<string>('');
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patientSelectError, setPatientSelectError] = useState<string>('');
@@ -122,10 +177,12 @@ export const BillingManagement: React.FC = () => {
   const [items, setItems] = useState<InvoiceItem[]>([
     { id: 'item-1', description: 'Specialist OPD Consultation', category: 'Consultation', quantity: 1, unitPrice: 150, total: 150 },
   ]);
-  const [taxRate, setTaxRate] = useState(5);
+  const [taxRate, setTaxRate] = useState<number>(() =>
+    settings.enableGSTBilling !== false ? (settings.defaultGSTRate ?? 5) : 0
+  );
   const [discount, setDiscount] = useState(0);
   const [discountReason, setDiscountReason] = useState<string>('');
-  const [invoiceNotes, setInvoiceNotes] = useState<string>('Due in 7 days. Thank you for choosing PulseCore Health.');
+  const [invoiceNotes, setInvoiceNotes] = useState<string>(() => settings.invoiceNotes || 'Due in 7 days. Thank you for choosing PulseCore Health.');
 
   // Immediate Cashier Collection Option (Track Who Collects Pay)
   const [collectPaymentNow, setCollectPaymentNow] = useState<boolean>(false);
@@ -139,21 +196,68 @@ export const BillingManagement: React.FC = () => {
     setInvoices(MockStorage.getInvoices(hospId));
   };
 
+  // Segregated invoice lists by category
+  const hospitalInvoices = invoices.filter((i) => getInvoiceBillingCategory(i) === 'Hospital Service');
+  const pharmacyInvoices = invoices.filter((i) => getInvoiceBillingCategory(i) === 'Pharmacy Service');
+  const walkInInvoices = invoices.filter((i) => getInvoiceBillingCategory(i) === 'Walk-in Pharmacy');
+
+  // Stream-specific financial metrics
+  const streamInvoices =
+    activeStream === 'hospital'
+      ? hospitalInvoices
+      : activeStream === 'pharmacy'
+      ? pharmacyInvoices
+      : activeStream === 'walkin'
+      ? walkInInvoices
+      : invoices;
+
+  const totalStreamBilled = streamInvoices.reduce((acc, i) => acc + i.totalAmount, 0);
+  const totalStreamPaid = streamInvoices.reduce((acc, i) => acc + i.amountPaid, 0);
+  const totalStreamPending = streamInvoices.reduce((acc, i) => (i.status !== 'Paid' ? acc + (i.totalAmount - i.amountPaid) : acc), 0);
+
+  // Overall hospital aggregates
   const totalBilled = invoices.reduce((acc, i) => acc + i.totalAmount, 0);
   const totalPaid = invoices.reduce((acc, i) => acc + i.amountPaid, 0);
   const totalPending = invoices.reduce((acc, i) => (i.status !== 'Paid' ? acc + (i.totalAmount - i.amountPaid) : acc), 0);
 
-  const filtered = invoices.filter((i) => {
+  // Stream breakdown metrics
+  const totalHospitalBilled = hospitalInvoices.reduce((acc, i) => acc + i.totalAmount, 0);
+  const totalHospitalPaid = hospitalInvoices.reduce((acc, i) => acc + i.amountPaid, 0);
+  const pendingHospital = hospitalInvoices.reduce((acc, i) => (i.status !== 'Paid' ? acc + (i.totalAmount - i.amountPaid) : acc), 0);
+
+  const totalPharmacyBilled = pharmacyInvoices.reduce((acc, i) => acc + i.totalAmount, 0);
+  const totalPharmacyPaid = pharmacyInvoices.reduce((acc, i) => acc + i.amountPaid, 0);
+  const pendingPharmacy = pharmacyInvoices.reduce((acc, i) => (i.status !== 'Paid' ? acc + (i.totalAmount - i.amountPaid) : acc), 0);
+
+  const totalWalkInBilled = walkInInvoices.reduce((acc, i) => acc + i.totalAmount, 0);
+  const totalWalkInPaid = walkInInvoices.reduce((acc, i) => acc + i.amountPaid, 0);
+  const pendingWalkIn = walkInInvoices.reduce((acc, i) => (i.status !== 'Paid' ? acc + (i.totalAmount - i.amountPaid) : acc), 0);
+
+  const filtered = streamInvoices.filter((i) => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      i.patientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      i.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (i.transactionRef && i.transactionRef.toLowerCase().includes(searchQuery.toLowerCase()));
+      i.patientName.toLowerCase().includes(q) ||
+      i.id.toLowerCase().includes(q) ||
+      (i.transactionRef && i.transactionRef.toLowerCase().includes(q)) ||
+      (i.doctorName && i.doctorName.toLowerCase().includes(q)) ||
+      (i.prescriptionId && i.prescriptionId.toLowerCase().includes(q)) ||
+      (i.cashierDesk && i.cashierDesk.toLowerCase().includes(q));
     const matchesStatus = statusFilter === 'all' || i.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
-  const totalPages = Math.ceil(filtered.length / pageSize);
+  const totalPages = Math.ceil(filtered.length / pageSize) || 1;
   const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  const handleSelectStream = (stream: ActiveStreamTab) => {
+    setActiveStream(stream);
+    setCurrentPage(1);
+    if (stream === 'all') {
+      setSearchParams({});
+    } else {
+      setSearchParams({ stream });
+    }
+  };
 
   // Line Items Helpers & Presets
   const addItem = () => {
@@ -188,17 +292,51 @@ export const BillingManagement: React.FC = () => {
   const calculatedTax = (calculatedSubtotal * taxRate) / 100;
   const calculatedTotal = Math.max(0, calculatedSubtotal + calculatedTax - discount);
 
+  const handleSelectModalCategory = (cat: BillingCategory) => {
+    setFormCategory(cat);
+    if (cat === 'Hospital Service') {
+      setEncounterType('OPD');
+      setTaxRate(settings.enableGSTBilling !== false ? (settings.defaultGSTRate ?? 5) : 0);
+      setImmediateCashierDesk('Main OPD Cashier Desk');
+    } else if (cat === 'Pharmacy Service') {
+      setEncounterType('Pharmacy');
+      setTaxRate(settings.enableGSTBilling !== false ? (settings.pharmacyGSTRate ?? 5) : 0);
+      setImmediateCashierDesk('Pharmacy Cash Counter');
+    } else {
+      // Walk-in Pharmacy
+      setEncounterType('Pharmacy');
+      setTaxRate(settings.enableGSTBilling !== false ? (settings.pharmacyGSTRate ?? 5) : 0);
+      setImmediateCashierDesk('Pharmacy Cash Counter');
+      if (!walkInCustomerName) {
+        setWalkInCustomerName('Walk-in Customer');
+      }
+      setCollectPaymentNow(true);
+    }
+  };
+
   const handleCreateInvoice = (e: React.FormEvent) => {
     e.preventDefault();
+
     let pat = selectedPatient;
-    if (!pat && selectedPatientId) {
-      pat = MockStorage.getPatientById(selectedPatientId) || null;
+    if (formCategory === 'Walk-in Pharmacy') {
+      const name = walkInCustomerName.trim() || 'Walk-in Customer';
+      pat = {
+        id: `WALK-IN-${Date.now().toString().slice(-4)}`,
+        name,
+        phone: walkInCustomerPhone.trim(),
+      } as any;
+    } else {
+      if (!pat && selectedPatientId) {
+        pat = MockStorage.getPatientById(selectedPatientId) || null;
+      }
+      if (!pat) {
+        setPatientSelectError('Please search and select a patient');
+        showToast('Patient Required', 'Please select a valid registered patient.', 'error');
+        return;
+      }
     }
-    if (!pat) {
-      setPatientSelectError('Please search and select a patient');
-      showToast('Patient Required', 'Please select a valid registered patient.', 'error');
-      return;
-    }
+
+    if (!pat) return;
 
     if (items.length === 0) {
       showToast('Error', 'Please include at least one clinical service or pharmacy item.', 'error');
@@ -256,7 +394,9 @@ export const BillingManagement: React.FC = () => {
         paymentMethod: settlementMethod,
         transactionRef: txnRef,
         notes: invoiceNotes,
-        encounterType,
+        billingCategory: formCategory,
+        prescriptionId: formCategory === 'Pharmacy Service' ? (prescriptionId.trim() || undefined) : undefined,
+        encounterType: formCategory === 'Hospital Service' ? encounterType : 'Pharmacy',
         doctorId: assignedDoc?.id,
         doctorName: assignedDoc?.name,
         departmentName: assignedDoc?.departmentName,
@@ -274,6 +414,9 @@ export const BillingManagement: React.FC = () => {
       setEditingInvoiceId(null);
       setSelectedPatient(null);
       setSelectedPatientId('');
+      setWalkInCustomerName('');
+      setWalkInCustomerPhone('');
+      setPrescriptionId('');
       setPatientSelectError('');
       refreshData();
       return;
@@ -291,8 +434,8 @@ export const BillingManagement: React.FC = () => {
       settledAmount = immediatePayAmount > 0 ? Number(immediatePayAmount) : calculatedTotal;
       settlementMethod = immediatePayMethod;
       txnRef = immediateTxnRef.trim() || generateReceiptReference(immediatePayMethod);
-      collector = immediateCollectedBy || user?.name || 'Marcus Sterling (Accountant)';
-      desk = immediateCashierDesk || 'Main OPD Cashier Desk';
+      collector = immediateCollectedBy || user?.name || (formCategory === 'Hospital Service' ? 'Marcus Sterling (Accountant)' : 'Alex Vance (Pharmacist)');
+      desk = immediateCashierDesk || (formCategory === 'Hospital Service' ? 'Main OPD Cashier Desk' : 'Pharmacy Cash Counter');
       if (settledAmount >= calculatedTotal && calculatedTotal > 0) {
         invStatus = 'Paid';
       } else if (settledAmount > 0) {
@@ -303,8 +446,16 @@ export const BillingManagement: React.FC = () => {
       txnRef = `AUTH-${claimApprovalNumber.trim()}`;
     }
 
+    const prefix =
+      formCategory === 'Walk-in Pharmacy'
+        ? 'INV-OTC'
+        : formCategory === 'Pharmacy Service'
+        ? 'INV-PHARM'
+        : 'INV-2026';
+    const newId = `${prefix}-${100 + invoices.length + 1}`;
+
     const newInv: Invoice = {
-      id: `INV-2026-${100 + invoices.length + 1}`,
+      id: newId,
       hospitalId: hospId,
       patientId: pat.id,
       patientName: pat.name,
@@ -324,8 +475,10 @@ export const BillingManagement: React.FC = () => {
       transactionRef: txnRef,
       notes: invoiceNotes,
 
-      // Real hospital clinical & billing metadata
-      encounterType,
+      // Segregation & Clinical Metadata
+      billingCategory: formCategory,
+      prescriptionId: formCategory === 'Pharmacy Service' ? (prescriptionId.trim() || undefined) : undefined,
+      encounterType: formCategory === 'Hospital Service' ? encounterType : 'Pharmacy',
       doctorId: assignedDoc?.id,
       doctorName: assignedDoc?.name,
       departmentName: assignedDoc?.departmentName,
@@ -342,16 +495,33 @@ export const BillingManagement: React.FC = () => {
     setIsCreateModalOpen(false);
     setSelectedPatient(null);
     setSelectedPatientId('');
+    setWalkInCustomerName('');
+    setWalkInCustomerPhone('');
+    setPrescriptionId('');
     setPatientSelectError('');
     refreshData();
   };
 
-  const handleOpenCreateModal = () => {
+  const handleOpenCreateModal = (targetCategory?: BillingCategory) => {
+    const cat: BillingCategory =
+      targetCategory ||
+      (activeStream === 'hospital'
+        ? 'Hospital Service'
+        : activeStream === 'pharmacy'
+        ? 'Pharmacy Service'
+        : activeStream === 'walkin'
+        ? 'Walk-in Pharmacy'
+        : 'Hospital Service');
+
+    setFormCategory(cat);
     setEditingInvoiceId(null);
     setSelectedPatient(null);
     setSelectedPatientId('');
+    setWalkInCustomerName(cat === 'Walk-in Pharmacy' ? 'Walk-in Customer' : '');
+    setWalkInCustomerPhone('');
+    setPrescriptionId('');
     setPatientSelectError('');
-    setEncounterType('OPD');
+    setEncounterType(cat === 'Hospital Service' ? 'OPD' : 'Pharmacy');
     setSelectedDoctorId(doctors[0]?.id || '');
     setIssueDate(new Date().toISOString().split('T')[0]);
     setDueDate(new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]);
@@ -359,26 +529,56 @@ export const BillingManagement: React.FC = () => {
     setInsuranceProvider('');
     setPolicyNumber('');
     setClaimApprovalNumber('');
-    const defaultDocFee = doctors[0]?.consultationFee || 150;
-    setItems([
-      { id: `item-${Date.now()}`, description: `Specialist OPD Consultation${doctors[0] ? ` - ${doctors[0].name}` : ''}`, category: 'Consultation', quantity: 1, unitPrice: defaultDocFee, total: defaultDocFee },
-    ]);
-    setTaxRate(5);
+
+    if (cat === 'Hospital Service') {
+      const defaultDocFee = doctors[0]?.consultationFee || 150;
+      setItems([
+        { id: `item-${Date.now()}`, description: `Specialist OPD Consultation${doctors[0] ? ` - ${doctors[0].name}` : ''}`, category: 'Consultation', quantity: 1, unitPrice: defaultDocFee, total: defaultDocFee },
+      ]);
+      setTaxRate(settings.enableGSTBilling !== false ? (settings.defaultGSTRate ?? 5) : 0);
+      setImmediateCashierDesk('Main OPD Cashier Desk');
+      setCollectPaymentNow(false);
+      setImmediateCollectedBy(user?.name || 'Marcus Sterling (Accountant)');
+      setInvoiceNotes(settings.invoiceNotes || 'Payment terms: Net 7 days. For billing questions contact Cashier Desk.');
+    } else if (cat === 'Pharmacy Service') {
+      setItems([
+        { id: `item-${Date.now()}`, description: 'Amoxicillin 500mg (Strip of 10)', category: 'Pharmacy', quantity: 2, unitPrice: 45, total: 90 },
+        { id: `item-${Date.now() + 1}`, description: 'Paracetamol 650mg (Strip of 15)', category: 'Pharmacy', quantity: 1, unitPrice: 20, total: 20 },
+      ]);
+      setTaxRate(settings.enableGSTBilling !== false ? (settings.pharmacyGSTRate ?? 5) : 0);
+      setImmediateCashierDesk('Pharmacy Cash Counter');
+      setCollectPaymentNow(true);
+      setImmediateCollectedBy(user?.name || 'Alex Vance (Lead Pharmacist)');
+      setInvoiceNotes('Doctor e-Prescription Fulfillment. Verified dosages dispensed by hospital pharmacist.');
+    } else {
+      // Walk-in Pharmacy
+      setItems([
+        { id: `item-${Date.now()}`, description: 'Paracetamol 500mg Fast Relief (Strip of 10)', category: 'Pharmacy', quantity: 2, unitPrice: 18, total: 36 },
+        { id: `item-${Date.now() + 1}`, description: 'Vitamin C 500mg Chewable (Bottle of 30)', category: 'Pharmacy', quantity: 1, unitPrice: 95, total: 95 },
+      ]);
+      setTaxRate(settings.enableGSTBilling !== false ? (settings.pharmacyGSTRate ?? 5) : 0);
+      setImmediateCashierDesk('Pharmacy Cash Counter');
+      setCollectPaymentNow(true);
+      setImmediateCollectedBy(user?.name || 'Alex Vance (Lead Pharmacist)');
+      setInvoiceNotes('Walk-in OTC Retail POS Sale. Cashier settled at retail counter.');
+    }
+
     setDiscount(0);
     setDiscountReason('');
-    setInvoiceNotes('Payment terms: Net 7 days. For billing questions contact Cashier Desk.');
-    setCollectPaymentNow(false);
     setImmediatePayAmount(0);
-    setImmediatePayMethod('Cash');
-    setImmediateTxnRef(generateReceiptReference('Cash'));
-    setImmediateCollectedBy(user?.name || 'Marcus Sterling (Accountant)');
-    setImmediateCashierDesk('Main OPD Cashier Desk');
+    setImmediatePayMethod(cat === 'Hospital Service' ? 'Credit Card' : 'Cash');
+    setImmediateTxnRef(generateReceiptReference(cat === 'Hospital Service' ? 'Credit Card' : 'Cash'));
     setIsCreateModalOpen(true);
   };
 
   const handleOpenEditModal = (inv: Invoice) => {
+    const cat = getInvoiceBillingCategory(inv);
+    setFormCategory(cat);
     setEditingInvoiceId(inv.id);
     setSelectedPatientId(inv.patientId);
+    setWalkInCustomerName(cat === 'Walk-in Pharmacy' ? inv.patientName : '');
+    setWalkInCustomerPhone(cat === 'Walk-in Pharmacy' ? inv.patientPhone : '');
+    setPrescriptionId(inv.prescriptionId || '');
     setSelectedPatient(
       MockStorage.getPatientById(inv.patientId) || {
         id: inv.patientId,
@@ -418,7 +618,7 @@ export const BillingManagement: React.FC = () => {
     setImmediatePayMethod(inv.paymentMethod || 'Cash');
     setImmediateTxnRef(inv.transactionRef || generateReceiptReference(inv.paymentMethod || 'Cash'));
     setImmediateCollectedBy(inv.collectedBy || user?.name || 'Marcus Sterling (Accountant)');
-    setImmediateCashierDesk(inv.cashierDesk || 'Main OPD Cashier Desk');
+    setImmediateCashierDesk(inv.cashierDesk || (cat === 'Hospital Service' ? 'Main OPD Cashier Desk' : 'Pharmacy Cash Counter'));
     setIsCreateModalOpen(true);
   };
 
@@ -463,7 +663,7 @@ export const BillingManagement: React.FC = () => {
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
         title="Financial Billing, Invoices & Cashier Desk"
-        subtitle="Patient bill calculation, itemized hospital charges, insurance claims, and real-time payments."
+        subtitle="Departmental revenue management split into Hospital Services (OPD/IPD/Diagnostics), Pharmacy Prescription Fulfillment, and Walk-in Retail POS Sales."
         breadcrumbs={[{ label: 'Hospital HMS', href: '/hospital/dashboard' }, { label: 'Billing & Invoices' }]}
         actions={
           <div className="flex items-center gap-2 flex-wrap">
@@ -484,12 +684,21 @@ export const BillingManagement: React.FC = () => {
               onClick={() => MockStorage.exportToCSV('Invoices_Ledger', filtered)}
               leftIcon={<Download className="w-3.5 h-3.5" />}
             >
-              Export Invoices
+              Export Ledger
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleOpenCreateModal('Walk-in Pharmacy')}
+              leftIcon={<ShoppingCart className="w-3.5 h-3.5 text-amber-600" />}
+              className="border-amber-300 text-amber-800 bg-amber-50/60 hover:bg-amber-100/80 font-semibold"
+            >
+              + Walk-in POS Bill
             </Button>
             <Button
               variant="primary"
               size="sm"
-              onClick={handleOpenCreateModal}
+              onClick={() => handleOpenCreateModal()}
               leftIcon={<Plus className="w-3.5 h-3.5" />}
             >
               Create Patient Invoice
@@ -498,13 +707,119 @@ export const BillingManagement: React.FC = () => {
         }
       />
 
+      {/* 3 Departmental Revenue Desks (The Split) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Desk 1: Hospital Services */}
+        <div
+          onClick={() => handleSelectStream('hospital')}
+          className={`p-4 rounded-2xl border transition-all cursor-pointer text-left relative overflow-hidden ${
+            activeStream === 'hospital'
+              ? 'bg-gradient-to-br from-indigo-50/90 via-white to-indigo-50/30 border-indigo-400 ring-2 ring-indigo-200 shadow-sm'
+              : 'bg-white border-slate-200/80 hover:border-indigo-300 hover:shadow-xs'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+              <Building2 className="w-3.5 h-3.5 text-indigo-600" /> Hospital Services
+            </span>
+            <span className="text-xs font-bold text-slate-500 font-mono">
+              {hospitalInvoices.length} Bills
+            </span>
+          </div>
 
-      {/* Financial KPIs */}
+          <div className="mt-3">
+            <p className="text-[11px] font-medium text-slate-500">Billed: ₹{totalHospitalBilled.toLocaleString()} • Collected:</p>
+            <p className="text-2xl font-bold text-indigo-900 mt-0.5">₹{totalHospitalPaid.toLocaleString()}</p>
+          </div>
+
+          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+            <span className="text-slate-500">Pending: <strong className="text-amber-700">₹{pendingHospital.toLocaleString()}</strong></span>
+            <span className="text-indigo-600 font-semibold inline-flex items-center gap-0.5 hover:underline">
+              {activeStream === 'hospital' ? 'Active Stream' : 'View Desk'} <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* Desk 2: Pharmacy Services (Rx Dispensing) */}
+        <div
+          onClick={() => handleSelectStream('pharmacy')}
+          className={`p-4 rounded-2xl border transition-all cursor-pointer text-left relative overflow-hidden ${
+            activeStream === 'pharmacy'
+              ? 'bg-gradient-to-br from-emerald-50/90 via-white to-emerald-50/30 border-emerald-400 ring-2 ring-emerald-200 shadow-sm'
+              : 'bg-white border-slate-200/80 hover:border-emerald-300 hover:shadow-xs'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+              <Pill className="w-3.5 h-3.5 text-emerald-600" /> Pharmacy Services
+            </span>
+            <span className="text-xs font-bold text-slate-500 font-mono">
+              {pharmacyInvoices.length} Bills
+            </span>
+          </div>
+
+          <div className="mt-3">
+            <p className="text-[11px] font-medium text-slate-500">Doctor Rx Dispensed: ₹{totalPharmacyBilled.toLocaleString()} • Collected:</p>
+            <p className="text-2xl font-bold text-emerald-900 mt-0.5">₹{totalPharmacyPaid.toLocaleString()}</p>
+          </div>
+
+          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+            <span className="text-slate-500">Pending: <strong className="text-amber-700">₹{pendingPharmacy.toLocaleString()}</strong></span>
+            <span className="text-emerald-700 font-semibold inline-flex items-center gap-0.5 hover:underline">
+              {activeStream === 'pharmacy' ? 'Active Stream' : 'View Desk'} <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* Desk 3: Walk-in Pharmacy (OTC Retail POS) */}
+        <div
+          onClick={() => handleSelectStream('walkin')}
+          className={`p-4 rounded-2xl border transition-all cursor-pointer text-left relative overflow-hidden ${
+            activeStream === 'walkin'
+              ? 'bg-gradient-to-br from-amber-50/90 via-white to-amber-50/30 border-amber-400 ring-2 ring-amber-200 shadow-sm'
+              : 'bg-white border-slate-200/80 hover:border-amber-300 hover:shadow-xs'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+              <ShoppingCart className="w-3.5 h-3.5 text-amber-600" /> Walk-in Pharmacy
+            </span>
+            <span className="text-xs font-bold text-slate-500 font-mono">
+              {walkInInvoices.length} POS Sales
+            </span>
+          </div>
+
+          <div className="mt-3">
+            <p className="text-[11px] font-medium text-slate-500">OTC Retail POS: ₹{totalWalkInBilled.toLocaleString()} • Collected:</p>
+            <p className="text-2xl font-bold text-amber-950 mt-0.5">₹{totalWalkInPaid.toLocaleString()}</p>
+          </div>
+
+          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+            <span className="text-slate-500">Direct Retail: <strong className="text-emerald-700 font-semibold">100% Cash/UPI</strong></span>
+            <span className="text-amber-800 font-semibold inline-flex items-center gap-0.5 hover:underline">
+              {activeStream === 'walkin' ? 'Active Stream' : 'View Desk'} <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Financial KPIs (Dynamically scoped to selected stream) */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="p-4 rounded-xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Invoiced Amount</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">₹{totalBilled.toLocaleString()}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                {activeStream === 'all'
+                  ? 'Total Invoiced (All)'
+                  : activeStream === 'hospital'
+                  ? 'Hospital Billed'
+                  : activeStream === 'pharmacy'
+                  ? 'Pharmacy Billed'
+                  : 'Walk-in POS Billed'}
+              </p>
+            </div>
+            <p className="text-2xl font-bold text-slate-900 mt-1">₹{totalStreamBilled.toLocaleString()}</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">Across {streamInvoices.length} transactions</p>
           </div>
           <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
             <Receipt className="w-5 h-5" />
@@ -514,7 +829,10 @@ export const BillingManagement: React.FC = () => {
         <div className="p-4 rounded-xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Collected Revenue</p>
-            <p className="text-2xl font-bold text-emerald-600 mt-1">₹{totalPaid.toLocaleString()}</p>
+            <p className="text-2xl font-bold text-emerald-600 mt-1">₹{totalStreamPaid.toLocaleString()}</p>
+            <p className="text-[10px] text-emerald-600/80 mt-0.5 font-medium">
+              {totalStreamBilled > 0 ? `${Math.round((totalStreamPaid / totalStreamBilled) * 100)}% recovery rate` : 'All cleared'}
+            </p>
           </div>
           <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100">
             <CheckCircle2 className="w-5 h-5" />
@@ -524,7 +842,8 @@ export const BillingManagement: React.FC = () => {
         <div className="p-4 rounded-xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Outstanding Receivables</p>
-            <p className="text-2xl font-bold text-amber-600 mt-1">₹{totalPending.toLocaleString()}</p>
+            <p className="text-2xl font-bold text-amber-600 mt-1">₹{totalStreamPending.toLocaleString()}</p>
+            <p className="text-[10px] text-amber-600/80 mt-0.5 font-medium">Pending cashier settlement</p>
           </div>
           <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600 border border-amber-100">
             <Clock className="w-5 h-5" />
@@ -534,130 +853,340 @@ export const BillingManagement: React.FC = () => {
 
       {/* Filter and Invoices Table */}
       <Card>
+        {/* Stream Filter Segmented Tabs */}
+        <div className="p-3 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => handleSelectStream('all')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeStream === 'all'
+                  ? 'bg-white text-indigo-900 shadow-xs border border-slate-200'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <Receipt className="w-3.5 h-3.5 text-slate-500" />
+              <span>All Billings</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                activeStream === 'all' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {invoices.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSelectStream('hospital')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeStream === 'hospital'
+                  ? 'bg-white text-indigo-900 shadow-xs border border-indigo-200 ring-1 ring-indigo-200'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Hospital Services</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                activeStream === 'hospital' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {hospitalInvoices.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSelectStream('pharmacy')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeStream === 'pharmacy'
+                  ? 'bg-white text-emerald-900 shadow-xs border border-emerald-200 ring-1 ring-emerald-200'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <Pill className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Pharmacy Services</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                activeStream === 'pharmacy' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {pharmacyInvoices.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSelectStream('walkin')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeStream === 'walkin'
+                  ? 'bg-white text-amber-900 shadow-xs border border-amber-200 ring-1 ring-amber-200'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <ShoppingCart className="w-3.5 h-3.5 text-amber-600" />
+              <span>Walk-in Pharmacy</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                activeStream === 'walkin' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {walkInInvoices.length}
+              </span>
+            </button>
+          </div>
+
+          <span className="text-[11px] text-slate-500 font-medium">
+            Showing {filtered.length} of {streamInvoices.length} invoices
+          </span>
+        </div>
+
+        {/* Search & Status Filter Controls */}
         <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="relative w-full sm:w-72">
+          <div className="relative w-full sm:w-80">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by invoice ID, patient name..."
+              placeholder="Search invoice ID, patient, doctor, Rx ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-9 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
 
-          <Select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="text-xs py-1.5 w-full sm:w-auto"
-          >
-            <option value="all">All Payment Statuses</option>
-            <option value="Paid">Paid in Full</option>
-            <option value="Partially Paid">Partially Paid</option>
-            <option value="Pending">Pending Payment</option>
-            <option value="Overdue">Overdue</option>
-          </Select>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="text-xs py-1.5 w-full sm:w-auto"
+            >
+              <option value="all">All Payment Statuses</option>
+              <option value="Paid">Paid in Full</option>
+              <option value="Partially Paid">Partially Paid</option>
+              <option value="Pending">Pending Payment</option>
+              <option value="Overdue">Overdue</option>
+            </Select>
+
+            {activeStream === 'walkin' ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenCreateModal('Walk-in Pharmacy')}
+                leftIcon={<ShoppingCart className="w-3.5 h-3.5" />}
+                className="whitespace-nowrap"
+              >
+                + Quick POS Bill
+              </Button>
+            ) : activeStream === 'pharmacy' ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenCreateModal('Pharmacy Service')}
+                leftIcon={<Pill className="w-3.5 h-3.5" />}
+                className="whitespace-nowrap"
+              >
+                + Prescription Bill
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-500 font-semibold uppercase tracking-wider">
-                <th className="px-5 py-3.5">Invoice ID & Patient</th>
-                <th className="px-4 py-3.5">Issue Date</th>
+                <th className="px-5 py-3.5">Invoice ID & Stream</th>
+                <th className="px-4 py-3.5">Patient / Customer</th>
+                <th className="px-4 py-3.5">Issue Date & Counter</th>
                 <th className="px-4 py-3.5">Billed Total</th>
                 <th className="px-4 py-3.5">Amount Paid</th>
-                <th className="px-4 py-3.5">Payment Method</th>
+                <th className="px-4 py-3.5">Payment & Audit</th>
                 <th className="px-4 py-3.5">Status</th>
                 <th className="px-5 py-3.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paginated.map((inv) => (
-                <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <p className="font-bold text-slate-900 leading-tight">{inv.patientName}</p>
-                      {inv.encounterType && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
-                          {inv.encounterType}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-indigo-600 font-mono mt-0.5">{inv.id}</p>
-                    {inv.doctorName && (
-                      <p className="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
-                        <Stethoscope className="w-2.5 h-2.5 text-slate-400" /> {inv.doctorName}
-                      </p>
-                    )}
-                  </td>
-
-                  <td className="px-4 py-3.5 text-slate-600">
-                    <p>{inv.issueDate}</p>
-                    <p className="text-[10px] text-slate-400">Due: {inv.dueDate}</p>
-                  </td>
-
-                  <td className="px-4 py-3.5">
-                    <span className="font-bold text-slate-900 text-xs">₹{inv.totalAmount.toLocaleString()}</span>
-                  </td>
-
-                  <td className="px-4 py-3.5">
-                    <span className="font-bold text-emerald-700 text-xs">₹{inv.amountPaid.toLocaleString()}</span>
-                  </td>
-
-                  <td className="px-4 py-3.5 text-slate-600">
-                    {inv.paymentMethod ? (
-                      <div>
-                        <span className="inline-flex items-center gap-1 font-semibold text-[11px]">
-                          <CreditCard className="w-3 h-3 text-slate-400" /> {inv.paymentMethod}
-                        </span>
-                        {inv.collectedBy && (
-                          <p className="text-[10px] text-emerald-700 font-medium mt-0.5 flex items-center gap-1">
-                            <UserCheck className="w-2.5 h-2.5" /> By: {inv.collectedBy}
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-slate-400 italic">Unspecified</span>
-                    )}
-                  </td>
-
-                  <td className="px-4 py-3.5">
-                    {inv.status === 'Paid' && <Badge variant="success" dot>Paid</Badge>}
-                    {inv.status === 'Partially Paid' && <Badge variant="warning" dot>Partially Paid</Badge>}
-                    {inv.status === 'Pending' && <Badge variant="neutral" dot>Pending</Badge>}
-                    {inv.status === 'Overdue' && <Badge variant="error" dot>Overdue</Badge>}
-                  </td>
-
-                  <td className="px-5 py-3.5 text-right space-x-1.5 whitespace-nowrap">
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => handleOpenEditModal(inv)}
-                      leftIcon={<Edit2 className="w-3 h-3" />}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => handleOpenPrint(inv)}
-                      leftIcon={<Printer className="w-3 h-3" />}
-                    >
-                      Print
-                    </Button>
-                    {inv.status !== 'Paid' && (
-                      <Button
-                        variant="primary"
-                        size="xs"
-                        onClick={() => handleOpenPay(inv)}
-                      >
-                        Collect Pay
-                      </Button>
-                    )}
+              {paginated.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-12 px-4 text-center">
+                    <EmptyState
+                      icon={
+                        activeStream === 'pharmacy' ? (
+                          <Pill className="w-7 h-7 stroke-[1.5] text-emerald-600" />
+                        ) : activeStream === 'walkin' ? (
+                          <ShoppingCart className="w-7 h-7 stroke-[1.5] text-amber-600" />
+                        ) : (
+                          <Building2 className="w-7 h-7 stroke-[1.5] text-indigo-600" />
+                        )
+                      }
+                      title={
+                        activeStream === 'pharmacy'
+                          ? 'No Pharmacy Service Invoices'
+                          : activeStream === 'walkin'
+                          ? 'No Walk-in Pharmacy Bills'
+                          : activeStream === 'hospital'
+                          ? 'No Hospital Service Invoices'
+                          : 'No Invoices Found'
+                      }
+                      description={
+                        searchQuery || statusFilter !== 'all'
+                          ? 'Try clearing the search query or status filters.'
+                          : activeStream === 'pharmacy'
+                          ? 'Doctor e-prescription fulfillment invoices will appear here once dispensed.'
+                          : activeStream === 'walkin'
+                          ? 'Counter retail sales and walk-in purchases will appear here.'
+                          : 'Create an invoice or record inpatient / outpatient clinical services.'
+                      }
+                      actionText={
+                        activeStream === 'walkin'
+                          ? 'Create Walk-in Bill'
+                          : activeStream === 'pharmacy'
+                          ? 'Create Pharmacy Bill'
+                          : 'Create Patient Invoice'
+                      }
+                      onAction={() => handleOpenCreateModal()}
+                    />
                   </td>
                 </tr>
-              ))}
+              ) : (
+                paginated.map((inv) => {
+                  const category = getInvoiceBillingCategory(inv);
+                  return (
+                    <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
+                      {/* Invoice ID & Stream Classification */}
+                      <td className="px-5 py-3.5">
+                        <p className="text-xs font-mono font-bold text-indigo-700">{inv.id}</p>
+                        <div className="mt-1">
+                          {category === 'Hospital Service' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              <Building2 className="w-2.5 h-2.5 text-indigo-600" /> Hospital Service
+                            </span>
+                          )}
+                          {category === 'Pharmacy Service' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              <Pill className="w-2.5 h-2.5 text-emerald-600" /> Pharmacy Service
+                            </span>
+                          )}
+                          {category === 'Walk-in Pharmacy' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 border border-amber-200">
+                              <ShoppingCart className="w-2.5 h-2.5 text-amber-600" /> Walk-in Pharmacy
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Patient / Customer Details */}
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="font-bold text-slate-900 leading-tight">{inv.patientName}</p>
+                          {category === 'Hospital Service' && inv.encounterType && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
+                              {inv.encounterType}
+                            </span>
+                          )}
+                        </div>
+
+                        {category === 'Hospital Service' && inv.doctorName && (
+                          <p className="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
+                            <Stethoscope className="w-2.5 h-2.5 text-slate-400" /> {inv.doctorName}
+                          </p>
+                        )}
+
+                        {category === 'Pharmacy Service' && (
+                          <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-emerald-700">
+                            {inv.prescriptionId && (
+                              <span className="font-mono font-semibold bg-emerald-50 px-1 py-0.2 rounded border border-emerald-100">
+                                Rx: {inv.prescriptionId}
+                              </span>
+                            )}
+                            {inv.doctorName && <span>By {inv.doctorName}</span>}
+                          </div>
+                        )}
+
+                        {category === 'Walk-in Pharmacy' && (
+                          <p className="text-[10px] text-amber-800 font-medium mt-0.5">
+                            Retail Counter POS {inv.patientPhone ? `• ${inv.patientPhone}` : ''}
+                          </p>
+                        )}
+                      </td>
+
+                      {/* Issue Date & Cashier Counter */}
+                      <td className="px-4 py-3.5 text-slate-600">
+                        <p className="font-medium text-slate-800">{inv.issueDate}</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">
+                          {inv.cashierDesk || (category === 'Hospital Service' ? 'Main OPD Cashier Desk' : 'Pharmacy Cash Counter')}
+                        </p>
+                      </td>
+
+                      {/* Billed Total */}
+                      <td className="px-4 py-3.5">
+                        <span className="font-bold text-slate-900 text-xs">₹{inv.totalAmount.toLocaleString()}</span>
+                        {inv.items && inv.items.length > 0 && (
+                          <p className="text-[10px] text-slate-400 mt-0.5">{inv.items.length} item{inv.items.length > 1 ? 's' : ''}</p>
+                        )}
+                      </td>
+
+                      {/* Amount Paid */}
+                      <td className="px-4 py-3.5">
+                        <span className="font-bold text-emerald-700 text-xs">₹{inv.amountPaid.toLocaleString()}</span>
+                        {inv.totalAmount > inv.amountPaid && (
+                          <p className="text-[10px] text-amber-700 font-semibold mt-0.5">
+                            Due: ₹{(inv.totalAmount - inv.amountPaid).toLocaleString()}
+                          </p>
+                        )}
+                      </td>
+
+                      {/* Payment Method & Audit */}
+                      <td className="px-4 py-3.5 text-slate-600">
+                        {inv.paymentMethod ? (
+                          <div>
+                            <span className="inline-flex items-center gap-1 font-semibold text-[11px]">
+                              <CreditCard className="w-3 h-3 text-slate-400" /> {inv.paymentMethod}
+                            </span>
+                            {inv.collectedBy && (
+                              <p className="text-[10px] text-slate-600 font-medium mt-0.5 flex items-center gap-1">
+                                <UserCheck className="w-2.5 h-2.5 text-emerald-600" /> {inv.collectedBy}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 italic">Unsettled</span>
+                        )}
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-4 py-3.5">
+                        {inv.status === 'Paid' && <Badge variant="success" dot>Paid</Badge>}
+                        {inv.status === 'Partially Paid' && <Badge variant="warning" dot>Partially Paid</Badge>}
+                        {inv.status === 'Pending' && <Badge variant="neutral" dot>Pending</Badge>}
+                        {inv.status === 'Overdue' && <Badge variant="error" dot>Overdue</Badge>}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-5 py-3.5 text-right space-x-1.5 whitespace-nowrap">
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => handleOpenEditModal(inv)}
+                          leftIcon={<Edit2 className="w-3 h-3" />}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => handleOpenPrint(inv)}
+                          leftIcon={<Printer className="w-3 h-3" />}
+                        >
+                          Print
+                        </Button>
+                        {inv.status !== 'Paid' && (
+                          <Button
+                            variant="primary"
+                            size="xs"
+                            onClick={() => handleOpenPay(inv)}
+                          >
+                            Collect Pay
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -675,83 +1204,205 @@ export const BillingManagement: React.FC = () => {
       <Modal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
-        title={editingInvoiceId ? `Modify Patient Invoice (${editingInvoiceId})` : 'Generate Patient Billing Invoice'}
+        title={editingInvoiceId ? `Modify Invoice (${editingInvoiceId})` : `Generate ${formCategory} Invoice`}
         subtitle={
           editingInvoiceId
             ? 'Update clinical line items, pricing, attending doctor, and financial concessions'
-            : 'Complete clinical charges, attending doctor, insurance TPA claims & cashier settlement'
+            : formCategory === 'Walk-in Pharmacy'
+            ? 'Direct retail counter Point-of-Sale with instant customer checkout'
+            : formCategory === 'Pharmacy Service'
+            ? 'Doctor e-prescription fulfillment & dispensary invoice generation'
+            : 'Hospital clinical charges, room beds, attending doctor, insurance TPA & settlement'
         }
         maxWidth="4xl"
       >
         <form onSubmit={handleCreateInvoice} className="space-y-4 text-xs">
-          {/* Section 1: Patient Search & Encounter Details */}
+          {/* Section 0: Billing Service Stream Selector */}
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wide">
+                <Layers className="w-3.5 h-3.5 text-indigo-600" /> Billing Service Stream / Department *
+              </h4>
+              <span className="text-[11px] text-slate-500 font-medium">Select department revenue desk</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <button
+                type="button"
+                onClick={() => handleSelectModalCategory('Hospital Service')}
+                className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                  formCategory === 'Hospital Service'
+                    ? 'bg-indigo-50 border-indigo-400 text-indigo-950 ring-2 ring-indigo-200 shadow-xs'
+                    : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <div className={`p-1.5 rounded-lg ${formCategory === 'Hospital Service' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                  <Building2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="font-bold text-xs">Hospital Service</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">OPD, IPD Beds, Diagnostics & Clinical Procedures</p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectModalCategory('Pharmacy Service')}
+                className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                  formCategory === 'Pharmacy Service'
+                    ? 'bg-emerald-50 border-emerald-400 text-emerald-950 ring-2 ring-emerald-200 shadow-xs'
+                    : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <div className={`p-1.5 rounded-lg ${formCategory === 'Pharmacy Service' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                  <Pill className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="font-bold text-xs">Pharmacy Service</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Doctor e-Prescription Dispensing & Inpatient Meds</p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectModalCategory('Walk-in Pharmacy')}
+                className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                  formCategory === 'Walk-in Pharmacy'
+                    ? 'bg-amber-50 border-amber-400 text-amber-950 ring-2 ring-amber-200 shadow-xs'
+                    : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <div className={`p-1.5 rounded-lg ${formCategory === 'Walk-in Pharmacy' ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                  <ShoppingCart className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="font-bold text-xs">Walk-in Pharmacy</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Retail Counter POS, Direct OTC Sales & Walk-ins</p>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* Section 1: Patient / Customer & Encounter Details */}
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-3">
             <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wide">
-              <User className="w-3.5 h-3.5 text-indigo-600" /> 1. Patient & Encounter Details
+              <User className="w-3.5 h-3.5 text-indigo-600" />
+              {formCategory === 'Walk-in Pharmacy' ? '1. Walk-in Customer Details' : '1. Patient & Encounter Details'}
             </h4>
-            
-            <PatientCombobox
-              label="Select Patient *"
-              required
-              hospitalId={hospId}
-              selectedPatientId={selectedPatientId}
-              onSelectPatient={(p) => {
-                setSelectedPatient(p);
-                setSelectedPatientId(p?.id || '');
-                if (p) {
-                  setPatientSelectError('');
-                }
-              }}
-              error={patientSelectError}
-            />
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Select
-                label="Encounter / Visit Type *"
-                value={encounterType}
-                onChange={(e) => setEncounterType(e.target.value as EncounterType)}
-              >
-                <option value="OPD">OPD (Outpatient Consultation)</option>
-                <option value="IPD">IPD (Inpatient Ward / Bed Admission)</option>
-                <option value="Emergency">Emergency / ER</option>
-                <option value="Daycare">Daycare / Dialysis / Chemo</option>
-                <option value="Pharmacy">Pharmacy / Outpatient Dispense</option>
-                <option value="Diagnostic">Laboratory / Diagnostic Center</option>
-              </Select>
+            {formCategory === 'Walk-in Pharmacy' ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Input
+                    label="Customer / Buyer Name *"
+                    placeholder="e.g. Vikas Verma or Walk-in Customer"
+                    value={walkInCustomerName}
+                    onChange={(e) => setWalkInCustomerName(e.target.value)}
+                    required
+                  />
+                  <Input
+                    label="Customer Contact Phone (Optional)"
+                    placeholder="e.g. +91 98765 43210"
+                    value={walkInCustomerPhone}
+                    onChange={(e) => setWalkInCustomerPhone(e.target.value)}
+                  />
+                </div>
+                <div className="p-2.5 rounded-lg bg-amber-50/80 border border-amber-200/80 text-[11px] text-amber-900 flex items-center gap-2">
+                  <ShoppingCart className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span><strong>Retail OTC Mode:</strong> Direct cash/card/UPI checkout at pharmacy counter. No mandatory UHID hospital registration required.</span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <PatientCombobox
+                  label="Select Patient *"
+                  required
+                  hospitalId={hospId}
+                  selectedPatientId={selectedPatientId}
+                  onSelectPatient={(p) => {
+                    setSelectedPatient(p);
+                    setSelectedPatientId(p?.id || '');
+                    if (p) {
+                      setPatientSelectError('');
+                    }
+                  }}
+                  error={patientSelectError}
+                />
 
-              <Select
-                label="Attending / Consulting Doctor"
-                value={selectedDoctorId}
-                onChange={(e) => {
-                  setSelectedDoctorId(e.target.value);
-                  const doc = doctors.find((d) => d.id === e.target.value);
-                  if (doc && items.length === 1 && items[0].category === 'Consultation') {
-                    setItems([
-                      {
-                        ...items[0],
-                        description: `Specialist Consultation - ${doc.name}`,
-                        unitPrice: doc.consultationFee,
-                        total: doc.consultationFee,
-                      },
-                    ]);
-                  }
-                }}
-              >
-                <option value="">-- General / Hospital Pool --</option>
-                {doctors.map((doc) => (
-                  <option key={doc.id} value={doc.id}>
-                    {doc.name} ({doc.specialization} - {doc.departmentName})
-                  </option>
-                ))}
-              </Select>
+                {formCategory === 'Pharmacy Service' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <Input
+                      label="Linked Doctor e-Prescription ID (Optional)"
+                      placeholder="e.g. RX-2026-001"
+                      value={prescriptionId}
+                      onChange={(e) => setPrescriptionId(e.target.value)}
+                      helperText="Links this invoice to the patient prescription record"
+                    />
+                    <Select
+                      label="Prescribing / Attending Doctor"
+                      value={selectedDoctorId}
+                      onChange={(e) => setSelectedDoctorId(e.target.value)}
+                    >
+                      <option value="">-- Select Prescribing Doctor --</option>
+                      {doctors.map((doc) => (
+                        <option key={doc.id} value={doc.id}>
+                          {doc.name} ({doc.specialization})
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                )}
 
-              <Input
-                label="Department"
-                value={doctors.find((d) => d.id === selectedDoctorId)?.departmentName || 'General OPD'}
-                disabled
-                className="bg-slate-100 text-slate-600"
-              />
-            </div>
+                {formCategory === 'Hospital Service' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <Select
+                      label="Encounter / Visit Type *"
+                      value={encounterType}
+                      onChange={(e) => setEncounterType(e.target.value as EncounterType)}
+                    >
+                      <option value="OPD">OPD (Outpatient Consultation)</option>
+                      <option value="IPD">IPD (Inpatient Ward / Bed Admission)</option>
+                      <option value="Emergency">Emergency / ER</option>
+                      <option value="Daycare">Daycare / Dialysis / Chemo</option>
+                      <option value="Diagnostic">Laboratory / Diagnostic Center</option>
+                    </Select>
+
+                    <Select
+                      label="Attending / Consulting Doctor"
+                      value={selectedDoctorId}
+                      onChange={(e) => {
+                        setSelectedDoctorId(e.target.value);
+                        const doc = doctors.find((d) => d.id === e.target.value);
+                        if (doc && items.length === 1 && items[0].category === 'Consultation') {
+                          setItems([
+                            {
+                              ...items[0],
+                              description: `Specialist Consultation - ${doc.name}`,
+                              unitPrice: doc.consultationFee,
+                              total: doc.consultationFee,
+                            },
+                          ]);
+                        }
+                      }}
+                    >
+                      <option value="">-- General / Hospital Pool --</option>
+                      {doctors.map((doc) => (
+                        <option key={doc.id} value={doc.id}>
+                          {doc.name} ({doc.specialization} - {doc.departmentName})
+                        </option>
+                      ))}
+                    </Select>
+
+                    <Input
+                      label="Department"
+                      value={doctors.find((d) => d.id === selectedDoctorId)?.departmentName || 'General OPD'}
+                      disabled
+                      className="bg-slate-100 text-slate-600"
+                    />
+                  </div>
+                )}
+              </>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input
@@ -771,98 +1422,160 @@ export const BillingManagement: React.FC = () => {
             </div>
           </div>
 
-          {/* Section 2: Payment Classification & Insurance / TPA */}
-          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wide">
-                <Shield className="w-3.5 h-3.5 text-indigo-600" /> 2. Payment Classification & Insurance / TPA
-              </h4>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              {(['Self Pay', 'Insurance / TPA', 'Corporate'] as PaymentType[]).map((type) => (
-                <button
-                  type="button"
-                  key={type}
-                  onClick={() => setPaymentType(type)}
-                  className={`py-2 px-3 rounded-lg border text-xs font-semibold transition-all ${
-                    paymentType === type
-                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
-                  }`}
-                >
-                  {type === 'Self Pay' ? '💵 Self Pay (Direct)' : type === 'Insurance / TPA' ? '🏥 Health Insurance / TPA' : '🏢 Corporate Panel'}
-                </button>
-              ))}
-            </div>
-
-            {paymentType !== 'Self Pay' && (
-              <div className="p-3 bg-white border border-indigo-100 rounded-xl space-y-3 animate-in fade-in duration-200">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Input
-                    label="Insurance / TPA Company *"
-                    placeholder="e.g. Star Health, BlueCross, Aetna"
-                    value={insuranceProvider}
-                    onChange={(e) => setInsuranceProvider(e.target.value)}
-                    required
-                  />
-                  <Input
-                    label="Policy / Member ID *"
-                    placeholder="e.g. POL-8829104"
-                    value={policyNumber}
-                    onChange={(e) => setPolicyNumber(e.target.value)}
-                    required
-                  />
-                  <Input
-                    label="Pre-Auth / Approval Reference #"
-                    placeholder="e.g. AUTH-902184"
-                    value={claimApprovalNumber}
-                    onChange={(e) => setClaimApprovalNumber(e.target.value)}
-                  />
-                </div>
+          {/* Section 2: Payment Classification & Insurance / TPA (Only for Hospital & Pharmacy) */}
+          {formCategory !== 'Walk-in Pharmacy' && (
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wide">
+                  <Shield className="w-3.5 h-3.5 text-indigo-600" /> 2. Payment Classification & Insurance / TPA
+                </h4>
               </div>
-            )}
-          </div>
 
-          {/* Section 3: Itemized Clinical Services */}
+              <div className="grid grid-cols-3 gap-2">
+                {(['Self Pay', 'Insurance / TPA', 'Corporate'] as PaymentType[]).map((type) => (
+                  <button
+                    type="button"
+                    key={type}
+                    onClick={() => setPaymentType(type)}
+                    className={`py-2 px-3 rounded-lg border text-xs font-semibold transition-all ${
+                      paymentType === type
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    {type === 'Self Pay' ? '💵 Self Pay (Direct)' : type === 'Insurance / TPA' ? '🏥 Health Insurance / TPA' : '🏢 Corporate Panel'}
+                  </button>
+                ))}
+              </div>
+
+              {paymentType !== 'Self Pay' && (
+                <div className="p-3 bg-white border border-indigo-100 rounded-xl space-y-3 animate-in fade-in duration-200">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <Input
+                      label="Insurance / TPA Company *"
+                      placeholder="e.g. Star Health, BlueCross, Aetna"
+                      value={insuranceProvider}
+                      onChange={(e) => setInsuranceProvider(e.target.value)}
+                      required
+                    />
+                    <Input
+                      label="Policy / Member ID *"
+                      placeholder="e.g. POL-8829104"
+                      value={policyNumber}
+                      onChange={(e) => setPolicyNumber(e.target.value)}
+                      required
+                    />
+                    <Input
+                      label="Pre-Auth / Approval Reference #"
+                      placeholder="e.g. AUTH-902184"
+                      value={claimApprovalNumber}
+                      onChange={(e) => setClaimApprovalNumber(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Section 3: Itemized Line Items & Presets */}
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wide">
-                <Receipt className="w-3.5 h-3.5 text-indigo-600" /> 3. Itemized Clinical Charges
+                <Receipt className="w-3.5 h-3.5 text-indigo-600" />
+                {formCategory === 'Walk-in Pharmacy'
+                  ? '3. Retail OTC Medication Items'
+                  : formCategory === 'Pharmacy Service'
+                  ? '3. Prescribed Medication Items'
+                  : '3. Itemized Clinical Charges'}
               </h4>
               <div className="flex items-center gap-1.5 flex-wrap">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  onClick={() => addPresetItem('Consultation', 'Specialist Consultation', 500)}
-                >
-                  + Consultation (₹500)
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  onClick={() => addPresetItem('Pharmacy', 'Prescribed Inpatient/OPD Medication', 250)}
-                >
-                  + Pharmacy (₹250)
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  onClick={() => addPresetItem('Laboratory', 'Diagnostic Lab Panel (CBC/Metabolic)', 450)}
-                >
-                  + Lab Test (₹450)
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  onClick={() => addPresetItem('Bed Charge', 'Inpatient Ward Bed Daily Charge', 1200)}
-                >
-                  + Bed Stay (₹1,200)
-                </Button>
+                {formCategory === 'Hospital Service' ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => addPresetItem('Consultation', 'Specialist OPD Consultation', 250)}
+                    >
+                      + Consult (₹250)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => addPresetItem('Laboratory', '12-Lead Electrocardiogram (ECG)', 85)}
+                    >
+                      + ECG (₹85)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => addPresetItem('Laboratory', 'Diagnostic Lab Panel (CBC/Metabolic)', 450)}
+                    >
+                      + Lab Test (₹450)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => addPresetItem('Bed Charge', 'Inpatient Ward Bed Daily Charge', 350)}
+                    >
+                      + Ward Bed (₹350)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => addPresetItem('Bed Charge', 'ICU Special Care Bed Charge', 1200)}
+                    >
+                      + ICU Bed (₹1,200)
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => addPresetItem('Pharmacy', 'Paracetamol 650mg (Strip of 15)', 20)}
+                    >
+                      + Paracetamol (₹20)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => addPresetItem('Pharmacy', 'Amoxicillin 500mg (Strip of 10)', 45)}
+                    >
+                      + Amoxicillin (₹45)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => addPresetItem('Pharmacy', 'Pantoprazole 40mg (Strip of 10)', 75)}
+                    >
+                      + Pantoprazole (₹75)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => addPresetItem('Pharmacy', 'Sterile Adhesive Bandages (Pack of 20)', 80)}
+                    >
+                      + First Aid Kit (₹80)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => addPresetItem('Pharmacy', 'Vitamin C 500mg Chewable (Bottle of 30)', 95)}
+                    >
+                      + Vitamin C (₹95)
+                    </Button>
+                  </>
+                )}
                 <Button type="button" variant="primary" size="xs" onClick={addItem} leftIcon={<Plus className="w-3 h-3" />}>
                    Custom Line
                 </Button>
@@ -933,22 +1646,57 @@ export const BillingManagement: React.FC = () => {
           </div>
 
           {/* Section 4: Concessions, Taxes & Financial Summary */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Input
-              label="Tax Rate (%)"
-              type="number"
-              min="0"
-              max="100"
-              value={taxRate}
-              onChange={(e) => setTaxRate(Number(e.target.value))}
-            />
-            <Input
-              label="Concession / Discount (₹)"
-              type="number"
-              min="0"
-              value={discount}
-              onChange={(e) => setDiscount(Number(e.target.value))}
-            />
+          <div className="space-y-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <Input
+                  label="Tax / GST Rate (%)"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.5"
+                  value={taxRate}
+                  onChange={(e) => setTaxRate(Number(e.target.value))}
+                />
+                <div className="flex flex-wrap items-center gap-1 mt-1 text-[10px]">
+                  <span className="text-slate-400 font-semibold">Admin Presets:</span>
+                  <button
+                    type="button"
+                    onClick={() => setTaxRate(settings.defaultGSTRate ?? 5)}
+                    className="px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold"
+                  >
+                    General: {settings.defaultGSTRate ?? 5}%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTaxRate(settings.pharmacyGSTRate ?? 5)}
+                    className="px-1.5 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold"
+                  >
+                    Pharm: {settings.pharmacyGSTRate ?? 5}%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTaxRate(settings.consultationGSTRate ?? 0)}
+                    className="px-1.5 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-semibold"
+                  >
+                    OPD: {settings.consultationGSTRate ?? 0}%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTaxRate(settings.labDiagnosticGSTRate ?? 5)}
+                    className="px-1.5 py-0.5 rounded bg-cyan-50 hover:bg-cyan-100 text-cyan-800 font-semibold"
+                  >
+                    Lab: {settings.labDiagnosticGSTRate ?? 5}%
+                  </button>
+                </div>
+              </div>
+              <Input
+                label="Concession / Discount (₹)"
+                type="number"
+                min="0"
+                value={discount}
+                onChange={(e) => setDiscount(Number(e.target.value))}
+              />
             <Select
               label="Concession / Waiver Reason"
               value={discountReason}
@@ -962,6 +1710,7 @@ export const BillingManagement: React.FC = () => {
               <option value="Medical Director Special Waiver">Director Approval Waiver</option>
               <option value="Volume / Promotional Discount">Promotional / Package Discount</option>
             </Select>
+            </div>
           </div>
 
           <div className="p-3.5 rounded-xl bg-slate-900 text-white flex justify-between items-center text-xs">
@@ -1217,55 +1966,108 @@ export const BillingManagement: React.FC = () => {
       <Modal
         isOpen={isPrintModalOpen}
         onClose={() => setIsPrintModalOpen(false)}
-        title="Official Patient Tax Receipt"
-        subtitle="Formatted Hospital Invoice"
+        title={
+          selectedInvoice
+            ? getInvoiceBillingCategory(selectedInvoice) === 'Walk-in Pharmacy'
+              ? 'Walk-in Pharmacy POS Cash Receipt'
+              : getInvoiceBillingCategory(selectedInvoice) === 'Pharmacy Service'
+              ? 'Hospital Pharmacy Dispensary Receipt'
+              : 'Hospital Clinical Services Tax Invoice'
+            : 'Official Patient Tax Receipt'
+        }
+        subtitle="Official Hospital Bill of Supply & Tax Invoice"
         maxWidth="2xl"
       >
-        {selectedInvoice && (
-          <div className="p-6 bg-white border border-slate-200 rounded-2xl space-y-6 text-xs text-slate-800">
-            <div className="flex justify-between items-start border-b border-slate-200 pb-4">
-              <div>
-                <h3 className="font-bold text-base text-slate-900">{currentHospital?.name || 'PulseCore Health'}</h3>
-                <p className="text-[11px] text-slate-500">Facility ID: {hospId} • Tax EIN: EIN-84-9021948</p>
-                <p className="text-[11px] text-slate-500">Emergency & OPD Billing Department</p>
-              </div>
-              <div className="text-right">
-                <span className="font-mono font-bold text-sm text-indigo-700">{selectedInvoice.id}</span>
-                <p className="text-slate-500 text-[11px]">Issued: {selectedInvoice.issueDate}</p>
-                <div className="mt-1">
-                  <Badge variant={selectedInvoice.status === 'Paid' ? 'success' : 'warning'} size="sm">
-                    {selectedInvoice.status.toUpperCase()}
-                  </Badge>
+        {selectedInvoice && (() => {
+          const cat = getInvoiceBillingCategory(selectedInvoice);
+          return (
+            <div className="p-6 bg-white border border-slate-200 rounded-2xl space-y-6 text-xs text-slate-800">
+              <div className="flex justify-between items-start border-b border-slate-200 pb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-base text-slate-900">{settings.hospitalName || currentHospital?.name || 'PulseCore Health'}</h3>
+                    {cat === 'Hospital Service' && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        Hospital Service
+                      </span>
+                    )}
+                    {cat === 'Pharmacy Service' && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        Pharmacy Dispensary
+                      </span>
+                    )}
+                    {cat === 'Walk-in Pharmacy' && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200">
+                        Walk-in OTC Retail
+                      </span>
+                    )}
+                  </div>
+                  {settings.tagline && <p className="text-[11px] text-indigo-700 italic font-medium">{settings.tagline}</p>}
+                  <p className="text-[11px] text-slate-500">
+                    Facility ID: {hospId} • Tax ID / GSTIN: {settings.taxRegistrationNumber || 'EIN-84-9021948'}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    {settings.address || 'Main Campus'} • Emergency: {settings.emergencyHelpline || '+1 (555) 911-0000'} • Phone: {settings.receptionPhone || currentHospital?.phone || 'N/A'}
+                  </p>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    Department: {cat === 'Hospital Service' ? 'Clinical Inpatient & Outpatient Billing' : 'Central Hospital Pharmacy & Retail Dispensary'}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="font-mono font-bold text-sm text-indigo-700">{selectedInvoice.id}</span>
+                  <p className="text-slate-500 text-[11px]">Issued: {selectedInvoice.issueDate}</p>
+                  <div className="mt-1">
+                    <Badge variant={selectedInvoice.status === 'Paid' ? 'success' : 'warning'} size="sm">
+                      {selectedInvoice.status.toUpperCase()}
+                    </Badge>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-3 bg-slate-50 rounded-xl border border-slate-100 text-[11px]">
-              <div>
-                <p className="font-bold text-slate-900">Billed Patient:</p>
-                <p className="font-semibold text-slate-800 text-xs">{selectedInvoice.patientName}</p>
-                <p className="text-slate-500">ID: {selectedInvoice.patientId}</p>
-                <p className="text-slate-500">Phone: {selectedInvoice.patientPhone}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-3 bg-slate-50 rounded-xl border border-slate-100 text-[11px]">
+                <div>
+                  <p className="font-bold text-slate-900">
+                    {cat === 'Walk-in Pharmacy' ? 'Retail Buyer:' : 'Billed Patient:'}
+                  </p>
+                  <p className="font-semibold text-slate-800 text-xs">{selectedInvoice.patientName}</p>
+                  <p className="text-slate-500">ID: {selectedInvoice.patientId}</p>
+                  <p className="text-slate-500">Phone: {selectedInvoice.patientPhone || 'N/A'}</p>
+                </div>
+                <div>
+                  <p className="font-bold text-slate-900">
+                    {cat === 'Walk-in Pharmacy' ? 'Counter POS Details:' : 'Clinical Encounter:'}
+                  </p>
+                  {cat === 'Walk-in Pharmacy' ? (
+                    <>
+                      <p className="font-semibold text-slate-800">Pharmacy Retail Counter</p>
+                      <p className="text-slate-500">Direct OTC Purchase</p>
+                      <p className="text-amber-800 font-bold uppercase">Cashier Verified</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-semibold text-slate-800">
+                        {selectedInvoice.doctorName ? `Dr. ${selectedInvoice.doctorName.replace(/^Dr\.?\s*/i, '')}` : 'General Hospital Pool'}
+                      </p>
+                      <p className="text-slate-500">Dept: {selectedInvoice.departmentName || (cat === 'Pharmacy Service' ? 'Hospital Pharmacy' : 'General Medicine')}</p>
+                      <p className="text-indigo-600 font-bold uppercase">
+                        {cat === 'Pharmacy Service' && selectedInvoice.prescriptionId
+                          ? `Rx: #${selectedInvoice.prescriptionId}`
+                          : `${selectedInvoice.encounterType || 'OPD'} Patient`}
+                      </p>
+                    </>
+                  )}
+                </div>
+                <div className="text-right sm:text-left">
+                  <p className="font-bold text-slate-900">Billing Classification:</p>
+                  <p className="font-semibold text-slate-800">{cat === 'Walk-in Pharmacy' ? 'Retail POS Direct Sale' : (selectedInvoice.paymentType || 'Self Pay')}</p>
+                  {selectedInvoice.insuranceProvider && (
+                    <p className="text-slate-500">Ins: {selectedInvoice.insuranceProvider} ({selectedInvoice.policyNumber || 'N/A'})</p>
+                  )}
+                  {selectedInvoice.claimApprovalNumber && (
+                    <p className="text-emerald-700 font-mono">Auth: {selectedInvoice.claimApprovalNumber}</p>
+                  )}
+                </div>
               </div>
-              <div>
-                <p className="font-bold text-slate-900">Clinical Encounter:</p>
-                <p className="font-semibold text-slate-800">
-                  {selectedInvoice.doctorName ? `Dr. ${selectedInvoice.doctorName.replace(/^Dr\.?\s*/i, '')}` : 'General Hospital Pool'}
-                </p>
-                <p className="text-slate-500">Dept: {selectedInvoice.departmentName || 'General Medicine'}</p>
-                <p className="text-indigo-600 font-bold uppercase">{selectedInvoice.encounterType || 'OPD'} Patient</p>
-              </div>
-              <div className="text-right sm:text-left">
-                <p className="font-bold text-slate-900">Billing Classification:</p>
-                <p className="font-semibold text-slate-800">{selectedInvoice.paymentType || 'Self Pay'}</p>
-                {selectedInvoice.insuranceProvider && (
-                  <p className="text-slate-500">Ins: {selectedInvoice.insuranceProvider} ({selectedInvoice.policyNumber || 'N/A'})</p>
-                )}
-                {selectedInvoice.claimApprovalNumber && (
-                  <p className="text-emerald-700 font-mono">Auth: {selectedInvoice.claimApprovalNumber}</p>
-                )}
-              </div>
-            </div>
 
             {/* Itemized Table */}
             <table className="w-full text-left border-collapse text-xs">
@@ -1340,7 +2142,8 @@ export const BillingManagement: React.FC = () => {
               This is a computer-generated simulated receipt from PulseCore Health Operating System.
             </div>
           </div>
-        )}
+          );
+        })()}
       </Modal>
 
       <BillingSoftwareAddonModal

@@ -38,10 +38,7 @@ export const DoctorManagement: React.FC = () => {
   const { showToast } = useNotification();
   const hospId = currentHospital?.id || 'HOSP-001';
 
-  const [doctors, setDoctors] = useState<Doctor[]>(() => {
-    const raw = MockStorage.getDoctors(hospId);
-    return raw.length > 0 ? raw : MockStorage.getDoctors();
-  });
+  const [doctors, setDoctors] = useState<Doctor[]>(() => MockStorage.getDoctors(hospId));
   const departments = MockStorage.getDepartments(hospId);
   const opdRooms = MockStorage.getOPDRooms(hospId);
 
@@ -73,8 +70,7 @@ export const DoctorManagement: React.FC = () => {
   });
 
   const refreshData = () => {
-    const raw = MockStorage.getDoctors(hospId);
-    setDoctors(raw.length > 0 ? raw : MockStorage.getDoctors());
+    setDoctors(MockStorage.getDoctors(hospId));
   };
 
   useEffect(() => {
@@ -581,7 +577,7 @@ export const DoctorManagement: React.FC = () => {
             
             <div>
               <Select
-                label="OPD Room / Chamber *"
+                label="OPD Room / Chamber"
                 value={formData.opdRoomId}
                 onChange={(e) => {
                   const rId = e.target.value;
@@ -593,11 +589,9 @@ export const DoctorManagement: React.FC = () => {
                   });
                 }}
               >
+                <option value="">-- Unassigned / Shared Clinic Pool --</option>
                 {(() => {
                   const deptRooms = opdRooms.filter((r) => r.departmentId === formData.departmentId);
-                  if (deptRooms.length === 0) {
-                    return <option value="">No OPD rooms for this department</option>;
-                  }
                   return deptRooms.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name} ({r.code})
@@ -605,11 +599,6 @@ export const DoctorManagement: React.FC = () => {
                   ));
                 })()}
               </Select>
-              {opdRooms.filter((r) => r.departmentId === formData.departmentId).length === 0 && (
-                <p className="text-[10px] text-amber-600 mt-1">
-                  ⚠️ No OPD room found. Please create an OPD room in OPD Rooms module first.
-                </p>
-              )}
             </div>
           </div>
 
@@ -621,11 +610,11 @@ export const DoctorManagement: React.FC = () => {
               placeholder="e.g. +91 98765 43210"
             />
             <Input
-              label="Consultation Hours (Clinic Hours)"
+              label="Consultation Hours (Available Hours)"
               value={formData.availableHours}
               onChange={(e) => setFormData({ ...formData, availableHours: e.target.value })}
               placeholder="e.g. 09:00 AM - 05:00 PM"
-              title="Sets the Clinic Start Time & Clinic End Time for OPD consultation slots."
+              title="Sets the Doctor Available From & To times for OPD consultation slots."
             />
           </div>
 

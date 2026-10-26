@@ -284,9 +284,9 @@ export const PlatformDashboardContent: React.FC = () => {
       adminPhone: newHospitalData.phone || '+1 (555) 010-9900',
       planTier: newHospitalData.planTier || 'trial',
       status: 'active',
-      totalDoctors: plan?.maxDoctors || 3,
+      totalDoctors: plan ? plan.maxDoctors : 3,
       totalPatients: 0,
-      totalBeds: newHospitalData.totalBeds || plan?.maxBeds || 20,
+      totalBeds: newHospitalData.totalBeds !== undefined && newHospitalData.totalBeds > 0 ? newHospitalData.totalBeds : (plan ? plan.maxBeds : 20),
       createdAt: new Date().toISOString().split('T')[0],
       logoUrl: newHospitalData.logoUrl,
       image: newHospitalData.logoUrl,
@@ -1098,7 +1098,7 @@ export const PlatformDashboardContent: React.FC = () => {
                   setNewHospitalData({
                     ...newHospitalData,
                     planTier: tier,
-                    totalBeds: plan?.maxBeds ?? newHospitalData.totalBeds,
+                    totalBeds: plan ? plan.maxBeds : 0,
                   });
                 }}
                 className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white focus:ring-2 focus:ring-indigo-500"

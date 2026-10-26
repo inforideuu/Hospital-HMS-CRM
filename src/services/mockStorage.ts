@@ -29,6 +29,7 @@ import {
   BedStatus,
   Admission,
   Invoice,
+  BillingCategory,
   Medicine,
   LabTestCatalog,
   LabOrder,
@@ -95,6 +96,8 @@ import {
 } from '../data/mockData';
 import { ApiService } from './apiService';
 import { isCapabilityAllowedForTier, checkPathCapability, PLAN_CAPABILITIES } from '../constants/planCapabilities';
+import { DEFAULT_HOSPITAL_LAB_CATALOG } from '../utils/labCatalogDefaults';
+import { DEFAULT_HOSPITAL_MEDICINES } from '../utils/pharmacyDefaults';
 
 const STORAGE_KEYS = {
   USERS: 'pulse_users',
@@ -352,13 +355,32 @@ export async function syncWithDjangoBackend() {
             adminName: existing?.adminName || `${h.name} Admin`,
             adminEmail: existing?.adminEmail || h.email,
             adminPhone: existing?.adminPhone || h.phone,
-            planTier: (existing?.planTier || (h.plan?.toLowerCase().includes('enterprise') ? 'enterprise' : h.plan?.toLowerCase().includes('standard') ? 'standard' : 'basic')) as SubscriptionPlanTier,
+            planTier: (
+              h.plan?.toLowerCase().includes('enterprise')
+                ? 'enterprise'
+                : h.plan?.toLowerCase().includes('standard')
+                ? 'standard'
+                : h.plan?.toLowerCase().includes('trial')
+                ? 'trial'
+                : h.plan?.toLowerCase().includes('basic')
+                ? 'basic'
+                : existing?.planTier || 'standard'
+            ) as SubscriptionPlanTier,
             status: (h.status?.toLowerCase() === 'active' ? 'active' : existing?.status || 'active') as HospitalStatus,
             logoUrl: photo,
             image: photo,
-            totalDoctors: h.doctors_count || existing?.totalDoctors || 0,
+            totalDoctors: (() => {
+              const tier = (h.plan?.toLowerCase().includes('enterprise') ? 'enterprise' : h.plan?.toLowerCase().includes('standard') ? 'standard' : h.plan?.toLowerCase().includes('trial') ? 'trial' : 'basic') as SubscriptionPlanTier;
+              const p = initialPlans.find((plan) => plan.tier === tier);
+              return h.doctors_count && h.doctors_count > 3 ? h.doctors_count : (p?.maxDoctors ?? 35);
+            })(),
             totalPatients: existing?.totalPatients || 0,
-            totalBeds: h.beds_count || existing?.totalBeds || 0,
+            totalBeds: (() => {
+              const tier = (h.plan?.toLowerCase().includes('enterprise') ? 'enterprise' : h.plan?.toLowerCase().includes('standard') ? 'standard' : h.plan?.toLowerCase().includes('trial') ? 'trial' : 'basic') as SubscriptionPlanTier;
+              const p = initialPlans.find((plan) => plan.tier === tier);
+              if (tier === 'basic') return 0;
+              return h.beds_count && h.beds_count > 20 ? h.beds_count : (p?.maxBeds ?? (tier === 'standard' ? 120 : tier === 'enterprise' ? 500 : 20));
+            })(),
             createdAt: h.created_at || existing?.createdAt || new Date().toISOString().split('T')[0],
             websiteUrl: existing?.websiteUrl || `https://${(h.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')}.pulsecorehealth.com`,
             domainStatus: existing?.domainStatus || 'connected',
@@ -1701,9 +1723,25 @@ export const MockStorage = {
       );
     }
 
+    const plan = this.getPlanByTier(hospital.planTier || 'trial');
+    const targetTier = hospital.planTier || 'trial';
+    const computedBeds =
+      targetTier === 'basic'
+        ? 0
+        : hospital.totalBeds !== undefined && hospital.totalBeds > 0 && hospital.totalBeds !== 20
+        ? hospital.totalBeds
+        : (plan?.maxBeds ?? (targetTier === 'standard' ? 120 : targetTier === 'enterprise' ? 500 : 20));
+    const computedDoctors =
+      hospital.totalDoctors !== undefined && hospital.totalDoctors > 0 && hospital.totalDoctors !== 3
+        ? hospital.totalDoctors
+        : (plan?.maxDoctors ?? (targetTier === 'standard' ? 35 : targetTier === 'enterprise' ? 200 : 10));
+
     const photo = hospital.logoUrl || hospital.image || 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=150&auto=format&fit=crop&q=80';
     const sanitizedHospital: Hospital = {
       ...hospital,
+      planTier: targetTier,
+      totalBeds: computedBeds,
+      totalDoctors: computedDoctors,
       logoUrl: photo,
       image: photo,
     };
@@ -1829,8 +1867,8 @@ export const MockStorage = {
         email: sanitizedHospital.email || '',
         status: sanitizedHospital.status === 'active' ? 'Active' : sanitizedHospital.status,
         plan: sanitizedHospital.planTier || 'Standard',
-        beds_count: sanitizedHospital.totalBeds || 100,
-        doctors_count: sanitizedHospital.totalDoctors || 10,
+        beds_count: sanitizedHospital.totalBeds,
+        doctors_count: sanitizedHospital.totalDoctors,
         image: sanitizedHospital.logoUrl || sanitizedHospital.image,
       };
       fetch(`${API_BASE_URL}/hospitals/${sanitizedHospital.id}/`, {
@@ -2037,7 +2075,38 @@ export const MockStorage = {
   },
 
   getSubscriptionByHospitalId(hospitalId: string): HospitalSubscription | undefined {
-    return this.getSubscriptions().find((s) => this.matchHospitalId(s.hospitalId, hospitalId));
+    let sub = this.getSubscriptions().find((s) => this.matchHospitalId(s.hospitalId, hospitalId));
+    const hosp = this.getHospitalById(hospitalId);
+    if (!sub && hosp) {
+      const plan = this.getPlanByTier(hosp.planTier);
+      const isTrial = (hosp.planTier || 'trial') === 'trial';
+      const now = new Date();
+      const renewal = new Date(now);
+      renewal.setMonth(renewal.getMonth() + 1);
+      sub = {
+        id: `SUB-${hosp.id}`,
+        hospitalId: hosp.id,
+        planTier: hosp.planTier || 'trial',
+        planName: plan?.name || (isTrial ? '7-Day Free Trial' : 'Professional Hospital'),
+        status: isTrial ? 'trialing' : 'active',
+        interval: 'monthly',
+        amount: isTrial ? 0 : plan?.priceMonthly || 14999,
+        startDate: hosp.createdAt || now.toISOString().split('T')[0],
+        activatedDate: hosp.createdAt || now.toISOString().split('T')[0],
+        renewalDate: renewal.toISOString().split('T')[0],
+        paymentMethod: isTrial ? '7-Day Trial License' : 'UPI QR Code',
+        autoRenew: !isTrial,
+      };
+      const allSubs = this.getSubscriptions();
+      allSubs.unshift(sub);
+      setStored(STORAGE_KEYS.SUBSCRIPTIONS, allSubs);
+    } else if (sub && hosp && sub.planTier !== hosp.planTier) {
+      sub.planTier = hosp.planTier;
+      const plan = this.getPlanByTier(hosp.planTier);
+      sub.planName = plan.name;
+      this.saveSubscription(sub);
+    }
+    return sub;
   },
 
   saveSubscription(subscription: HospitalSubscription): void {
@@ -2297,11 +2366,15 @@ export const MockStorage = {
 
       setStored(STORAGE_KEYS.SUBSCRIPTIONS, subs);
 
-      // Update Hospital status & planTier
+      // Update Hospital status & planTier & allocations
       const hosp = this.getHospitalById(sub.hospitalId);
       if (hosp) {
         hosp.planTier = targetTier;
         hosp.status = 'active';
+        if (planObj) {
+          hosp.totalBeds = planObj.maxBeds;
+          hosp.totalDoctors = planObj.maxDoctors;
+        }
 
         // Step 3: Enterprise Health Network Organization conversion
         if (targetTier === 'enterprise') {
@@ -2589,7 +2662,26 @@ export const MockStorage = {
 
   // Prescriptions
   getPrescriptions(patientId?: string, hospitalId?: string): Prescription[] {
-    const list = getStored<Prescription[]>(STORAGE_KEYS.PRESCRIPTIONS, initialPrescriptions);
+    let list = getStored<Prescription[]>(STORAGE_KEYS.PRESCRIPTIONS, initialPrescriptions);
+
+    // Purge any legacy mock prescriptions that were previously auto-seeded
+    const cleaned = list.filter((p) => {
+      if (p.id && p.id.match(/^RX-.*-10[123]$/)) {
+        if (
+          p.diagnosis === 'Hypertension & Dyslipidemia (Routine Follow-up)' ||
+          p.diagnosis === 'Upper Respiratory Tract Infection (Acute Bronchitis)' ||
+          p.diagnosis === 'Bronchial Asthma (Exacerbation)'
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+    if (cleaned.length !== list.length) {
+      setStored(STORAGE_KEYS.PRESCRIPTIONS, cleaned);
+      list = cleaned;
+    }
+
     if (patientId) {
       return list.filter((p) => p.patientId === patientId);
     }
@@ -3863,6 +3955,64 @@ export const MockStorage = {
     return { success: true };
   },
 
+  batchSaveBeds(bedsToCreate: Bed[]): { success: boolean; createdCount: number; message?: string } {
+    if (!bedsToCreate || bedsToCreate.length === 0) {
+      return { success: true, createdCount: 0 };
+    }
+    const hospId = bedsToCreate[0].hospitalId;
+    const hospital = this.getHospitals().find((h) => h.id === hospId);
+    const plan = this.getPlanByTier(hospital?.planTier || 'trial');
+    const currentList = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+    const hospitalBeds = currentList.filter((b) => b.hospitalId === hospId);
+
+    const availableSlots = Math.max(0, plan.maxBeds - hospitalBeds.length);
+    if (availableSlots <= 0) {
+      return {
+        success: false,
+        createdCount: 0,
+        message: `Bed Limit Reached — Your current plan allows a maximum of ${plan.maxBeds} beds (${hospitalBeds.length}/${plan.maxBeds} in use). Upgrade your subscription to add more beds.`,
+      };
+    }
+
+    const bedsAllowed = bedsToCreate.slice(0, availableSlots);
+    const updatedList = [...bedsAllowed, ...currentList];
+    setStored(STORAGE_KEYS.BEDS, updatedList);
+
+    // Sync to backend asynchronously
+    try {
+      const hospitalKey = hospId || 'HOSP-001';
+      for (const bed of bedsAllowed) {
+        fetch(`${API_BASE_URL}/beds/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Hospital-Id': hospitalKey },
+          body: JSON.stringify({
+            id: bed.id,
+            hospital: hospitalKey,
+            ward_id: bed.wardId || null,
+            ward_name: bed.wardName || '',
+            bed_number: bed.bedNumber,
+            ward_type: bed.wardType,
+            floor: bed.floor,
+            status: bed.status,
+            current_patient_id: null,
+            current_patient_name: null,
+            daily_rate: Number(bed.dailyRate || 1000),
+            notes: bed.notes || '',
+          }),
+        }).catch(() => {});
+      }
+    } catch (e) {}
+
+    return {
+      success: true,
+      createdCount: bedsAllowed.length,
+      message:
+        bedsAllowed.length < bedsToCreate.length
+          ? `Created ${bedsAllowed.length} beds. ${bedsToCreate.length - bedsAllowed.length} beds omitted to respect plan capacity limit (${plan.maxBeds}).`
+          : undefined,
+    };
+  },
+
   deleteBed(bedId: string): void {
     let list = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
     list = list.filter((b) => b.id !== bedId);
@@ -3984,8 +4134,22 @@ export const MockStorage = {
 
   // Billing & Invoices
   getInvoices(hospitalId?: string, patientId?: string): Invoice[] {
-    let list = getStored<Invoice[]>(STORAGE_KEYS.INVOICES, initialInvoices)
+    let stored = getStored<Invoice[]>(STORAGE_KEYS.INVOICES, initialInvoices)
       .filter((i) => i.id !== 'INV-2026-001');
+
+    // Ensure seed invoices across all billing streams are present
+    let needsUpdate = false;
+    for (const init of initialInvoices) {
+      if (!stored.some((i) => i.id === init.id)) {
+        stored.push(init);
+        needsUpdate = true;
+      }
+    }
+    if (needsUpdate) {
+      setStored(STORAGE_KEYS.INVOICES, stored);
+    }
+
+    let list = stored;
     if (hospitalId) {
       list = list.filter((i) => this.matchHospitalId(i.hospitalId, hospitalId));
     }
@@ -4080,11 +4244,271 @@ export const MockStorage = {
 
   // Medicines
   getMedicines(hospitalId?: string): Medicine[] {
-    const list = getStored<Medicine[]>(STORAGE_KEYS.MEDICINES, initialMedicines);
+    let list = getStored<Medicine[]>(STORAGE_KEYS.MEDICINES, initialMedicines);
+
+    // Purge any legacy mock medicines that were previously auto-seeded
+    const MOCK_SKUS = new Set([
+      'MED-AB-625',
+      'MED-AN-650',
+      'MED-AB-1000',
+      'MED-GI-040',
+      'MED-DM-102',
+      'MED-CV-020',
+      'MED-RS-100',
+      'MED-BIO-100',
+      'MED-EM-004',
+      'MED-IV-500',
+      'MED-AB-500',
+      'MED-CV-040',
+    ]);
+    const mockBatches = [
+      'BAT-2026-AUG01',
+      'BAT-2026-DOL12',
+      'BAT-2026-CEF88',
+      'BAT-2026-PAN54',
+      'BAT-2026-GLY33',
+      'BAT-2026-LIP77',
+      'BAT-2026-AST90',
+      'BAT-2026-LAN09',
+      'BAT-2026-EMS22',
+      'BAT-2026-NS500',
+      'BAT-2026-AZI66',
+      'BAT-2026-TEL19',
+    ];
+    const cleaned = list.filter((m) => {
+      if (m.sku && MOCK_SKUS.has(m.sku)) return false;
+      if (m.batchNumber && mockBatches.includes(m.batchNumber)) return false;
+      return true;
+    });
+    if (cleaned.length !== list.length) {
+      setStored(STORAGE_KEYS.MEDICINES, cleaned);
+      list = cleaned;
+    }
+
     if (hospitalId) {
       return list.filter((m) => this.matchHospitalId(m.hospitalId, hospitalId));
     }
     return list;
+  },
+
+  dispensePrescription(
+    prescriptionId: string,
+    dispensedItems: { medicineId?: string; medicineName: string; quantity: number; unitPrice: number; batchNumber?: string }[],
+    pharmacistName: string,
+    hospitalId: string,
+    paymentMethod: Invoice['paymentMethod'] = 'Cash',
+    paymentStatus: Invoice['status'] = 'Paid'
+  ): { success: boolean; invoiceId?: string; error?: string } {
+    const rxList = this.getPrescriptions(undefined, hospitalId);
+    const rx = rxList.find((p) => p.id === prescriptionId);
+    if (!rx) {
+      return { success: false, error: 'Prescription not found.' };
+    }
+
+    const allMeds = this.getMedicines(hospitalId);
+    // Deduct stock for each dispensed item
+    dispensedItems.forEach((it) => {
+      const med = allMeds.find((m) => m.id === it.medicineId || m.name.toLowerCase() === it.medicineName.toLowerCase());
+      if (med) {
+        med.stockQuantity = Math.max(0, med.stockQuantity - it.quantity);
+        if (med.stockQuantity === 0) {
+          med.status = 'Out of Stock';
+        } else if (med.stockQuantity <= med.minThreshold) {
+          med.status = 'Low Stock';
+        }
+        this.saveMedicine(med);
+      }
+    });
+
+    const subtotal = dispensedItems.reduce((acc, it) => acc + it.quantity * it.unitPrice, 0);
+    const hospSettings = this.getHospitalSettings(hospitalId);
+    const gstRate = hospSettings.enableGSTBilling !== false ? (hospSettings.pharmacyGSTRate ?? 5) : 0;
+    const taxAmount = Math.round(subtotal * (gstRate / 100));
+    const totalAmount = subtotal + taxAmount;
+    const invoiceId = `INV-PHARM-${Date.now().toString().slice(-6)}`;
+
+    const invoice: Invoice = {
+      id: invoiceId,
+      hospitalId,
+      patientId: rx.patientId,
+      patientName: rx.patientName,
+      patientPhone: '',
+      issueDate: new Date().toISOString().split('T')[0],
+      dueDate: new Date().toISOString().split('T')[0],
+      items: dispensedItems.map((it, idx) => ({
+        id: `ITEM-RX-${idx + 1}`,
+        description: `${it.medicineName}${it.batchNumber ? ` [Batch: ${it.batchNumber}]` : ''}`,
+        category: 'Pharmacy',
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        total: it.quantity * it.unitPrice,
+      })),
+      subtotal,
+      taxRate: gstRate,
+      taxAmount,
+      discount: 0,
+      totalAmount,
+      amountPaid: paymentStatus === 'Paid' ? totalAmount : 0,
+      status: paymentStatus,
+      paymentMethod,
+      transactionRef: `TXN-RX-${Date.now().toString().slice(-6)}`,
+      billingCategory: 'Pharmacy Service',
+      prescriptionId,
+      encounterType: 'Pharmacy',
+      collectedBy: pharmacistName,
+      cashierDesk: 'Pharmacy Cash Counter',
+      notes: `Fulfilled doctor e-prescription #${prescriptionId} by Pharmacist ${pharmacistName}`,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.saveInvoice(invoice);
+
+    // Update prescription
+    rx.status = 'Dispensed';
+    rx.dispensedAt = new Date().toISOString();
+    rx.dispensedBy = pharmacistName;
+    rx.dispensedInvoiceId = invoiceId;
+    this.savePrescription(rx);
+
+    this.logActivity(
+      'Dispensed Doctor Prescription',
+      `Prescription #${prescriptionId} for ${rx.patientName} dispensed (₹${totalAmount})`,
+      'clinical',
+      pharmacistName,
+      'Pharmacist',
+      hospitalId
+    );
+
+    window.dispatchEvent(new CustomEvent('pulse_storage_updated'));
+    return { success: true, invoiceId };
+  },
+
+  createOTCPurchase(
+    patientName: string,
+    patientPhone: string,
+    items: { medicineId: string; medicineName: string; quantity: number; unitPrice: number; batchNumber?: string }[],
+    paymentMethod: Invoice['paymentMethod'],
+    pharmacistName: string,
+    hospitalId: string
+  ): { success: boolean; invoiceId?: string; error?: string } {
+    if (items.length === 0) {
+      return { success: false, error: 'No items in cart' };
+    }
+
+    const allMeds = this.getMedicines(hospitalId);
+    items.forEach((it) => {
+      const med = allMeds.find((m) => m.id === it.medicineId || m.name.toLowerCase() === it.medicineName.toLowerCase());
+      if (med) {
+        med.stockQuantity = Math.max(0, med.stockQuantity - it.quantity);
+        if (med.stockQuantity === 0) {
+          med.status = 'Out of Stock';
+        } else if (med.stockQuantity <= med.minThreshold) {
+          med.status = 'Low Stock';
+        }
+        this.saveMedicine(med);
+      }
+    });
+
+    const subtotal = items.reduce((acc, it) => acc + it.quantity * it.unitPrice, 0);
+    const hospSettings = this.getHospitalSettings(hospitalId);
+    const gstRate = hospSettings.enableGSTBilling !== false ? (hospSettings.pharmacyGSTRate ?? 5) : 0;
+    const taxAmount = Math.round(subtotal * (gstRate / 100));
+    const totalAmount = subtotal + taxAmount;
+    const invoiceId = `INV-OTC-${Date.now().toString().slice(-6)}`;
+
+    const invoice: Invoice = {
+      id: invoiceId,
+      hospitalId,
+      patientId: `WALK-IN-${Date.now().toString().slice(-4)}`,
+      patientName: patientName || 'Walk-in Customer',
+      patientPhone: patientPhone || '',
+      issueDate: new Date().toISOString().split('T')[0],
+      dueDate: new Date().toISOString().split('T')[0],
+      items: items.map((it, idx) => ({
+        id: `ITEM-OTC-${idx + 1}`,
+        description: `${it.medicineName}${it.batchNumber ? ` [Batch: ${it.batchNumber}]` : ''}`,
+        category: 'Pharmacy',
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        total: it.quantity * it.unitPrice,
+      })),
+      subtotal,
+      taxRate: gstRate,
+      taxAmount,
+      discount: 0,
+      totalAmount,
+      amountPaid: totalAmount,
+      status: 'Paid',
+      paymentMethod: paymentMethod || 'Cash',
+      transactionRef: `TXN-OTC-${Date.now().toString().slice(-6)}`,
+      billingCategory: 'Walk-in Pharmacy',
+      encounterType: 'Pharmacy',
+      collectedBy: pharmacistName,
+      cashierDesk: 'Pharmacy Cash Counter',
+      notes: `Walk-in OTC Pharmacy sale fulfilled by Pharmacist ${pharmacistName}`,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.saveInvoice(invoice);
+
+    this.logActivity(
+      'Completed Walk-in Pharmacy Sale',
+      `OTC sale ${invoiceId} for ${invoice.patientName} (₹${totalAmount})`,
+      'clinical',
+      pharmacistName,
+      'Pharmacist',
+      hospitalId
+    );
+
+    window.dispatchEvent(new CustomEvent('pulse_storage_updated'));
+    return { success: true, invoiceId };
+  },
+
+  quarantineMedicine(medicineId: string, reason: string, pharmacistName: string, hospitalId: string): void {
+    const allMeds = this.getMedicines(hospitalId);
+    const med = allMeds.find((m) => m.id === medicineId);
+    if (med) {
+      med.status = 'Quarantined';
+      med.quarantineReason = reason || 'Expired / Damaged Batch quarantined from clinical dispensing';
+      med.quarantinedAt = new Date().toISOString();
+      this.saveMedicine(med);
+      this.logActivity(
+        'Quarantined Medicine Batch',
+        `${med.name} (Batch: ${med.batchNumber}) quarantined: ${med.quarantineReason}`,
+        'clinical',
+        pharmacistName,
+        'Pharmacist',
+        hospitalId
+      );
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated'));
+    }
+  },
+
+  restockMedicine(
+    medicineId: string,
+    addedQty: number,
+    newBatch?: string,
+    newExpiry?: string,
+    pharmacistName: string = 'Pharmacist'
+  ): void {
+    const allMeds = this.getMedicines();
+    const med = allMeds.find((m) => m.id === medicineId);
+    if (med) {
+      med.stockQuantity += addedQty;
+      if (newBatch) med.batchNumber = newBatch;
+      if (newExpiry) med.expiryDate = newExpiry;
+      med.status = med.stockQuantity > med.minThreshold ? 'In Stock' : 'Low Stock';
+      this.saveMedicine(med);
+      this.logActivity(
+        'Restocked Medicine',
+        `Added +${addedQty} units to ${med.name} (Total: ${med.stockQuantity})`,
+        'clinical',
+        pharmacistName,
+        'Pharmacist',
+        med.hospitalId
+      );
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated'));
+    }
   },
 
   saveMedicine(medicine: Medicine): void {
@@ -4133,13 +4557,38 @@ export const MockStorage = {
       setStored(STORAGE_KEYS.MEDICINES, []);
     }
     this.logActivity('Purged Pharmacy Stock', `All medicine items cleared for hospital: ${hospitalId || 'All'}`, 'hospital', 'Admin', 'Hospital Admin');
+    window.dispatchEvent(new CustomEvent('pulse_storage_updated'));
+  },
+
+  purgePharmacyMockData(hospitalId?: string): void {
+    if (hospitalId) {
+      const allMeds = getStored<Medicine[]>(STORAGE_KEYS.MEDICINES, initialMedicines).filter((m) => !this.matchHospitalId(m.hospitalId, hospitalId));
+      setStored(STORAGE_KEYS.MEDICINES, allMeds);
+      const allRx = getStored<Prescription[]>(STORAGE_KEYS.PRESCRIPTIONS, initialPrescriptions).filter((p) => !this.matchHospitalId(p.hospitalId, hospitalId));
+      setStored(STORAGE_KEYS.PRESCRIPTIONS, allRx);
+    } else {
+      setStored(STORAGE_KEYS.MEDICINES, []);
+      setStored(STORAGE_KEYS.PRESCRIPTIONS, []);
+    }
+    window.dispatchEvent(new CustomEvent('pulse_storage_updated'));
   },
 
   // Lab Catalog & Orders
   getLabCatalog(hospitalId?: string): LabTestCatalog[] {
-    const list = getStored<LabTestCatalog[]>(STORAGE_KEYS.LAB_CATALOG, initialLabCatalog);
+    let list = getStored<LabTestCatalog[]>(STORAGE_KEYS.LAB_CATALOG, initialLabCatalog);
     if (hospitalId) {
-      return list.filter((t) => t.hospitalId === hospitalId);
+      const hospTests = list.filter((t) => t.hospitalId === hospitalId);
+      if (hospTests.length === 0) {
+        const seeded: LabTestCatalog[] = DEFAULT_HOSPITAL_LAB_CATALOG.map((def, idx) => ({
+          ...def,
+          id: `TEST-${hospitalId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now()}-${idx + 1}`,
+          hospitalId,
+        }));
+        list = [...list, ...seeded];
+        setStored(STORAGE_KEYS.LAB_CATALOG, list);
+        return seeded;
+      }
+      return hospTests;
     }
     return list;
   },
@@ -4183,6 +4632,12 @@ export const MockStorage = {
 
   saveLabOrder(order: LabOrder): void {
     const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
+    
+    // Auto-generate barcode if missing
+    if (!order.barcodeNumber) {
+      order.barcodeNumber = `BC-LAB-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+    }
+
     const idx = list.findIndex((l) => l.id === order.id);
     if (idx >= 0) {
       list[idx] = order;
@@ -4211,6 +4666,161 @@ export const MockStorage = {
         }),
       }).catch(() => {});
     } catch (e) {}
+  },
+
+  verifyLabOrder(orderId: string, pathologistName: string, pathologistNotes?: string): LabOrder | null {
+    const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
+    const order = list.find((o) => o.id === orderId);
+    if (!order) return null;
+
+    order.status = 'Verified';
+    order.verifiedBy = pathologistName;
+    order.verifiedDate = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    if (pathologistNotes) {
+      order.pathologistNotes = pathologistNotes;
+    }
+    setStored(STORAGE_KEYS.LAB_ORDERS, list);
+    this.logActivity('Verified Lab Report', `${order.testName} for ${order.patientName} verified by Dr. ${pathologistName}`, 'clinical', pathologistName, 'Pathologist', order.hospitalId);
+    return order;
+  },
+
+  rejectLabSample(orderId: string, reason: string, rejectedBy: string): LabOrder | null {
+    const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
+    const order = list.find((o) => o.id === orderId);
+    if (!order) return null;
+
+    order.status = 'Sample Rejected';
+    order.rejectionReason = reason;
+    order.rejectedBy = rejectedBy;
+    order.rejectionDate = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    setStored(STORAGE_KEYS.LAB_ORDERS, list);
+    this.logActivity('Sample Rejected', `${order.testName} sample rejected: ${reason}`, 'clinical', rejectedBy, 'Lab Technician', order.hospitalId);
+    return order;
+  },
+
+  getHospitalNurses(hospitalId?: string): { id: string; name: string; department?: string; shift?: string; phone?: string }[] {
+    const staffList = this.getStaff(hospitalId);
+    const nursesFromStaff = staffList
+      .filter((s) => s.role === 'Nurse' || s.systemRole === 'nurse')
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        department: s.department || 'Nursing Station',
+        shift: s.shift || 'General',
+        phone: s.phone,
+      }));
+
+    const userNurses = this.getUsers()
+      .filter((u) => u.role === 'nurse' && (!hospitalId || this.matchHospitalId(u.hospitalId, hospitalId)))
+      .map((u) => ({
+        id: u.id,
+        name: u.name || 'Staff Nurse',
+        department: 'Nursing Station',
+        shift: 'Day Shift',
+        phone: u.phone,
+      }));
+
+    const combined: { id: string; name: string; department?: string; shift?: string; phone?: string }[] = [...nursesFromStaff];
+    for (const un of userNurses) {
+      if (!combined.some((n) => n.name.toLowerCase() === un.name.toLowerCase() || n.id === un.id)) {
+        combined.push(un);
+      }
+    }
+
+    if (combined.length === 0) {
+      return [
+        { id: 'NUR-101', name: 'Sister Sunita Rao', department: 'Critical Care / ICU', shift: 'Morning Shift' },
+        { id: 'NUR-102', name: 'Sister Priya Sharma', department: 'Emergency & Trauma (ER)', shift: 'Day Shift' },
+        { id: 'NUR-103', name: 'Nurse Rahul Verma', department: 'Inpatient General Ward', shift: 'Evening Shift' },
+        { id: 'NUR-104', name: 'Sister Anjali Patel', department: 'Pediatrics & Neonatal Ward', shift: 'Rotational Shift' },
+        { id: 'NUR-105', name: 'Nurse Mary Fernandes', department: 'Post-Operative Recovery', shift: 'Night Shift' },
+      ];
+    }
+
+    return combined;
+  },
+
+  collectLabSampleByNurse(
+    orderId: string,
+    nurseName: string,
+    prepConfirmed: boolean,
+    prepNotes: string,
+    tubeColor: string,
+    barcode?: string,
+    nurseId?: string
+  ): LabOrder | null {
+    const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
+    const order = list.find((o) => o.id === orderId);
+    if (!order) return null;
+
+    order.status = 'Sample Collected';
+    order.collectedByNurseName = nurseName;
+    order.collectedByNurseId = nurseId || order.collectedByNurseId;
+    order.patientPreparationConfirmed = prepConfirmed;
+    order.patientPreparationNotes = prepNotes;
+    order.tubeColor = tubeColor || order.tubeColor;
+    order.barcodeNumber = barcode || order.barcodeNumber || `BC-LAB-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+    order.specimenCollectionDate = new Date().toISOString().replace('T', ' ').substring(0, 16);
+
+    setStored(STORAGE_KEYS.LAB_ORDERS, list);
+    this.logActivity('Specimen Collected by Nurse', `${order.testName} for ${order.patientName} collected by Nurse ${nurseName}${nurseId ? ` (${nurseId})` : ''}`, 'clinical', nurseName, 'Nurse', order.hospitalId);
+    return order;
+  },
+
+  receiveAndProcessLabSample(orderId: string, technicianName: string, instrument?: string): LabOrder | null {
+    const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
+    const order = list.find((o) => o.id === orderId);
+    if (!order) return null;
+
+    order.status = 'In Progress';
+    order.receivedByTechnician = technicianName;
+    order.sampleReceivedDate = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    order.analyzerInstrument = instrument || 'Automated Clinical Chemistry / Hematology Analyzer';
+
+    setStored(STORAGE_KEYS.LAB_ORDERS, list);
+    this.logActivity('Sample Received by Lab Tech', `${order.testName} accessioned & loaded to analyzer by ${technicianName}`, 'clinical', technicianName, 'Lab Technician', order.hospitalId);
+    return order;
+  },
+
+  reviewLabReportByDoctor(
+    orderId: string,
+    doctorId: string,
+    doctorName: string,
+    clinicalImpression: string,
+    instructions: string
+  ): LabOrder | null {
+    const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
+    const order = list.find((o) => o.id === orderId);
+    if (!order) return null;
+
+    order.status = 'Doctor Reviewed';
+    order.reviewedByDoctorId = doctorId;
+    order.reviewedByDoctorName = doctorName;
+    order.doctorReviewDate = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    order.doctorClinicalImpression = clinicalImpression;
+    order.doctorInstructions = instructions;
+    order.nurseActionStatus = 'Pending';
+
+    setStored(STORAGE_KEYS.LAB_ORDERS, list);
+    this.logActivity('Lab Report Reviewed by Doctor', `Dr. ${doctorName} reviewed ${order.testName} for ${order.patientName} & issued clinical directives`, 'clinical', doctorName, 'Doctor', order.hospitalId);
+    return order;
+  },
+
+  executeDoctorInstructionByNurse(orderId: string, nurseName: string, executionNotes: string, nurseId?: string): LabOrder | null {
+    const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
+    const order = list.find((o) => o.id === orderId);
+    if (!order) return null;
+
+    order.status = 'Action Completed';
+    order.executedByNurseName = nurseName;
+    order.executedByNurseId = nurseId || order.executedByNurseId;
+    order.nurseExecutionDate = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    order.nurseExecutionNotes = executionNotes;
+    order.nurseActionStatus = 'Completed';
+
+    setStored(STORAGE_KEYS.LAB_ORDERS, list);
+    this.logActivity('Doctor Instructions Followed by Nurse', `Nurse ${nurseName}${nurseId ? ` (${nurseId})` : ''} executed post-lab clinical directive for ${order.patientName}`, 'clinical', nurseName, 'Nurse', order.hospitalId);
+    return order;
   },
 
   // Websites & Section Builder
@@ -4472,21 +5082,40 @@ export const MockStorage = {
   },
 
   getHospitalSettings(hospitalId: string): HospitalSettings {
-    const settings = getStored<HospitalSettings>(STORAGE_KEYS.HOSPITAL_SETTINGS, initialHospitalSettings);
-    if (this.matchHospitalId(settings.hospitalId, hospitalId)) {
-      return settings;
+    const all = getStored<Record<string, HospitalSettings>>(STORAGE_KEYS.HOSPITAL_SETTINGS, {});
+    const normHospId = hospitalId || 'HOSP-001';
+    if (all && all[normHospId]) {
+      const stored = all[normHospId];
+      return {
+        ...initialHospitalSettings,
+        ...stored,
+        enableGSTBilling: stored.enableGSTBilling !== undefined ? stored.enableGSTBilling : true,
+        defaultGSTRate: stored.defaultGSTRate !== undefined ? stored.defaultGSTRate : 5,
+        pharmacyGSTRate: stored.pharmacyGSTRate !== undefined ? stored.pharmacyGSTRate : 5,
+        consultationGSTRate: stored.consultationGSTRate !== undefined ? stored.consultationGSTRate : 0,
+        labDiagnosticGSTRate: stored.labDiagnosticGSTRate !== undefined ? stored.labDiagnosticGSTRate : 5,
+        ipdRoomGSTRate: stored.ipdRoomGSTRate !== undefined ? stored.ipdRoomGSTRate : 5,
+        gstType: stored.gstType || 'CGST_SGST',
+      };
     }
-    const hosp = this.getHospitalById(hospitalId);
+    const hosp = this.getHospitalById(normHospId);
     return {
       ...initialHospitalSettings,
-      hospitalId,
+      hospitalId: normHospId,
       hospitalName: hosp?.name || 'Hospital Center',
       email: hosp?.email || 'contact@hospital.org',
+      address: hosp?.address || 'Main Campus',
+      receptionPhone: hosp?.phone || '+1 (555) 019-2831',
+      emergencyHelpline: '+1 (555) 911-0000',
+      taxRegistrationNumber: `EIN-84-${normHospId.replace(/[^0-9]/g, '').padStart(7, '9021948')}`,
     };
   },
 
   saveHospitalSettings(settings: HospitalSettings): void {
-    setStored(STORAGE_KEYS.HOSPITAL_SETTINGS, settings);
+    const all = getStored<Record<string, HospitalSettings>>(STORAGE_KEYS.HOSPITAL_SETTINGS, {});
+    const normHospId = settings.hospitalId || 'HOSP-001';
+    all[normHospId] = settings;
+    setStored(STORAGE_KEYS.HOSPITAL_SETTINGS, all);
     this.logActivity('Updated Hospital Settings Profile', settings.hospitalName, 'system', 'Admin', 'Hospital Admin', settings.hospitalId);
   },
 

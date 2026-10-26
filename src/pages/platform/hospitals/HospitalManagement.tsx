@@ -125,9 +125,9 @@ export const HospitalManagement: React.FC = () => {
       adminPhone: selectedCustomerToOnboard.phone,
       planTier: formData.planTier || 'trial',
       status: 'active',
-      totalDoctors: plan?.maxDoctors || 3,
+      totalDoctors: plan ? plan.maxDoctors : 3,
       totalPatients: 0,
-      totalBeds: formData.totalBeds || plan?.maxBeds || 20,
+      totalBeds: formData.totalBeds !== undefined && formData.totalBeds > 0 ? formData.totalBeds : (plan ? plan.maxBeds : 20),
       createdAt: new Date().toISOString().split('T')[0],
       websiteUrl: `https://${slug}.pulsecorehealth.com`,
       domainStatus: 'connected',
@@ -232,8 +232,8 @@ export const HospitalManagement: React.FC = () => {
         ...selectedHospital,
         ...formData,
         planTier: formData.planTier || selectedHospital.planTier || 'trial',
-        totalBeds: formData.totalBeds || plan?.maxBeds || 20,
-        totalDoctors: plan?.maxDoctors || selectedHospital.totalDoctors || 3,
+        totalBeds: formData.totalBeds !== undefined && formData.totalBeds > 0 ? formData.totalBeds : (plan ? plan.maxBeds : 20),
+        totalDoctors: plan ? plan.maxDoctors : (selectedHospital.totalDoctors || 3),
         logoUrl: photo,
         image: photo,
       };
@@ -247,9 +247,9 @@ export const HospitalManagement: React.FC = () => {
         ...formData,
         planTier: formData.planTier || 'trial',
         status: 'active',
-        totalDoctors: plan?.maxDoctors || 3,
+        totalDoctors: plan ? plan.maxDoctors : 3,
         totalPatients: 0,
-        totalBeds: formData.totalBeds || plan?.maxBeds || 20,
+        totalBeds: formData.totalBeds !== undefined && formData.totalBeds > 0 ? formData.totalBeds : (plan ? plan.maxBeds : 20),
         createdAt: new Date().toISOString().split('T')[0],
         websiteUrl: `https://${slug}.pulsecorehealth.com`,
         domainStatus: 'connected',
@@ -684,7 +684,7 @@ export const HospitalManagement: React.FC = () => {
                   setFormData({
                     ...formData,
                     planTier: newTier,
-                    totalBeds: selectedPlan?.maxBeds || formData.totalBeds,
+                    totalBeds: selectedPlan ? selectedPlan.maxBeds : 0,
                   });
                 }}
               >

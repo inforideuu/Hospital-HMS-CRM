@@ -52,9 +52,9 @@ export const DepartmentManagement: React.FC = () => {
   const currentTier = currentHospital?.planTier || 'trial';
   const hasBedCapability = isCapabilityAllowedForTier(currentTier, 'admissions_beds');
   const currentPlan = MockStorage.getPlanByTier(currentTier);
-  const maxBedsLimit = currentPlan.maxBeds || (hasBedCapability ? 20 : 0);
-  const maxDoctorsLimit = currentPlan.maxDoctors || 3;
-  const maxStaffLimit = currentPlan.maxStaff || 10;
+  const maxBedsLimit = currentPlan ? currentPlan.maxBeds : (hasBedCapability ? 120 : 0);
+  const maxDoctorsLimit = currentPlan?.maxDoctors || 3;
+  const maxStaffLimit = currentPlan?.maxStaff || 10;
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);

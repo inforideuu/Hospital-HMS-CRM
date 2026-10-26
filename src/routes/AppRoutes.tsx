@@ -50,6 +50,9 @@ import { AdmissionsManagement } from '../pages/hospital/admissions/AdmissionsMan
 import { BillingManagement } from '../pages/hospital/billing/BillingManagement';
 import { PharmacyManagement } from '../pages/hospital/pharmacy/PharmacyManagement';
 import { LaboratoryManagement } from '../pages/hospital/laboratory/LaboratoryManagement';
+import { LaboratoryDashboard } from '../pages/hospital/laboratory/LaboratoryDashboard';
+import { NurseDashboard } from '../pages/hospital/nurse/NurseDashboard';
+import { PharmacistDashboard } from '../pages/hospital/pharmacist/PharmacistDashboard';
 import { AmbulanceManagement } from '../pages/hospital/ambulance/AmbulanceManagement';
 import { ReportsAnalytics } from '../pages/hospital/reports/ReportsAnalytics';
 import { HospitalSettings } from '../pages/hospital/settings/HospitalSettings';
@@ -316,10 +319,58 @@ export const AppRoutes: React.FC = () => {
           }
         />
         <Route
+          path="nurse/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={['hospital_admin', 'nurse']}>
+              <NurseDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="pharmacist/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={['hospital_admin', 'pharmacist']}>
+              <PharmacistDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="laboratory"
           element={
-            <ProtectedRoute allowedRoles={['hospital_admin', 'lab_technician', 'doctor']}>
-              <LaboratoryManagement />
+            <ProtectedRoute allowedRoles={['hospital_admin', 'lab_technician', 'doctor', 'nurse']}>
+              <LaboratoryManagement defaultTab="orders" />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="laboratory/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={['hospital_admin', 'lab_technician', 'doctor', 'nurse']}>
+              <LaboratoryDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="laboratory/orders"
+          element={
+            <ProtectedRoute allowedRoles={['hospital_admin', 'lab_technician', 'doctor', 'nurse']}>
+              <LaboratoryManagement defaultTab="orders" />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="laboratory/new-order"
+          element={
+            <ProtectedRoute allowedRoles={['hospital_admin', 'lab_technician', 'doctor', 'nurse']}>
+              <LaboratoryManagement defaultTab="new-order" />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="laboratory/catalog"
+          element={
+            <ProtectedRoute allowedRoles={['hospital_admin', 'lab_technician', 'doctor', 'nurse']}>
+              <LaboratoryManagement defaultTab="catalog" />
             </ProtectedRoute>
           }
         />

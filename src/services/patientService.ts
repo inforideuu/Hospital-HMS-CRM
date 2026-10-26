@@ -62,11 +62,8 @@ export const PatientService = {
       // If network fails or backend is offline, proceed seamlessly
     }
 
-    // 2. Query MockStorage local patients
-    let allPatients = MockStorage.getPatients(hospitalId);
-    if (allPatients.length === 0) {
-      allPatients = MockStorage.getPatients();
-    }
+    // 2. Query MockStorage local patients (strictly scoped to the requested hospital)
+    const allPatients = hospitalId ? MockStorage.getPatients(hospitalId) : MockStorage.getPatients();
 
     const filteredLocal = trimmedQuery
       ? allPatients.filter((p) => {

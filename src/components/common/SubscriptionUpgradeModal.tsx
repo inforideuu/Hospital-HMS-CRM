@@ -411,7 +411,7 @@ export const SubscriptionUpgradeModal: React.FC<SubscriptionUpgradeModalProps> =
                         >
                           <div className="flex justify-between">
                             <span>Beds & Wards:</span>
-                            <span className="font-bold">{plan.tier === 'basic' ? 'OPD Only (No Beds)' : `${plan.maxBeds || 20} Beds`}</span>
+                            <span className="font-bold">{plan.tier === 'basic' ? 'OPD Only (No Beds)' : `${plan.maxBeds} Beds`}</span>
                           </div>
                           <div className="flex justify-between">
                             <span>Patient Census:</span>

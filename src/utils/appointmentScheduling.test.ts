@@ -95,11 +95,13 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
 
   // Test 2: Future Schedule Start Date
   test('Requirements 2 & 3: Handles future schedule start dates, disables earlier dates, and gives clear message', () => {
-    const futureStartDate = '2026-11-01';
+    const today = getHospitalTodayDate();
+    const futureStartDate = addDays(today, 10);
+    const preStartDate = addDays(today, 5);
     const futureSchedule: DoctorSchedule = {
       ...baseSchedule,
       effectiveStartDate: futureStartDate,
-      effectiveEndDate: '2026-12-31',
+      effectiveEndDate: addDays(today, 60),
     };
 
     const constraints = getScheduleDateConstraints(futureSchedule, baseSettings);
@@ -107,8 +109,6 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
     assert.equal(constraints.futureStartDate, futureStartDate);
     assert.equal(constraints.minDate, futureStartDate);
 
-    // Date before schedule start date (e.g. 2026-10-25)
-    const preStartDate = '2026-10-25';
     const result = generateDoctorTimeSlots(
       futureSchedule,
       preStartDate,
@@ -121,7 +121,7 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
     assert.equal(result.isFutureSchedule, true);
     assert.equal(result.outsideEffectiveRange, true);
     assert.equal(result.slots.length, 0);
-    assert.equal(result.message, "Doctor's schedule starts on 1 Nov 2026.");
+    assert.match(result.message || '', /Doctor's schedule starts on/);
 
     const validation = validateBookingAvailability(
       {
@@ -136,7 +136,7 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
     );
 
     assert.equal(validation.isValid, false);
-    assert.equal(validation.errorMessage, "Doctor's schedule starts on 1 Nov 2026.");
+    assert.match(validation.errorMessage || '', /Doctor's schedule starts on/);
   });
 
   // Test 3: Non-Consulting Weekdays
@@ -761,5 +761,233 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
     const nyMins = getHospitalMinutesSinceMidnight('America/New_York', refUtc);
     assert.equal(nyDate, '2026-10-16');
     assert.equal(nyMins, 20 * 60 + 30);
+  });
+
+  // Test 15: Overnight Shift Crossing Midnight (Split by Calendar Day)
+  test('Requirement 15: Splits overnight shifts by calendar day: evening on shift date, morning on next date', () => {
+    // Schedule working only on Monday (e.g. 2026-10-26) from 09:00 PM to 07:00 AM
+    const mondayDate = '2026-10-26';
+    const tuesdayDate = '2026-10-27';
+
+    const overnightSchedule: DoctorSchedule = {
+      ...baseSchedule,
+      workingDays: ['Monday'],
+      consultationStartTime: '09:00 PM',
+      consultationEndTime: '07:00 AM',
+      slotDurationMinutes: 30,
+      breaks: [
+        {
+          id: 'BRK-MIDNIGHT-LUNCH',
+          name: 'Midnight Lunch',
+          startTime: '01:00 AM',
+          endTime: '02:00 AM',
+        },
+      ],
+      effectiveStartDate: '2026-01-01',
+      effectiveEndDate: '2026-12-31',
+    };
+
+    // 1. On Monday (2026-10-26): ONLY Evening slots (09:00 PM to 11:30 PM = 6 slots)
+    const mondayResult = generateDoctorTimeSlots(
+      overnightSchedule,
+      mondayDate,
+      [],
+      [],
+      undefined,
+      baseSettings,
+      'Asia/Kolkata',
+      new Date('2026-10-26T13:30:00+05:30') // 1:30 PM daytime
+    );
+
+    assert.equal(mondayResult.slots.length, 6);
+    assert.equal(mondayResult.slots[0].time, '09:00 PM');
+    assert.equal(mondayResult.slots[mondayResult.slots.length - 1].time, '11:30 PM');
+    // At 1:30 PM daytime, all 6 evening slots tonight are upcoming and available!
+    assert.equal(mondayResult.slots.every((s) => s.isAvailable), true);
+
+    // 2. On Tuesday (2026-10-27): Morning slots from Monday night duty (12:00 AM to 06:30 AM = 14 slots)
+    const tuesdayResult = generateDoctorTimeSlots(
+      overnightSchedule,
+      tuesdayDate,
+      [],
+      [],
+      undefined,
+      baseSettings,
+      'Asia/Kolkata',
+      new Date('2026-10-26T13:30:00+05:30') // Tested ahead of time
+    );
+
+    assert.equal(tuesdayResult.slots.length, 14);
+    assert.equal(tuesdayResult.slots[0].time, '12:00 AM');
+    assert.equal(tuesdayResult.slots[tuesdayResult.slots.length - 1].time, '06:30 AM');
+
+    // 01:00 AM and 01:30 AM on Tuesday are marked as break
+    const slot0100 = tuesdayResult.slots.find((s) => s.time === '01:00 AM');
+    assert.equal(slot0100?.isAvailable, false);
+    assert.equal(slot0100?.status, 'break');
+    assert.match(slot0100?.reason || '', /Midnight Lunch/);
+
+    const slot0130 = tuesdayResult.slots.find((s) => s.time === '01:30 AM');
+    assert.equal(slot0130?.isAvailable, false);
+    assert.equal(slot0130?.status, 'break');
+
+    // 02:00 AM on Tuesday is available
+    const slot0200 = tuesdayResult.slots.find((s) => s.time === '02:00 AM');
+    assert.equal(slot0200?.isAvailable, true);
+    assert.equal(slot0200?.status, 'available');
+
+    // Booking validation for break slot 01:00 AM on Tuesday fails
+    const valBreak = validateBookingAvailability(
+      {
+        doctorId: overnightSchedule.doctorId,
+        appointmentDate: tuesdayDate,
+        appointmentTime: '01:00 AM',
+      },
+      overnightSchedule,
+      [],
+      [],
+      baseSettings
+    );
+    assert.equal(valBreak.isValid, false);
+    assert.match(valBreak.errorMessage || '', /break/i);
+
+    // Booking validation for 02:00 AM on Tuesday succeeds
+    const valAvailable = validateBookingAvailability(
+      {
+        doctorId: overnightSchedule.doctorId,
+        appointmentDate: tuesdayDate,
+        appointmentTime: '02:00 AM',
+      },
+      overnightSchedule,
+      [],
+      [],
+      baseSettings
+    );
+    assert.equal(valAvailable.isValid, true);
+
+    // Booking validation for 09:00 PM on Monday succeeds
+    const valMondayEvening = validateBookingAvailability(
+      {
+        doctorId: overnightSchedule.doctorId,
+        appointmentDate: mondayDate,
+        appointmentTime: '09:00 PM',
+      },
+      overnightSchedule,
+      [],
+      [],
+      baseSettings
+    );
+    assert.equal(valMondayEvening.isValid, true);
+
+    // Test passed slot at 10:15 PM on Monday: 09:00 PM and 09:30 PM are passed, 10:30 PM is available
+    const eveningResult = generateDoctorTimeSlots(
+      overnightSchedule,
+      mondayDate,
+      [],
+      [],
+      undefined,
+      { ...baseSettings, minAdvanceBookingHours: 0 },
+      'Asia/Kolkata',
+      new Date('2026-10-26T22:15:00+05:30')
+    );
+
+    const slot0900Evening = eveningResult.slots.find((s) => s.time === '09:00 PM');
+    assert.equal(slot0900Evening?.isAvailable, false);
+    assert.equal(slot0900Evening?.status, 'passed');
+
+    const slot1030Evening = eveningResult.slots.find((s) => s.time === '10:30 PM');
+    assert.equal(slot1030Evening?.isAvailable, true);
+    assert.equal(slot1030Evening?.status, 'available');
+  });
+
+  // Test 16: 45-Minute Slot Duration Continuous Overnight Shift Crossing Midnight
+  test('Requirement 16: Generates 45-min slots without dropping midnight straddling slots (11:30 PM -> 12:15 AM)', () => {
+    const mondayDate = '2026-10-26';
+    const tuesdayDate = '2026-10-27';
+
+    // Doctor hours: 10:00 PM to 07:00 AM, 45-minute slots
+    const schedule45Min: DoctorSchedule = {
+      ...baseSchedule,
+      workingDays: ['Monday'],
+      consultationStartTime: '10:00 PM',
+      consultationEndTime: '07:00 AM',
+      slotDurationMinutes: 45,
+      breaks: [],
+      effectiveStartDate: '2026-01-01',
+      effectiveEndDate: '2026-12-31',
+    };
+
+    // 1. Monday (2026-10-26) evening slots:
+    // 10:00 PM, 10:45 PM, 11:30 PM (ends at 12:15 AM next day)
+    const mondayResult = generateDoctorTimeSlots(
+      schedule45Min,
+      mondayDate,
+      [],
+      [],
+      undefined,
+      baseSettings,
+      'Asia/Kolkata',
+      new Date('2026-10-26T13:30:00+05:30')
+    );
+
+    assert.equal(mondayResult.slots.length, 3);
+    assert.equal(mondayResult.slots[0].time, '10:00 PM');
+    assert.equal(mondayResult.slots[1].time, '10:45 PM');
+    assert.equal(mondayResult.slots[2].time, '11:30 PM');
+    assert.equal(mondayResult.slots[2].crossesMidnight, true);
+    assert.equal(mondayResult.slots[2].endTimeDisplay, '12:15 AM (+1d)');
+
+    // 2. Tuesday (2026-10-27) morning slots:
+    // Starts at 12:15 AM (NOT 12:00 AM!), then 01:00 AM, 01:45 AM ... up to 06:15 AM
+    const tuesdayResult = generateDoctorTimeSlots(
+      schedule45Min,
+      tuesdayDate,
+      [],
+      [],
+      undefined,
+      baseSettings,
+      'Asia/Kolkata',
+      new Date('2026-10-26T13:30:00+05:30')
+    );
+
+    assert.equal(tuesdayResult.slots.length, 9);
+    assert.equal(tuesdayResult.slots[0].time, '12:15 AM');
+    assert.equal(tuesdayResult.slots[1].time, '01:00 AM');
+    assert.equal(tuesdayResult.slots[2].time, '01:45 AM');
+    assert.equal(tuesdayResult.slots[8].time, '06:15 AM');
+
+    // Total slots: 3 (Monday) + 9 (Tuesday) = 12 slots across the full 9-hour shift (540 mins / 45 = 12)!
+    assert.equal(mondayResult.slots.length + tuesdayResult.slots.length, 12);
+
+    // Validation: 11:30 PM on Monday is valid
+    const val1130 = validateBookingAvailability(
+      { doctorId: schedule45Min.doctorId, appointmentDate: mondayDate, appointmentTime: '11:30 PM' },
+      schedule45Min,
+      [],
+      [],
+      baseSettings
+    );
+    assert.equal(val1130.isValid, true);
+
+    // Validation: 12:15 AM on Tuesday is valid
+    const val1215 = validateBookingAvailability(
+      { doctorId: schedule45Min.doctorId, appointmentDate: tuesdayDate, appointmentTime: '12:15 AM' },
+      schedule45Min,
+      [],
+      [],
+      baseSettings
+    );
+    assert.equal(val1215.isValid, true);
+
+    // Validation: 12:00 AM on Tuesday is invalid (doctor is still in the 11:30 PM - 12:15 AM slot!)
+    const val1200 = validateBookingAvailability(
+      { doctorId: schedule45Min.doctorId, appointmentDate: tuesdayDate, appointmentTime: '12:00 AM' },
+      schedule45Min,
+      [],
+      [],
+      baseSettings
+    );
+    assert.equal(val1200.isValid, false);
+    assert.match(val1200.errorMessage || '', /outside doctor's consultation hours/i);
   });
 });

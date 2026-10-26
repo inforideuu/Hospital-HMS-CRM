@@ -230,7 +230,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Navigation Items */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-700">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-700">
           {!isCollapsed && (
             <div className="px-3 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
               {portalType === 'platform' ? 'SaaS Administration' : portalType === 'patient' ? 'Patient Personal Care' : 'Clinical & Operations'}

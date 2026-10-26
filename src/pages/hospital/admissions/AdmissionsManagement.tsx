@@ -23,6 +23,8 @@ import {
   ShieldAlert,
   ArrowRight,
   Sparkles,
+  Zap,
+  Hash,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
@@ -60,7 +62,7 @@ export const AdmissionsManagement: React.FC = () => {
   // Subscription Plan Enforcement
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
   const currentPlan = MockStorage.getPlanByTier(currentHospital?.planTier || 'trial');
-  const maxBedsLimit = currentPlan.maxBeds || 20;
+  const maxBedsLimit = currentPlan?.maxBeds ?? 20;
   const isBedLimitReached = beds.length >= maxBedsLimit;
 
   // Filters & Searches
@@ -78,6 +80,18 @@ export const AdmissionsManagement: React.FC = () => {
     floor: '2nd Floor',
     departmentName: departments[0]?.name || 'General Medicine',
     description: '',
+    dailyRate: 150,
+    initialBedCount: 0,
+    bedPrefix: '',
+  });
+
+  // Batch Provisioning Modal State
+  const [isBatchBedModalOpen, setIsBatchBedModalOpen] = useState(false);
+  const [batchTargetWard, setBatchTargetWard] = useState<Ward | null>(null);
+  const [batchFormData, setBatchFormData] = useState({
+    count: 10,
+    prefix: '',
+    startNumber: 1,
     dailyRate: 150,
   });
 
@@ -140,6 +154,8 @@ export const AdmissionsManagement: React.FC = () => {
       departmentName: departments[0]?.name || 'General Medicine',
       description: '',
       dailyRate: 150,
+      initialBedCount: 0,
+      bedPrefix: '',
     });
     setIsWardModalOpen(true);
   };
@@ -153,6 +169,8 @@ export const AdmissionsManagement: React.FC = () => {
       departmentName: ward.departmentName,
       description: ward.description || '',
       dailyRate: ward.dailyRate,
+      initialBedCount: 0,
+      bedPrefix: '',
     });
     setIsWardModalOpen(true);
   };
@@ -176,11 +194,124 @@ export const AdmissionsManagement: React.FC = () => {
     };
 
     MockStorage.saveWard(newWard);
+
+    // If new ward and initial beds were requested, batch generate them immediately
+    let batchMsg = '';
+    if (!editingWard && wardFormData.initialBedCount > 0) {
+      const prefix = wardFormData.bedPrefix.trim() || `${newWard.name.replace(/\s+Ward$/i, '').trim().toUpperCase()}-`;
+      const bedsToCreate: Bed[] = [];
+      const timestamp = Date.now();
+
+      for (let i = 1; i <= wardFormData.initialBedCount; i++) {
+        const paddedNum = String(i).padStart(2, '0');
+        bedsToCreate.push({
+          id: `BED-${newWard.id}-${i}-${timestamp}`,
+          hospitalId: hospId,
+          wardId: newWard.id,
+          wardName: newWard.name,
+          bedNumber: `${prefix}${paddedNum}`,
+          wardType: newWard.wardType,
+          floor: newWard.floor,
+          status: 'Available',
+          dailyRate: Number(wardFormData.dailyRate),
+          notes: `Batch-provisioned under ${newWard.name}`,
+        });
+      }
+
+      const res = MockStorage.batchSaveBeds(bedsToCreate);
+      if (res.success) {
+        batchMsg = ` and provisioned ${res.createdCount} initial beds (${prefix}01 to ${prefix}${String(res.createdCount).padStart(2, '0')})`;
+        if (res.message) {
+          showToast('Bed Quota Warning', res.message, 'warning');
+        }
+      } else {
+        showToast('Bed Limit Reached', res.message || 'Could not provision initial beds.', 'error');
+      }
+    }
+
     showToast(
       editingWard ? 'Ward Updated' : 'Ward Created',
-      `Ward "${newWard.name}" (${newWard.floor} - ${newWard.departmentName}) successfully saved.`
+      `Ward "${newWard.name}" (${newWard.floor} - ${newWard.departmentName}) successfully saved${batchMsg}.`
     );
     setIsWardModalOpen(false);
+    refreshData();
+  };
+
+  const handleOpenBatchBeds = (targetWard: Ward) => {
+    // Check if hospital already at max limit
+    if (beds.length >= maxBedsLimit) {
+      showToast(
+        'Subscription Capacity Limit Reached',
+        `All wards combined have reached your ${currentPlan.name} plan maximum limit of ${maxBedsLimit} beds (${beds.length}/${maxBedsLimit} in use). Upgrade plan to expand capacity.`,
+        'error'
+      );
+      setIsUpgradeModalOpen(true);
+      return;
+    }
+
+    const existingInWard = beds.filter((b) => b.wardId === targetWard.id);
+    const cleanWardCode = targetWard.name.replace(/\s+Ward$/i, '').trim().toUpperCase();
+    const suggestedPrefix = `${cleanWardCode}-`;
+    const nextStartNum = existingInWard.length + 1;
+    const remainingPlanCapacity = Math.max(1, maxBedsLimit - beds.length);
+    const defaultBatchSize = Math.min(10, remainingPlanCapacity);
+
+    setBatchTargetWard(targetWard);
+    setBatchFormData({
+      count: defaultBatchSize,
+      prefix: suggestedPrefix,
+      startNumber: nextStartNum,
+      dailyRate: targetWard.dailyRate || 150,
+    });
+    setIsBatchBedModalOpen(true);
+  };
+
+  const handleBatchSaveBeds = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!batchTargetWard) return;
+
+    if (batchFormData.count <= 0) {
+      showToast('Validation Error', 'Please enter a bed count greater than 0.', 'error');
+      return;
+    }
+
+    const prefix = batchFormData.prefix.trim() || `${batchTargetWard.name.slice(0, 3).toUpperCase()}-`;
+    const start = Math.max(1, batchFormData.startNumber);
+    const bedsToCreate: Bed[] = [];
+    const timestamp = Date.now();
+
+    for (let i = 0; i < batchFormData.count; i++) {
+      const num = start + i;
+      const paddedNum = String(num).padStart(2, '0');
+      bedsToCreate.push({
+        id: `BED-${batchTargetWard.id}-${num}-${timestamp}`,
+        hospitalId: hospId,
+        wardId: batchTargetWard.id,
+        wardName: batchTargetWard.name,
+        bedNumber: `${prefix}${paddedNum}`,
+        wardType: batchTargetWard.wardType,
+        floor: batchTargetWard.floor,
+        status: 'Available',
+        dailyRate: Number(batchFormData.dailyRate),
+        notes: `Batch-provisioned under ${batchTargetWard.name}`,
+      });
+    }
+
+    const res = MockStorage.batchSaveBeds(bedsToCreate);
+    if (!res.success) {
+      showToast('Bed Limit Reached', res.message || 'Could not add beds due to subscription capacity.', 'error');
+      setIsUpgradeModalOpen(true);
+      return;
+    }
+
+    showToast(
+      'Batch Beds Provisioned',
+      `Successfully created ${res.createdCount} beds (${prefix}${String(start).padStart(2, '0')} to ${prefix}${String(start + res.createdCount - 1).padStart(2, '0')}) in ${batchTargetWard.name}.`
+    );
+    if (res.message) {
+      showToast('Plan Limit Notice', res.message, 'warning');
+    }
+    setIsBatchBedModalOpen(false);
     refreshData();
   };
 
@@ -450,8 +581,8 @@ export const AdmissionsManagement: React.FC = () => {
       historyTab === 'all'
         ? true
         : historyTab === 'active'
-        ? a.status === 'Active'
-        : a.status === 'Discharged';
+          ? a.status === 'Active'
+          : a.status === 'Discharged';
     const matchesSearch =
       a.patientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       a.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -501,22 +632,20 @@ export const AdmissionsManagement: React.FC = () => {
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
         <button
           onClick={() => setActiveTab('overview')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-xs transition-all ${
-            activeTab === 'overview'
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-xs transition-all ${activeTab === 'overview'
               ? 'bg-indigo-600 text-white shadow-xs font-semibold'
               : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-          }`}
+            }`}
         >
           <Activity className="w-4 h-4" />
           Overview
         </button>
         <button
           onClick={() => setActiveTab('wards_beds')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-xs transition-all ${
-            activeTab === 'wards_beds'
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-xs transition-all ${activeTab === 'wards_beds'
               ? 'bg-indigo-600 text-white shadow-xs font-semibold'
               : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-          }`}
+            }`}
         >
           <Building2 className="w-4 h-4" />
           Wards & Beds ({wards.length} Wards • {beds.length}/{maxBedsLimit} Beds)
@@ -526,22 +655,20 @@ export const AdmissionsManagement: React.FC = () => {
             setActiveTab('admit');
             handleOpenAdmitModal();
           }}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-xs transition-all ${
-            activeTab === 'admit'
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-xs transition-all ${activeTab === 'admit'
               ? 'bg-indigo-600 text-white shadow-xs font-semibold'
               : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-          }`}
+            }`}
         >
           <UserPlus className="w-4 h-4" />
           Admit Inpatient
         </button>
         <button
           onClick={() => setActiveTab('history')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-xs transition-all ${
-            activeTab === 'history'
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-xs transition-all ${activeTab === 'history'
               ? 'bg-indigo-600 text-white shadow-xs font-semibold'
               : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-          }`}
+            }`}
         >
           <History className="w-4 h-4" />
           Admissions History ({activeAdmissions.length} Active)
@@ -550,17 +677,15 @@ export const AdmissionsManagement: React.FC = () => {
 
       {/* Subscription Capacity Banner */}
       <div
-        className={`p-4 rounded-xl border flex flex-col md:flex-row items-center justify-between gap-4 transition-all ${
-          isBedLimitReached
+        className={`p-4 rounded-xl border flex flex-col md:flex-row items-center justify-between gap-4 transition-all ${isBedLimitReached
             ? 'bg-amber-500/10 border-amber-300 text-amber-950'
             : 'bg-indigo-50/60 border-indigo-100 text-slate-800'
-        }`}
+          }`}
       >
         <div className="flex items-center gap-3">
           <div
-            className={`p-2.5 rounded-xl ${
-              isBedLimitReached ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'
-            }`}
+            className={`p-2.5 rounded-xl ${isBedLimitReached ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'
+              }`}
           >
             <ShieldAlert className="w-5 h-5" />
           </div>
@@ -570,11 +695,10 @@ export const AdmissionsManagement: React.FC = () => {
                 Subscription Plan Capacity: {currentPlan.name}
               </span>
               <span
-                className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                  isBedLimitReached
+                className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${isBedLimitReached
                     ? 'bg-rose-100 text-rose-700 border border-rose-200'
                     : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                }`}
+                  }`}
               >
                 {beds.length} / {maxBedsLimit} Beds Max Allowed
               </span>
@@ -653,7 +777,7 @@ export const AdmissionsManagement: React.FC = () => {
                       <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
                         {ward.floor}
                       </span>
-                      <span className="text-xs font-medium text-slate-500">${ward.dailyRate}/day</span>
+                      <span className="text-xs font-medium text-slate-500">₹{ward.dailyRate}/day</span>
                     </div>
                     <h4 className="font-bold text-slate-900 text-sm mt-2">{ward.name}</h4>
                     <p className="text-xs text-slate-500 truncate">{ward.departmentName}</p>
@@ -666,9 +790,8 @@ export const AdmissionsManagement: React.FC = () => {
                     </div>
                     <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          pct > 85 ? 'bg-rose-500' : pct > 60 ? 'bg-indigo-600' : 'bg-emerald-500'
-                        }`}
+                        className={`h-full rounded-full transition-all duration-500 ${pct > 85 ? 'bg-rose-500' : pct > 60 ? 'bg-indigo-600' : 'bg-emerald-500'
+                          }`}
                         style={{ width: `${pct}%` }}
                       />
                     </div>
@@ -718,20 +841,18 @@ export const AdmissionsManagement: React.FC = () => {
                 return (
                   <div
                     key={bed.id}
-                    className={`p-3 rounded-xl border text-xs space-y-1.5 transition-all ${
-                      isAvail
+                    className={`p-3 rounded-xl border text-xs space-y-1.5 transition-all ${isAvail
                         ? 'bg-emerald-50/40 border-emerald-200 text-emerald-950 hover:bg-emerald-50'
                         : isOcc
-                        ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950 hover:bg-indigo-50'
-                        : 'bg-rose-50/40 border-rose-200 text-rose-950 hover:bg-rose-50'
-                    }`}
+                          ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950 hover:bg-indigo-50'
+                          : 'bg-rose-50/40 border-rose-200 text-rose-950 hover:bg-rose-50'
+                      }`}
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-slate-900">{bed.bedNumber}</span>
                       <span
-                        className={`w-2.5 h-2.5 rounded-full ${
-                          isAvail ? 'bg-emerald-500' : isOcc ? 'bg-indigo-600' : 'bg-rose-500'
-                        }`}
+                        className={`w-2.5 h-2.5 rounded-full ${isAvail ? 'bg-emerald-500' : isOcc ? 'bg-indigo-600' : 'bg-rose-500'
+                          }`}
                       />
                     </div>
                     <p className="text-[10px] text-slate-500 font-medium truncate">
@@ -811,17 +932,18 @@ export const AdmissionsManagement: React.FC = () => {
                           <p className="text-[10px] text-indigo-600 font-medium">{occupiedCount} Occupied</p>
                         </td>
                         <td className="px-4 py-3.5 font-bold text-slate-800">
-                          ${ward.dailyRate} <span className="text-[10px] text-slate-400 font-normal">/ day</span>
+                          ₹{ward.dailyRate} <span className="text-[10px] text-slate-400 font-normal">/ day</span>
                         </td>
                         <td className="px-5 py-3.5 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <Button
                               variant="outline"
                               size="xs"
-                              onClick={() => handleOpenAddBed(ward.id)}
-                              leftIcon={<Plus className="w-3 h-3" />}
+                              onClick={() => handleOpenBatchBeds(ward)}
+                              className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-semibold shadow-xs"
+                              leftIcon={<Zap className="w-3 h-3 text-indigo-600" />}
                             >
-                              Add Bed
+                              + Batch Add Beds
                             </Button>
                             <Button
                               variant="ghost"
@@ -852,14 +974,16 @@ export const AdmissionsManagement: React.FC = () => {
               title="Bed Inventory & Capacity Management"
               subtitle={`Manage physical beds (Allocated: ${beds.length} / ${maxBedsLimit} Max Beds on ${currentPlan.name} Plan).`}
               action={
-                <Button
-                  variant={isBedLimitReached ? 'outline' : 'primary'}
-                  size="sm"
-                  onClick={() => handleOpenAddBed()}
-                  leftIcon={<Plus className="w-3.5 h-3.5" />}
-                >
-                  + Add New Bed
-                </Button>
+                wards.length > 0 ? (
+                  <Button
+                    variant={isBedLimitReached ? 'outline' : 'primary'}
+                    size="sm"
+                    onClick={() => handleOpenBatchBeds(wards[0])}
+                    leftIcon={<Zap className="w-3.5 h-3.5" />}
+                  >
+                    + Batch Add Beds
+                  </Button>
+                ) : undefined
               }
             />
 
@@ -929,13 +1053,12 @@ export const AdmissionsManagement: React.FC = () => {
                           value={bed.status}
                           disabled={bed.status === 'Occupied'}
                           onChange={(e) => handleQuickStatusChange(bed.id, e.target.value as BedStatus)}
-                          className={`text-xs px-2.5 py-1 rounded-full font-medium border border-slate-200 outline-none ${
-                            bed.status === 'Available'
+                          className={`text-xs px-2.5 py-1 rounded-full font-medium border border-slate-200 outline-none ${bed.status === 'Available'
                               ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                               : bed.status === 'Occupied'
-                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200 font-bold'
-                              : 'bg-rose-50 text-rose-700 border-rose-200'
-                          }`}
+                                ? 'bg-indigo-50 text-indigo-700 border-indigo-200 font-bold'
+                                : 'bg-rose-50 text-rose-700 border-rose-200'
+                            }`}
                         >
                           <option value="Available">Available</option>
                           <option value="Occupied" disabled>
@@ -1013,7 +1136,7 @@ export const AdmissionsManagement: React.FC = () => {
                 >
                   {wards.map((w) => (
                     <option key={w.id} value={w.id}>
-                      {w.name} ({w.floor} — Base ${w.dailyRate}/day)
+                      {w.name} ({w.floor} — Base ₹{w.dailyRate}/day)
                     </option>
                   ))}
                 </Select>
@@ -1041,7 +1164,7 @@ export const AdmissionsManagement: React.FC = () => {
                     )
                     .map((b) => (
                       <option key={b.id} value={b.bedNumber}>
-                        {b.bedNumber} ({b.wardName || b.wardType} — ${b.dailyRate}/day)
+                        {b.bedNumber} ({b.wardName || b.wardType} — ₹{b.dailyRate}/day)
                       </option>
                     ))}
                 </Select>
@@ -1077,7 +1200,7 @@ export const AdmissionsManagement: React.FC = () => {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Input
-                  label="Initial Deposit Amount ($)"
+                  label="Initial Deposit Amount (₹)"
                   type="number"
                   value={admitFormData.initialDeposit}
                   onChange={(e) =>
@@ -1199,11 +1322,10 @@ export const AdmissionsManagement: React.FC = () => {
                     <td className="px-4 py-3.5 text-slate-600 max-w-[200px] truncate">{adm.reason}</td>
                     <td className="px-4 py-3.5">
                       <span
-                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                          adm.status === 'Active'
+                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${adm.status === 'Active'
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                             : 'bg-slate-100 text-slate-600 border border-slate-200'
-                        }`}
+                          }`}
                       >
                         {adm.status}
                       </span>
@@ -1287,13 +1409,48 @@ export const AdmissionsManagement: React.FC = () => {
             </Select>
 
             <Input
-              label="Base Daily Rate ($) *"
+              label="Base Daily Rate (₹) *"
               type="number"
               value={wardFormData.dailyRate}
               onChange={(e) => setWardFormData({ ...wardFormData, dailyRate: Number(e.target.value) })}
               required
             />
           </div>
+
+          {!editingWard && (
+            <div className="p-3.5 bg-indigo-50/70 border border-indigo-100 rounded-xl space-y-3">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-indigo-600" />
+                <span className="text-xs font-bold text-indigo-900">
+                  Quick Provisioning — Pre-create Beds for this Ward (Optional)
+                </span>
+              </div>
+              <p className="text-[11px] text-indigo-700">
+                Specify how many beds to automatically generate under this ward upon creation (e.g., 10, 20, 30).
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Input
+                  label="Initial Bed Capacity (Count)"
+                  type="number"
+                  min="0"
+                  max={Math.max(0, maxBedsLimit - beds.length)}
+                  value={wardFormData.initialBedCount || ''}
+                  onChange={(e) =>
+                    setWardFormData({ ...wardFormData, initialBedCount: Math.max(0, Number(e.target.value) || 0) })
+                  }
+                  placeholder="e.g. 20 (leave 0 to add later)"
+                  helperText={`Capacity limit: ${maxBedsLimit - beds.length} beds available on current plan`}
+                />
+                <Input
+                  label="Bed Number Prefix (Optional)"
+                  value={wardFormData.bedPrefix}
+                  onChange={(e) => setWardFormData({ ...wardFormData, bedPrefix: e.target.value })}
+                  placeholder={`e.g. ${wardFormData.name ? wardFormData.name.replace(/\s+Ward$/i, '').trim().toUpperCase() + '-' : 'A-'}`}
+                  helperText="Bed numbers will be auto-generated (e.g. A-01, A-02...)"
+                />
+              </div>
+            </div>
+          )}
 
           <Textarea
             label="Ward Description / Amenities"
@@ -1308,18 +1465,112 @@ export const AdmissionsManagement: React.FC = () => {
               Cancel
             </Button>
             <Button type="submit" variant="primary" size="sm">
-              Save Ward Configuration
+              {editingWard ? 'Save Ward Configuration' : wardFormData.initialBedCount > 0 ? `Create Ward & ${wardFormData.initialBedCount} Beds` : 'Save Ward Configuration'}
             </Button>
           </div>
         </form>
       </Modal>
 
-      {/* CREATE / EDIT BED MODAL */}
+      {/* BATCH BED PROVISIONING MODAL */}
+      <Modal
+        isOpen={isBatchBedModalOpen}
+        onClose={() => setIsBatchBedModalOpen(false)}
+        title={`Batch Provision Beds — ${batchTargetWard?.name || 'Ward'}`}
+        subtitle={`Quickly generate N beds with sequential numbering. (Plan Capacity: ${beds.length}/${maxBedsLimit} used).`}
+        maxWidth="md"
+      >
+        <form onSubmit={handleBatchSaveBeds} className="space-y-4">
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1 text-xs">
+            <div className="flex justify-between text-slate-700">
+              <span className="font-semibold">Target Ward:</span>
+              <span className="font-bold text-slate-900">{batchTargetWard?.name} ({batchTargetWard?.floor})</span>
+            </div>
+            <div className="flex justify-between text-slate-700">
+              <span className="font-semibold">Current Beds in Ward:</span>
+              <span className="font-bold text-indigo-700">{beds.filter((b) => b.wardId === batchTargetWard?.id).length} Beds</span>
+            </div>
+            <div className="flex justify-between text-slate-700">
+              <span className="font-semibold">Available Subscription Quota:</span>
+              <span className="font-bold text-emerald-700">{Math.max(0, maxBedsLimit - beds.length)} Beds Remaining</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="Number of Beds to Create (Count) *"
+              type="number"
+              min="1"
+              max={Math.max(1, maxBedsLimit - beds.length)}
+              value={batchFormData.count}
+              onChange={(e) => setBatchFormData({ ...batchFormData, count: Math.max(1, Number(e.target.value) || 1) })}
+              required
+              helperText={`e.g. 10, 20, 30 beds`}
+            />
+
+            <Input
+              label="Bed Code Prefix *"
+              value={batchFormData.prefix}
+              onChange={(e) => setBatchFormData({ ...batchFormData, prefix: e.target.value })}
+              placeholder="e.g. A-, B-, ICU-"
+              required
+              helperText="Precedes the sequential number"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="Starting Sequence Number *"
+              type="number"
+              min="1"
+              value={batchFormData.startNumber}
+              onChange={(e) => setBatchFormData({ ...batchFormData, startNumber: Math.max(1, Number(e.target.value) || 1) })}
+              required
+              helperText="First bed number in sequence"
+            />
+
+            <Input
+              label="Daily Tariff Rate (₹) *"
+              type="number"
+              min="0"
+              value={batchFormData.dailyRate}
+              onChange={(e) => setBatchFormData({ ...batchFormData, dailyRate: Number(e.target.value) || 0 })}
+              required
+              helperText="Inherited from ward base rate"
+            />
+          </div>
+
+          {/* Live Preview Box */}
+          <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs space-y-1">
+            <p className="font-bold text-emerald-900 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              Live Sequential Bed Code Preview:
+            </p>
+            <p className="text-[11px] text-emerald-800 font-mono">
+              {batchFormData.prefix}
+              {String(batchFormData.startNumber).padStart(2, '0')}&nbsp; ➔ &nbsp;
+              {batchFormData.prefix}
+              {String(batchFormData.startNumber + Math.max(1, batchFormData.count) - 1).padStart(2, '0')}
+              &nbsp; ({batchFormData.count} total beds generated at ₹{batchFormData.dailyRate}/day)
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <Button type="button" variant="outline" size="sm" onClick={() => setIsBatchBedModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" size="sm" leftIcon={<Zap className="w-3.5 h-3.5" />}>
+              Generate {batchFormData.count} Beds Now
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* EDIT BED MODAL */}
       <Modal
         isOpen={isBedModalOpen}
         onClose={() => setIsBedModalOpen(false)}
-        title={editingBed ? 'Edit Bed Details' : 'Add Bed to Ward'}
-        subtitle={`Assign bed code, link to ward, daily rate. (Current Plan: ${currentPlan.name} • Max ${maxBedsLimit} Beds).`}
+        title="Edit Bed Details"
+        subtitle="Update individual bed numbering, daily rate, or special clinical notes."
         maxWidth="md"
       >
         <form onSubmit={handleSaveBed} className="space-y-4">
@@ -1340,7 +1591,7 @@ export const AdmissionsManagement: React.FC = () => {
           >
             {wards.map((w) => (
               <option key={w.id} value={w.id}>
-                {w.name} ({w.floor}) — Base ${w.dailyRate}/day
+                {w.name} ({w.floor}) — Base ₹{w.dailyRate}/day
               </option>
             ))}
           </Select>
@@ -1355,7 +1606,7 @@ export const AdmissionsManagement: React.FC = () => {
             />
 
             <Input
-              label="Daily Rate ($) *"
+              label="Daily Rate (₹) *"
               type="number"
               value={bedFormData.dailyRate}
               onChange={(e) => setBedFormData({ ...bedFormData, dailyRate: Number(e.target.value) })}
@@ -1425,7 +1676,7 @@ export const AdmissionsManagement: React.FC = () => {
             >
               {wards.map((w) => (
                 <option key={w.id} value={w.id}>
-                  {w.name} ({w.floor}) — Base ${w.dailyRate}/day
+                  {w.name} ({w.floor}) — Base ₹{w.dailyRate}/day
                 </option>
               ))}
             </Select>
@@ -1453,7 +1704,7 @@ export const AdmissionsManagement: React.FC = () => {
                 )
                 .map((b) => (
                   <option key={b.id} value={b.bedNumber}>
-                    {b.bedNumber} ({b.wardName || b.wardType} — ${b.dailyRate}/day)
+                    {b.bedNumber} ({b.wardName || b.wardType} — ₹{b.dailyRate}/day)
                   </option>
                 ))}
             </Select>
@@ -1487,7 +1738,7 @@ export const AdmissionsManagement: React.FC = () => {
 
           <div className="grid grid-cols-2 gap-3">
             <Input
-              label="Initial Admission Deposit ($)"
+              label="Initial Admission Deposit (₹)"
               type="number"
               value={admitFormData.initialDeposit}
               onChange={(e) => setAdmitFormData({ ...admitFormData, initialDeposit: Number(e.target.value) })}

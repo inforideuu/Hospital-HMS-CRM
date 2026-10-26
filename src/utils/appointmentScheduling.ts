@@ -210,6 +210,10 @@ export function findNextConsultingDate(
     return startDateStr;
   }
 
+  const startMins = timeToMinutes(schedule.consultationStartTime || '09:00 AM');
+  const endMins = timeToMinutes(schedule.consultationEndTime || '05:00 PM');
+  const isOvernight = endMins <= startMins;
+
   let curr = startDateStr;
   if (schedule.effectiveStartDate && curr < schedule.effectiveStartDate) {
     curr = schedule.effectiveStartDate;
@@ -221,7 +225,20 @@ export function findNextConsultingDate(
     if (schedule.effectiveEndDate && curr > schedule.effectiveEndDate) break;
 
     const dayName = getDayOfWeekName(curr);
-    if (schedule.workingDays.includes(dayName)) {
+    const worksToday = schedule.workingDays.includes(dayName);
+    let worksFromYesterday = false;
+    if (isOvernight) {
+      const prevDate = addDays(curr, -1);
+      const prevDayName = getDayOfWeekName(prevDate);
+      const prevWithinRange =
+        (!schedule.effectiveStartDate || prevDate >= schedule.effectiveStartDate) &&
+        (!schedule.effectiveEndDate || prevDate <= schedule.effectiveEndDate);
+      if (prevWithinRange && schedule.workingDays.includes(prevDayName)) {
+        worksFromYesterday = true;
+      }
+    }
+
+    if (worksToday || worksFromYesterday) {
       const hasFullDayLeave = doctorUnavailabilities?.some(
         (u) => u.doctorId === schedule.doctorId && u.isAllDay && curr >= u.startDate && curr <= u.endDate
       );
@@ -249,6 +266,8 @@ export interface GeneratedSlot {
     | 'outside_hours';
   reason?: string;
   appointmentId?: string;
+  crossesMidnight?: boolean;
+  endTimeDisplay?: string;
 }
 
 export interface SlotGenerationResult {
@@ -351,9 +370,27 @@ export function generateDoctorTimeSlots(
     };
   }
 
-  // 5. Working days check
+  // 5. Working days check (supporting calendar day split for overnight shifts)
+  const startMins = timeToMinutes(schedule.consultationStartTime || '09:00 AM');
+  const endMins = timeToMinutes(schedule.consultationEndTime || '05:00 PM');
+  const isOvernight = endMins <= startMins;
+
   const dayName = getDayOfWeekName(dateStr);
-  const isWorking = schedule.workingDays?.includes(dayName);
+  const worksToday = Boolean(schedule.workingDays?.includes(dayName));
+
+  let worksFromYesterday = false;
+  if (isOvernight) {
+    const prevDate = addDays(dateStr, -1);
+    const prevDayName = getDayOfWeekName(prevDate);
+    const prevWithinRange =
+      (!schedule.effectiveStartDate || prevDate >= schedule.effectiveStartDate) &&
+      (!schedule.effectiveEndDate || prevDate <= schedule.effectiveEndDate);
+    if (prevWithinRange && schedule.workingDays?.includes(prevDayName)) {
+      worksFromYesterday = true;
+    }
+  }
+
+  const isWorking = worksToday || worksFromYesterday;
   if (!isWorking) {
     return {
       slots: [],
@@ -383,27 +420,76 @@ export function generateDoctorTimeSlots(
     };
   }
 
-  // 7. Generate candidate slots from schedule
-  const startMins = timeToMinutes(schedule.consultationStartTime || '09:00 AM');
-  const endMins = timeToMinutes(schedule.consultationEndTime || '05:00 PM');
+  // 7. Generate candidate slots from schedule (continuous timeline split by slot start time)
   const slotDuration = schedule.slotDurationMinutes > 0 ? schedule.slotDurationMinutes : 30;
   const bufferMins = Math.max(0, settings?.appointmentBufferMinutes || 0);
   const minNoticeHours = Math.max(0, settings?.minAdvanceBookingHours || 0);
 
-  // Active appointments on this date
+  // Active appointments on this date and adjacent dates for overnight shift boundary checks
   const dayAppointments = existingAppointments.filter(
     (a) => a.appointmentDate === dateStr && a.status !== 'Cancelled'
   );
+  const prevDate = addDays(dateStr, -1);
+  const nextDate = addDays(dateStr, 1);
+  const prevDayAppointments = isOvernight
+    ? existingAppointments.filter((a) => a.appointmentDate === prevDate && a.status !== 'Cancelled')
+    : [];
+  const nextDayAppointments = isOvernight
+    ? existingAppointments.filter((a) => a.appointmentDate === nextDate && a.status !== 'Cancelled')
+    : [];
 
   const isToday = dateStr === todayStr;
   const nowMins = isToday ? getHospitalMinutesSinceMidnight(timeZone, referenceDate) : -1;
 
+  const candidateSlots: {
+    slotStartMins: number;
+    slotEndMins: number;
+    crossesMidnight?: boolean;
+    endTimeDisplay?: string;
+  }[] = [];
+
+  if (isOvernight) {
+    const continuousEndMins = endMins + 24 * 60;
+    // 1. Morning portion on dateStr from previous day's shift
+    if (worksFromYesterday) {
+      for (let m = startMins; m + slotDuration <= continuousEndMins; m += slotDuration) {
+        if (m >= 1440) {
+          const actualStart = m - 1440;
+          const actualEnd = m + slotDuration - 1440;
+          candidateSlots.push({
+            slotStartMins: actualStart,
+            slotEndMins: actualEnd,
+          });
+        }
+      }
+    }
+    // 2. Evening portion on dateStr for today's shift
+    if (worksToday) {
+      for (let m = startMins; m + slotDuration <= continuousEndMins; m += slotDuration) {
+        if (m < 1440) {
+          const crosses = m + slotDuration > 1440;
+          const actualEnd = m + slotDuration;
+          candidateSlots.push({
+            slotStartMins: m,
+            slotEndMins: actualEnd,
+            crossesMidnight: crosses,
+            endTimeDisplay: crosses ? `${minutesToTime(actualEnd % 1440)} (+1d)` : undefined,
+          });
+        }
+      }
+    }
+  } else {
+    // Standard daytime shift (startMins to endMins)
+    for (let m = startMins; m + slotDuration <= endMins; m += slotDuration) {
+      candidateSlots.push({ slotStartMins: m, slotEndMins: m + slotDuration });
+    }
+  }
+
   const slots: GeneratedSlot[] = [];
 
-  for (let m = startMins; m + slotDuration <= endMins; m += slotDuration) {
-    const slotTime = minutesToTime(m);
-    const slotStartMins = m;
-    const slotEndMins = m + slotDuration;
+  for (const candidate of candidateSlots) {
+    const { slotStartMins, slotEndMins, crossesMidnight, endTimeDisplay } = candidate;
+    const slotTime = minutesToTime(slotStartMins);
 
     // 1. Time-based Passed Slot Rule:
     // Mark a slot as Passed ONLY when its start time is at or before current hospital-local time on selected date.
@@ -413,6 +499,8 @@ export function generateDoctorTimeSlots(
         isAvailable: false,
         status: 'passed',
         reason: 'Slot time has already passed today',
+        crossesMidnight,
+        endTimeDisplay,
       });
       continue;
     }
@@ -438,6 +526,8 @@ export function generateDoctorTimeSlots(
           isAvailable: false,
           status: 'notice_required',
           reason: `Requires at least ${minNoticeHours} hour(s) advance booking notice`,
+          crossesMidnight,
+          endTimeDisplay,
         });
         continue;
       }
@@ -448,8 +538,12 @@ export function generateDoctorTimeSlots(
     let breakName = '';
     if (schedule.breaks && schedule.breaks.length > 0) {
       for (const brk of schedule.breaks) {
-        const brkStart = timeToMinutes(brk.startTime);
-        const brkEnd = timeToMinutes(brk.endTime);
+        let brkStart = timeToMinutes(brk.startTime);
+        let brkEnd = timeToMinutes(brk.endTime);
+        if (isOvernight && slotStartMins >= startMins) {
+          if (brkStart < startMins) brkStart += 24 * 60;
+          if (brkEnd < startMins) brkEnd += 24 * 60;
+        }
         if (Math.max(slotStartMins, brkStart) < Math.min(slotEndMins, brkEnd)) {
           isDuringBreak = true;
           breakName = brk.name || 'Scheduled Break';
@@ -464,6 +558,8 @@ export function generateDoctorTimeSlots(
         isAvailable: false,
         status: 'break',
         reason: `Break: ${breakName}`,
+        crossesMidnight,
+        endTimeDisplay,
       });
       continue;
     }
@@ -473,8 +569,12 @@ export function generateDoctorTimeSlots(
     let leaveReason = '';
     for (const u of matchingUnavailabilities) {
       if (!u.isAllDay && u.startTime && u.endTime) {
-        const uStart = timeToMinutes(u.startTime);
-        const uEnd = timeToMinutes(u.endTime);
+        let uStart = timeToMinutes(u.startTime);
+        let uEnd = timeToMinutes(u.endTime);
+        if (isOvernight && slotStartMins >= startMins) {
+          if (uStart < startMins) uStart += 24 * 60;
+          if (uEnd < startMins) uEnd += 24 * 60;
+        }
         if (Math.max(slotStartMins, uStart) < Math.min(slotEndMins, uEnd)) {
           isPartialLeave = true;
           leaveReason = `${u.type}: ${u.title}`;
@@ -489,20 +589,44 @@ export function generateDoctorTimeSlots(
         isAvailable: false,
         status: 'leave',
         reason: `Specialist Leave: ${leaveReason}`,
+        crossesMidnight,
+        endTimeDisplay,
       });
       continue;
     }
 
-    // 5. Check Doctor conflict (already booked or buffer conflict)
-    const conflictingDoctorAppt = dayAppointments.find((a) => {
-      if (a.doctorId !== schedule.doctorId) return false;
-      const apptStart = timeToMinutes(a.appointmentTime);
-      const apptEnd = apptStart + slotDuration;
-      if (a.appointmentTime === slotTime) return true;
-      const occupiedEnd = apptEnd + bufferMins;
-      if (Math.max(slotStartMins, apptStart) < Math.min(slotEndMins, occupiedEnd)) return true;
-      return false;
-    });
+    // 5. Check Doctor conflict (already booked or buffer conflict, including cross-midnight bookings)
+    const conflictingDoctorAppt =
+      dayAppointments.find((a) => {
+        if (a.doctorId !== schedule.doctorId) return false;
+        const apptStart = timeToMinutes(a.appointmentTime);
+        const apptEnd = apptStart + slotDuration;
+        if (a.appointmentTime === slotTime) return true;
+        const occupiedEnd = apptEnd + bufferMins;
+        return Math.max(slotStartMins, apptStart) < Math.min(slotEndMins, occupiedEnd);
+      }) ||
+      (isOvernight && slotStartMins < endMins
+        ? prevDayAppointments.find((a) => {
+            if (a.doctorId !== schedule.doctorId) return false;
+            const aStartContinuous = timeToMinutes(a.appointmentTime);
+            if (aStartContinuous < startMins) return false;
+            const aOccupiedContinuous = aStartContinuous + slotDuration + bufferMins;
+            if (aOccupiedContinuous <= 1440) return false;
+            const morningOccupiedEnd = aOccupiedContinuous - 1440;
+            return slotStartMins < morningOccupiedEnd;
+          })
+        : undefined) ||
+      (isOvernight && slotEndMins > 1440
+        ? nextDayAppointments.find((a) => {
+            if (a.doctorId !== schedule.doctorId) return false;
+            const nextStartContinuous = timeToMinutes(a.appointmentTime) + 1440;
+            const nextOccupiedContinuous = nextStartContinuous + slotDuration + bufferMins;
+            return (
+              Math.max(slotStartMins, nextStartContinuous) <
+              Math.min(slotEndMins + bufferMins, nextOccupiedContinuous)
+            );
+          })
+        : undefined);
 
     if (conflictingDoctorAppt) {
       const isDirectMatch = conflictingDoctorAppt.appointmentTime === slotTime;
@@ -514,22 +638,47 @@ export function generateDoctorTimeSlots(
           ? `Doctor Booked: consultation for ${conflictingDoctorAppt.patientName} (${conflictingDoctorAppt.id})`
           : `Doctor Booked: post-consultation buffer required (${bufferMins} min turnaround)`,
         appointmentId: conflictingDoctorAppt.id,
+        crossesMidnight,
+        endTimeDisplay,
       });
       continue;
     }
 
     // 6. Check OPD room conflict (room occupied by any doctor in this slot or buffer)
     const targetRoomId = selectedOPDRoomId || schedule.opdRoomId;
+    let conflictingRoomAppt: Appointment | undefined;
     if (targetRoomId) {
-      const conflictingRoomAppt = dayAppointments.find((a) => {
-        if (a.opdRoomId !== targetRoomId) return false;
-        const apptStart = timeToMinutes(a.appointmentTime);
-        const apptEnd = apptStart + slotDuration;
-        if (a.appointmentTime === slotTime) return true;
-        const occupiedEnd = apptEnd + bufferMins;
-        if (Math.max(slotStartMins, apptStart) < Math.min(slotEndMins, occupiedEnd)) return true;
-        return false;
-      });
+      conflictingRoomAppt =
+        dayAppointments.find((a) => {
+          if (a.opdRoomId !== targetRoomId) return false;
+          const apptStart = timeToMinutes(a.appointmentTime);
+          const apptEnd = apptStart + slotDuration;
+          if (a.appointmentTime === slotTime) return true;
+          const occupiedEnd = apptEnd + bufferMins;
+          return Math.max(slotStartMins, apptStart) < Math.min(slotEndMins, occupiedEnd);
+        }) ||
+        (isOvernight && slotStartMins < endMins
+          ? prevDayAppointments.find((a) => {
+              if (a.opdRoomId !== targetRoomId) return false;
+              const aStartContinuous = timeToMinutes(a.appointmentTime);
+              if (aStartContinuous < startMins) return false;
+              const aOccupiedContinuous = aStartContinuous + slotDuration + bufferMins;
+              if (aOccupiedContinuous <= 1440) return false;
+              const morningOccupiedEnd = aOccupiedContinuous - 1440;
+              return slotStartMins < morningOccupiedEnd;
+            })
+          : undefined) ||
+        (isOvernight && slotEndMins > 1440
+          ? nextDayAppointments.find((a) => {
+              if (a.opdRoomId !== targetRoomId) return false;
+              const nextStartContinuous = timeToMinutes(a.appointmentTime) + 1440;
+              const nextOccupiedContinuous = nextStartContinuous + slotDuration + bufferMins;
+              return (
+                Math.max(slotStartMins, nextStartContinuous) <
+                Math.min(slotEndMins + bufferMins, nextOccupiedContinuous)
+              );
+            })
+          : undefined);
 
       if (conflictingRoomAppt) {
         const isDirectMatch = conflictingRoomAppt.appointmentTime === slotTime;
@@ -541,6 +690,8 @@ export function generateDoctorTimeSlots(
             ? `Chamber Occupied by ${conflictingRoomAppt.doctorName}`
             : `Chamber Occupied: turnaround buffer time (${bufferMins} min)`,
           appointmentId: conflictingRoomAppt.id,
+          crossesMidnight,
+          endTimeDisplay,
         });
         continue;
       }
@@ -551,6 +702,8 @@ export function generateDoctorTimeSlots(
       time: slotTime,
       isAvailable: true,
       status: 'available',
+      crossesMidnight,
+      endTimeDisplay,
     });
   }
 
@@ -624,27 +777,87 @@ export function validateBookingAvailability(
     };
   }
 
+  const rawSlotMins = timeToMinutes(appointmentTime);
+  const startMins = timeToMinutes(schedule.consultationStartTime || '09:00 AM');
+  const endMins = timeToMinutes(schedule.consultationEndTime || '05:00 PM');
+  const isOvernight = endMins <= startMins;
+  const slotDuration = schedule.slotDurationMinutes || 30;
+  const slotEnd = rawSlotMins + slotDuration;
+  const bufferMins = Math.max(0, settings?.appointmentBufferMinutes || 0);
+
   const dayName = getDayOfWeekName(appointmentDate);
-  if (!schedule.workingDays?.includes(dayName)) {
-    return { isValid: false, errorMessage: `Specialist is not scheduled to work on ${dayName}s.` };
+  const worksToday = Boolean(schedule.workingDays?.includes(dayName));
+
+  let worksFromYesterday = false;
+  if (isOvernight) {
+    const prevDate = addDays(appointmentDate, -1);
+    const prevDayName = getDayOfWeekName(prevDate);
+    const prevWithinRange =
+      (!schedule.effectiveStartDate || prevDate >= schedule.effectiveStartDate) &&
+      (!schedule.effectiveEndDate || prevDate <= schedule.effectiveEndDate);
+    if (prevWithinRange && schedule.workingDays?.includes(prevDayName)) {
+      worksFromYesterday = true;
+    }
   }
 
-  const slotMins = timeToMinutes(appointmentTime);
-  const slotDuration = schedule.slotDurationMinutes || 30;
-  const slotEnd = slotMins + slotDuration;
-  const bufferMins = Math.max(0, settings?.appointmentBufferMinutes || 0);
+  // Check if slot falls within doctor's consultation hours
+  if (isOvernight) {
+    const continuousEndMins = endMins + 24 * 60;
+    const isEveningSlot = rawSlotMins >= startMins && rawSlotMins < 1440;
+    const isMorningSlot = rawSlotMins < endMins;
+
+    if (isEveningSlot) {
+      if (!worksToday) {
+        return { isValid: false, errorMessage: `Specialist is not scheduled to work on ${dayName}s.` };
+      }
+      const offset = rawSlotMins - startMins;
+      if (offset % slotDuration !== 0 || rawSlotMins + slotDuration > continuousEndMins) {
+        return {
+          isValid: false,
+          errorMessage: `Selected time is outside doctor's consultation hours (${schedule.consultationStartTime} - ${schedule.consultationEndTime}).`,
+        };
+      }
+    } else if (isMorningSlot) {
+      if (!worksFromYesterday) {
+        return { isValid: false, errorMessage: `Specialist was not on night duty the previous evening.` };
+      }
+      const continuousStart = rawSlotMins + 1440;
+      const offset = continuousStart - startMins;
+      if (offset < 0 || offset % slotDuration !== 0 || continuousStart + slotDuration > continuousEndMins) {
+        return {
+          isValid: false,
+          errorMessage: `Selected time is outside doctor's consultation hours (${schedule.consultationStartTime} - ${schedule.consultationEndTime}).`,
+        };
+      }
+    } else {
+      return {
+        isValid: false,
+        errorMessage: `Selected time is outside doctor's consultation hours (${schedule.consultationStartTime} - ${schedule.consultationEndTime}).`,
+      };
+    }
+  } else {
+    if (!worksToday) {
+      return { isValid: false, errorMessage: `Specialist is not scheduled to work on ${dayName}s.` };
+    }
+    if (rawSlotMins < startMins || slotEnd > endMins || (rawSlotMins - startMins) % slotDuration !== 0) {
+      return {
+        isValid: false,
+        errorMessage: `Selected time is outside doctor's consultation hours (${schedule.consultationStartTime} - ${schedule.consultationEndTime}).`,
+      };
+    }
+  }
 
   // 4. Past slot & notice window validation
   if (appointmentDate === todayStr) {
     const nowMins = getHospitalMinutesSinceMidnight(timeZone, referenceDate);
-    if (slotMins <= nowMins) {
+    if (rawSlotMins <= nowMins) {
       return {
         isValid: false,
         errorMessage: 'Selected consultation time slot has already passed today.',
       };
     }
     const minNoticeHours = Math.max(0, settings?.minAdvanceBookingHours || 0);
-    if (minNoticeHours > 0 && slotMins < nowMins + minNoticeHours * 60) {
+    if (minNoticeHours > 0 && rawSlotMins < nowMins + minNoticeHours * 60) {
       return {
         isValid: false,
         errorMessage: `Requires at least ${minNoticeHours} hour(s) advance booking notice.`,
@@ -658,7 +871,7 @@ export function validateBookingAvailability(
       const daysDiff =
         (Date.UTC(dYear, dMonth - 1, dDay) - Date.UTC(tYear, tMonth - 1, tDay)) / (1000 * 60 * 60 * 24);
       const nowMins = getHospitalMinutesSinceMidnight(timeZone, referenceDate);
-      const minutesNotice = daysDiff * 24 * 60 + (slotMins - nowMins);
+      const minutesNotice = daysDiff * 24 * 60 + (rawSlotMins - nowMins);
       if (minutesNotice < minNoticeHours * 60) {
         return {
           isValid: false,
@@ -668,7 +881,7 @@ export function validateBookingAvailability(
     }
   }
 
-  // 4. Leave check
+  // 5. Leave check
   const matchingLeave = doctorUnavailabilities.find(
     (u) =>
       u.doctorId === doctorId &&
@@ -682,43 +895,65 @@ export function validateBookingAvailability(
         errorMessage: `Doctor is on ${matchingLeave.type} (${matchingLeave.title}) on this date.`,
       };
     } else if (matchingLeave.startTime && matchingLeave.endTime) {
-      const uStart = timeToMinutes(matchingLeave.startTime);
-      const uEnd = timeToMinutes(matchingLeave.endTime);
-      if (Math.max(slotMins, uStart) < Math.min(slotEnd, uEnd)) {
+      let uStart = timeToMinutes(matchingLeave.startTime);
+      let uEnd = timeToMinutes(matchingLeave.endTime);
+      if (isOvernight && rawSlotMins >= startMins) {
+        if (uStart < startMins) uStart += 24 * 60;
+        if (uEnd < startMins) uEnd += 24 * 60;
+      }
+      if (Math.max(rawSlotMins, uStart) < Math.min(slotEnd, uEnd)) {
         return {
           isValid: false,
-          errorMessage: `Doctor is unavailable during this time (${matchingLeave.title}).`,
+          errorMessage: `Doctor has an approved unavailability (${matchingLeave.title}) during this time.`,
         };
       }
     }
   }
 
-  // 5. Break check
+  // 6. Break check
   if (schedule.breaks && schedule.breaks.length > 0) {
     for (const brk of schedule.breaks) {
-      const bStart = timeToMinutes(brk.startTime);
-      const bEnd = timeToMinutes(brk.endTime);
-      if (Math.max(slotMins, bStart) < Math.min(slotEnd, bEnd)) {
+      let bStart = timeToMinutes(brk.startTime);
+      let bEnd = timeToMinutes(brk.endTime);
+      if (isOvernight && rawSlotMins >= startMins) {
+        if (bStart < startMins) bStart += 24 * 60;
+        if (bEnd < startMins) bEnd += 24 * 60;
+      }
+      if (Math.max(rawSlotMins, bStart) < Math.min(slotEnd, bEnd)) {
         return {
           isValid: false,
-          errorMessage: `Selected time slot falls within the doctor's scheduled break (${brk.name}).`,
+          errorMessage: `Selected time slot falls within the doctor's scheduled break (${brk.name || 'Break'}: ${brk.startTime} - ${brk.endTime}).`,
         };
       }
     }
   }
 
-  // 6. Existing doctor appointment overlap + buffer check
-  const conflictingDoctorAppt = existingAppointments.find((a) => {
-    if (a.id === currentId || a.doctorId !== doctorId || a.appointmentDate !== appointmentDate || a.status === 'Cancelled') {
-      return false;
-    }
-    const apptStart = timeToMinutes(a.appointmentTime);
-    const apptEnd = apptStart + slotDuration;
-    if (a.appointmentTime === appointmentTime) return true;
-    const occupiedEnd = apptEnd + bufferMins;
-    if (Math.max(slotMins, apptStart) < Math.min(slotEnd, occupiedEnd)) return true;
-    return false;
-  });
+  // 7. Existing doctor appointment overlap + buffer check (including cross-midnight bookings)
+  const prevDate = addDays(appointmentDate, -1);
+  const conflictingDoctorAppt =
+    existingAppointments.find((a) => {
+      if (a.id === currentId || a.doctorId !== doctorId || a.appointmentDate !== appointmentDate || a.status === 'Cancelled') {
+        return false;
+      }
+      const apptStart = timeToMinutes(a.appointmentTime);
+      const apptEnd = apptStart + slotDuration;
+      if (a.appointmentTime === appointmentTime) return true;
+      const occupiedEnd = apptEnd + bufferMins;
+      return Math.max(rawSlotMins, apptStart) < Math.min(slotEnd, occupiedEnd);
+    }) ||
+    (isOvernight && rawSlotMins < endMins
+      ? existingAppointments.find((a) => {
+          if (a.id === currentId || a.doctorId !== doctorId || a.appointmentDate !== prevDate || a.status === 'Cancelled') {
+            return false;
+          }
+          const aStartContinuous = timeToMinutes(a.appointmentTime);
+          if (aStartContinuous < startMins) return false;
+          const aOccupiedContinuous = aStartContinuous + slotDuration + bufferMins;
+          if (aOccupiedContinuous <= 1440) return false;
+          const morningOccupiedEnd = aOccupiedContinuous - 1440;
+          return rawSlotMins < morningOccupiedEnd;
+        })
+      : undefined);
 
   if (conflictingDoctorAppt) {
     return {
@@ -730,20 +965,33 @@ export function validateBookingAvailability(
     };
   }
 
-  // 7. Existing OPD room overlap + buffer check
+  // 8. Existing OPD room overlap + buffer check (including cross-midnight bookings)
   const targetRoomId = opdRoomId || schedule.opdRoomId;
   if (targetRoomId) {
-    const conflictingRoomAppt = existingAppointments.find((a) => {
-      if (a.id === currentId || a.opdRoomId !== targetRoomId || a.appointmentDate !== appointmentDate || a.status === 'Cancelled') {
-        return false;
-      }
-      const apptStart = timeToMinutes(a.appointmentTime);
-      const apptEnd = apptStart + slotDuration;
-      if (a.appointmentTime === appointmentTime) return true;
-      const occupiedEnd = apptEnd + bufferMins;
-      if (Math.max(slotMins, apptStart) < Math.min(slotEnd, occupiedEnd)) return true;
-      return false;
-    });
+    const conflictingRoomAppt =
+      existingAppointments.find((a) => {
+        if (a.id === currentId || a.opdRoomId !== targetRoomId || a.appointmentDate !== appointmentDate || a.status === 'Cancelled') {
+          return false;
+        }
+        const apptStart = timeToMinutes(a.appointmentTime);
+        const apptEnd = apptStart + slotDuration;
+        if (a.appointmentTime === appointmentTime) return true;
+        const occupiedEnd = apptEnd + bufferMins;
+        return Math.max(rawSlotMins, apptStart) < Math.min(slotEnd, occupiedEnd);
+      }) ||
+      (isOvernight && rawSlotMins < endMins
+        ? existingAppointments.find((a) => {
+            if (a.id === currentId || a.opdRoomId !== targetRoomId || a.appointmentDate !== prevDate || a.status === 'Cancelled') {
+              return false;
+            }
+            const aStartContinuous = timeToMinutes(a.appointmentTime);
+            if (aStartContinuous < startMins) return false;
+            const aOccupiedContinuous = aStartContinuous + slotDuration + bufferMins;
+            if (aOccupiedContinuous <= 1440) return false;
+            const morningOccupiedEnd = aOccupiedContinuous - 1440;
+            return rawSlotMins < morningOccupiedEnd;
+          })
+        : undefined);
 
     if (conflictingRoomAppt) {
       return {

@@ -268,9 +268,16 @@ export interface Prescription {
     frequency: string;
     duration: string;
     instructions: string;
+    quantity?: number;
+    dispensed?: boolean;
+    batchNumber?: string;
   }[];
-  status: 'Active' | 'Completed' | 'Refill Requested';
+  status: 'Active' | 'Completed' | 'Refill Requested' | 'Dispensed' | 'Partially Dispensed';
   notes?: string;
+  dispensedAt?: string;
+  dispensedBy?: string;
+  dispensedInvoiceId?: string;
+  allergyWarning?: string;
 }
 
 export type AppointmentType = 'General Checkup' | 'Consultation' | 'Follow-up' | 'Emergency' | 'Surgery' | 'Diagnostic';
@@ -558,10 +565,11 @@ export interface Admission {
   initialDeposit: number;
 }
 
-export type InvoiceStatus = 'Paid' | 'Pending' | 'Partially Paid' | 'Overdue' | 'Cancelled';
+export type InvoiceStatus = 'Paid' | 'Pending' | 'Partially Paid' | 'Overdue' | 'Cancelled' | 'Unpaid';
 export type PaymentMethod = 'Cash' | 'Credit Card' | 'Debit Card' | 'Insurance' | 'Bank Transfer' | 'UPI';
 export type EncounterType = 'OPD' | 'IPD' | 'Emergency' | 'Daycare' | 'Pharmacy' | 'Diagnostic';
 export type PaymentType = 'Self Pay' | 'Insurance / TPA' | 'Corporate';
+export type BillingCategory = 'Hospital Service' | 'Pharmacy Service' | 'Walk-in Pharmacy';
 
 export interface InvoiceItem {
   id: string;
@@ -595,6 +603,8 @@ export interface Invoice {
   createdAt?: string;
 
   // Real Hospital Clinical & Billing Metadata
+  billingCategory?: BillingCategory;
+  prescriptionId?: string; // Linked Doctor e-Prescription (for Pharmacy Service)
   encounterType?: EncounterType;
   doctorId?: string;
   doctorName?: string;
@@ -604,7 +614,7 @@ export interface Invoice {
   policyNumber?: string;
   claimApprovalNumber?: string;
   collectedBy?: string; // Cashier / Accountant name who collected pay
-  cashierDesk?: string; // Counter / Desk ID (e.g., OPD Cashier #1)
+  cashierDesk?: string; // Counter / Desk ID (e.g., OPD Cashier #1, Pharmacy Cash Counter)
 }
 
 export interface Medicine {
@@ -626,9 +636,30 @@ export interface Medicine {
   unit?: string;
   price?: number;
   status?: string;
+  quarantineReason?: string;
+  quarantinedAt?: string;
 }
 
-export type LabTestStatus = 'Ordered' | 'Pending Sample' | 'Sample Collected' | 'In Progress' | 'Processing' | 'Completed' | 'Cancelled';
+export type LabTestStatus =
+  | 'Ordered'
+  | 'Pending Sample'
+  | 'Sample Collected'
+  | 'In Progress'
+  | 'Processing'
+  | 'Sample Rejected'
+  | 'Completed'
+  | 'Verified'
+  | 'Doctor Reviewed'
+  | 'Action Completed'
+  | 'Cancelled';
+
+export interface LabTestParameter {
+  id: string;
+  name: string;
+  unit: string;
+  referenceRange: string;
+  defaultValue?: string;
+}
 
 export interface LabTestCatalog {
   id: string;
@@ -639,8 +670,20 @@ export interface LabTestCatalog {
   price: number;
   turnaroundHours: number;
   sampleType: 'Blood' | 'Urine' | 'Serum' | 'Tissue' | 'Swab' | 'X-Ray Scan' | string;
+  tubeColor?: string; // e.g. 'Purple / EDTA', 'Red / Plain Serum', 'Blue / Sodium Citrate'
   normalRange: string;
+  parameters?: LabTestParameter[];
   status?: 'active' | 'inactive';
+}
+
+export interface LabResultItem {
+  parameterId: string;
+  parameterName: string;
+  value: string;
+  unit: string;
+  referenceRange: string;
+  isAbnormal?: boolean;
+  isCritical?: boolean;
 }
 
 export interface LabOrder {
@@ -657,16 +700,43 @@ export interface LabOrder {
   category: string;
   orderDate: string;
   completedDate?: string;
+  verifiedDate?: string;
   status: LabTestStatus;
   sampleType: string;
+  tubeColor?: string;
+  barcodeNumber?: string;
+  specimenCollectionDate?: string;
+  collectedByNurseId?: string;
+  collectedByNurseName?: string;
+  patientPreparationConfirmed?: boolean;
+  patientPreparationNotes?: string;
+  receivedByTechnician?: string;
+  sampleReceivedDate?: string;
+  analyzerInstrument?: string;
+  rejectionReason?: string;
+  rejectedBy?: string;
+  rejectionDate?: string;
   priority?: 'Routine' | 'Urgent';
   notes?: string;
   resultValue?: string;
   referenceRange?: string;
   normalRange?: string;
   results?: any;
+  resultItems?: LabResultItem[];
   resultStatus?: 'Normal' | 'Abnormal' | 'Critical';
   labTechnicianNotes?: string;
+  verifiedBy?: string; // Pathologist name
+  pathologistNotes?: string;
+  reviewedByDoctorId?: string;
+  reviewedByDoctorName?: string;
+  doctorReviewDate?: string;
+  doctorClinicalImpression?: string;
+  doctorInstructions?: string;
+  executedByNurseId?: string;
+  executedByNurseName?: string;
+  nurseExecutionDate?: string;
+  nurseExecutionNotes?: string;
+  nurseActionStatus?: 'Pending' | 'Completed';
   fee: number;
 }
 
@@ -821,6 +891,15 @@ export interface HospitalSettings {
   taxRegistrationNumber: string;
   defaultCurrency: string;
   invoiceNotes: string;
+
+  // Hospital-wide GST Percentages (Admin Configured)
+  enableGSTBilling?: boolean;
+  defaultGSTRate?: number;
+  pharmacyGSTRate?: number;
+  consultationGSTRate?: number;
+  labDiagnosticGSTRate?: number;
+  ipdRoomGSTRate?: number;
+  gstType?: 'CGST_SGST' | 'IGST';
 }
 
 export interface ActivityLog {

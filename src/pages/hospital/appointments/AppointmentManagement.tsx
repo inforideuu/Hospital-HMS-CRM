@@ -179,22 +179,10 @@ export const AppointmentManagement: React.FC = () => {
 
   // Core Data stored in state to prevent new object references on every render
   const [appointments, setAppointments] = useState<Appointment[]>(() => MockStorage.getAppointments(hospId));
-  const [doctors, setDoctors] = useState<Doctor[]>(() => {
-    const raw = MockStorage.getDoctors(hospId);
-    return raw.length > 0 ? raw : MockStorage.getDoctors();
-  });
-  const [patients, setPatients] = useState(() => {
-    const raw = MockStorage.getPatients(hospId);
-    return raw.length > 0 ? raw : MockStorage.getPatients();
-  });
-  const [departments, setDepartments] = useState<Department[]>(() => {
-    const raw = MockStorage.getDepartments(hospId);
-    return raw.length > 0 ? raw : MockStorage.getDepartments();
-  });
-  const [opdRooms, setOpdRooms] = useState<OPDRoom[]>(() => {
-    const raw = MockStorage.getOPDRooms(hospId);
-    return raw.length > 0 ? raw : MockStorage.getOPDRooms();
-  });
+  const [doctors, setDoctors] = useState<Doctor[]>(() => MockStorage.getDoctors(hospId));
+  const [patients, setPatients] = useState<Patient[]>(() => MockStorage.getPatients(hospId));
+  const [departments, setDepartments] = useState<Department[]>(() => MockStorage.getDepartments(hospId));
+  const [opdRooms, setOpdRooms] = useState<OPDRoom[]>(() => MockStorage.getOPDRooms(hospId));
 
   // Schedules, Unavailability & Settings
   const [schedules, setSchedules] = useState<DoctorSchedule[]>(() => MockStorage.getDoctorSchedules(hospId));
@@ -281,14 +269,10 @@ export const AppointmentManagement: React.FC = () => {
 
   // Refresh helper
   const refreshData = () => {
-    const rawDocs = MockStorage.getDoctors(hospId);
-    setDoctors(rawDocs.length > 0 ? rawDocs : MockStorage.getDoctors());
-    const rawPats = MockStorage.getPatients(hospId);
-    setPatients(rawPats.length > 0 ? rawPats : MockStorage.getPatients());
-    const rawDepts = MockStorage.getDepartments(hospId);
-    setDepartments(rawDepts.length > 0 ? rawDepts : MockStorage.getDepartments());
-    const rawRms = MockStorage.getOPDRooms(hospId);
-    setOpdRooms(rawRms.length > 0 ? rawRms : MockStorage.getOPDRooms());
+    setDoctors(MockStorage.getDoctors(hospId));
+    setPatients(MockStorage.getPatients(hospId));
+    setDepartments(MockStorage.getDepartments(hospId));
+    setOpdRooms(MockStorage.getOPDRooms(hospId));
     setAppointments(MockStorage.getAppointments(hospId));
     setSchedules(MockStorage.getDoctorSchedules(hospId));
     setUnavailabilities(MockStorage.getDoctorUnavailability(hospId));
@@ -361,6 +345,11 @@ export const AppointmentManagement: React.FC = () => {
         if (parts[1]) parsedEnd = parts[1];
       }
 
+      const hospSettings = MockStorage.getHospitalSettings(hospId);
+      const defaultSlotMins = hospSettings?.consultationSlotMinutes && hospSettings.consultationSlotMinutes > 0
+        ? hospSettings.consultationSlotMinutes
+        : 30;
+
       const newDraft: DoctorSchedule = {
         id: `SCH-${selectedScheduleDoctorId}`,
         hospitalId: hospId,
@@ -375,7 +364,7 @@ export const AppointmentManagement: React.FC = () => {
           : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
         consultationStartTime: parsedStart,
         consultationEndTime: parsedEnd,
-        slotDurationMinutes: 30,
+        slotDurationMinutes: defaultSlotMins,
         breaks: [
           { id: `BRK-${selectedScheduleDoctorId}`, name: 'Lunch Break', startTime: '01:00 PM', endTime: '02:00 PM' },
         ],
@@ -989,18 +978,13 @@ export const AppointmentManagement: React.FC = () => {
       return;
     }
 
-    if (!scheduleForm.opdRoomId) {
-      showToast('Validation Error', 'Please select an Associated OPD Chamber for this specialist.', 'error');
-      return;
-    }
-
     if (!scheduleForm.workingDays || scheduleForm.workingDays.length === 0) {
       showToast('Validation Error', 'Please select at least one weekly consultation day.', 'error');
       return;
     }
 
     if (!scheduleForm.consultationStartTime?.trim() || !scheduleForm.consultationEndTime?.trim()) {
-      showToast('Validation Error', 'Clinic start and end times are required.', 'error');
+      showToast('Validation Error', 'Doctor available from and to times are required.', 'error');
       return;
     }
 
@@ -1028,14 +1012,15 @@ export const AppointmentManagement: React.FC = () => {
     }
 
     const doc = doctors.find((d) => d.id === scheduleForm.doctorId);
-    const room = opdRooms.find((r) => r.id === scheduleForm.opdRoomId);
+    const room = scheduleForm.opdRoomId ? opdRooms.find((r) => r.id === scheduleForm.opdRoomId) : undefined;
 
     const updatedSchedule: DoctorSchedule = {
       ...scheduleForm,
       doctorName: doc?.name || scheduleForm.doctorName,
       departmentId: doc?.departmentId || scheduleForm.departmentId,
       departmentName: doc?.departmentName || scheduleForm.departmentName,
-      opdRoomName: room ? `${room.name} (${room.code})` : scheduleForm.opdRoomName,
+      opdRoomId: room ? room.id : (scheduleForm.opdRoomId || undefined),
+      opdRoomName: room ? `${room.name} (${room.code})` : (scheduleForm.opdRoomId ? scheduleForm.opdRoomName : 'Not Assigned'),
       isActive: true,
       updatedAt: new Date().toISOString().split('T')[0],
     };
@@ -2309,7 +2294,9 @@ export const AppointmentManagement: React.FC = () => {
                       </div>
 
                       <div>
-                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Associated OPD Chamber</label>
+                        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                          Associated OPD Chamber (Optional)
+                        </label>
                         <Select
                           value={scheduleForm.opdRoomId || ''}
                           onChange={(e) => {
@@ -2318,16 +2305,16 @@ export const AppointmentManagement: React.FC = () => {
                             setScheduleForm({
                               ...scheduleForm,
                               opdRoomId: chosenRoomId,
-                              opdRoomName: chosenRoom ? `${chosenRoom.name} (${chosenRoom.code})` : '',
+                              opdRoomName: chosenRoom ? `${chosenRoom.name} (${chosenRoom.code})` : (chosenRoomId ? '' : 'Not Assigned'),
                             });
                           }}
                           className="mt-1 text-xs"
-                          disabled={!isHospitalAdmin || eligibleChambersForSchedule.length === 0}
+                          disabled={!isHospitalAdmin}
                         >
                           <option value="">
                             {eligibleChambersForSchedule.length === 0
-                              ? `No eligible chambers found for ${scheduleForm.departmentName || activeSpecialist?.departmentName || 'department'}`
-                              : 'Select OPD Chamber'}
+                              ? 'No Fixed Chamber (Unassigned / Rounds / Tele-OPD)'
+                              : 'Select OPD Chamber (Optional — None / Unassigned)'}
                           </option>
                           {eligibleChambersForSchedule.map((r) => (
                             <option key={r.id} value={r.id}>
@@ -2335,17 +2322,14 @@ export const AppointmentManagement: React.FC = () => {
                             </option>
                           ))}
                         </Select>
-                        {eligibleChambersForSchedule.length === 0 && (
-                          <p className="text-[11px] text-amber-600 mt-1 flex items-center gap-1 font-medium">
-                            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                            No eligible chamber for {scheduleForm.departmentName || 'this department'}. You can add one in{' '}
-                            <button
-                              type="button"
-                              onClick={() => navigate('/hospital/opd-rooms')}
-                              className="underline font-bold text-amber-700 hover:text-amber-800"
-                            >
-                              OPD Rooms
-                            </button>.
+                        {eligibleChambersForSchedule.length === 0 ? (
+                          <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1 font-medium">
+                            <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                            No specific chamber assigned. Schedule will save as unassigned (rounds, ward, or tele-consultation).
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-slate-400 mt-1">
+                            Optional. Leave unassigned if specialist consults across wards or tele-OPD.
                           </p>
                         )}
                       </div>
@@ -2389,7 +2373,7 @@ export const AppointmentManagement: React.FC = () => {
                     {/* Consultation Times & Granularity */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <Input
-                        label="Clinic Start Time *"
+                        label="Doctor Available From Time *"
                         value={scheduleForm.consultationStartTime}
                         onChange={(e) => setScheduleForm({ ...scheduleForm, consultationStartTime: e.target.value })}
                         placeholder="e.g. 09:00 AM"
@@ -2398,7 +2382,7 @@ export const AppointmentManagement: React.FC = () => {
                       />
 
                       <Input
-                        label="Clinic End Time *"
+                        label="Doctor Available To Time *"
                         value={scheduleForm.consultationEndTime}
                         onChange={(e) => setScheduleForm({ ...scheduleForm, consultationEndTime: e.target.value })}
                         placeholder="e.g. 05:00 PM"
@@ -3035,6 +3019,11 @@ export const AppointmentManagement: React.FC = () => {
                         }`}
                       >
                         {slot.time}
+                        {slot.crossesMidnight && slot.endTimeDisplay && (
+                          <span className={`block text-[8px] tracking-tighter truncate font-medium ${isSelected ? 'text-indigo-100' : 'text-indigo-600'}`}>
+                            ends {slot.endTimeDisplay}
+                          </span>
+                        )}
                         {!isAvailable && (
                           <span className="block text-[8px] font-normal tracking-tighter truncate">
                             {slot.status === 'passed' || slot.status === 'outside_hours'
@@ -3765,6 +3754,11 @@ export const AppointmentManagement: React.FC = () => {
                         }`}
                       >
                         {slot.time}
+                        {slot.crossesMidnight && slot.endTimeDisplay && (
+                          <span className={`block text-[8px] tracking-tighter truncate font-medium ${isSelected ? 'text-teal-100' : 'text-teal-600'}`}>
+                            ends {slot.endTimeDisplay}
+                          </span>
+                        )}
                         {!isAvailable && (
                           <span className="block text-[8px] font-normal tracking-tighter truncate">
                             {slot.status === 'passed' || slot.status === 'outside_hours'

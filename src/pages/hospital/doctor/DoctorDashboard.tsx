@@ -69,10 +69,8 @@ export const DoctorDashboard: React.FC = () => {
   const doctorName = doctorProfile?.name || user?.name || 'Dr. Specialist';
 
   const loadData = () => {
-    const allDoctors = MockStorage.getDoctors(hospId);
-    setDoctors(allDoctors.length > 0 ? allDoctors : MockStorage.getDoctors());
-    const allPatients = MockStorage.getPatients(hospId);
-    setPatients(allPatients.length > 0 ? allPatients : MockStorage.getPatients());
+    setDoctors(MockStorage.getDoctors(hospId));
+    setPatients(MockStorage.getPatients(hospId));
     const allAppointments = MockStorage.getAppointments(hospId);
     setAppointments(allAppointments);
     const allConsultations = MockStorage.getConsultations(hospId);
