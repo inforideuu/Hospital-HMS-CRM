@@ -41,6 +41,7 @@ import { Modal } from '../../../components/ui/Modal';
 import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
 import { Pagination } from '../../../components/ui/Pagination';
 import { MedicineCombobox } from '../../../components/common/MedicineCombobox';
+import { MedicineFormModal } from '../../../components/common/MedicineFormModal';
 
 const getFutureDate = (yearsAhead = 2) => {
   const d = new Date();
@@ -141,6 +142,7 @@ export const PharmacyManagement: React.FC = () => {
   const [isQuarantineModalOpen, setIsQuarantineModalOpen] = useState(false);
   const [selectedMedForQuarantine, setSelectedMedForQuarantine] = useState<Medicine | null>(null);
   const [quarantineReason, setQuarantineReason] = useState('Expired batch quarantined from clinical dispensing');
+  const [expirySubTab, setExpirySubTab] = useState<'all' | 'near_expiry' | 'quarantined'>('all');
 
   // Receipt Modal
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
@@ -185,12 +187,15 @@ export const PharmacyManagement: React.FC = () => {
   // Derived counts
   const lowStockMeds = medicines.filter((m) => m.status !== 'Quarantined' && m.stockQuantity <= (m.minThreshold || 25));
   const totalStockUnits = medicines.reduce((acc, m) => acc + (m.status !== 'Quarantined' ? m.stockQuantity : 0), 0);
-  const pendingPrescriptions = prescriptions.filter((rx) => rx.status === 'Active' || !rx.dispensedAt);
-  const dispensedPrescriptions = prescriptions.filter((rx) => rx.status === 'Dispensed');
+  const isRxDispensed = (rx: Prescription) => rx.status === 'Dispensed' || Boolean(rx.dispensedAt);
+  const pendingPrescriptions = prescriptions.filter(
+    (rx) => !isRxDispensed(rx) && rx.status !== 'Completed'
+  );
+  const dispensedPrescriptions = prescriptions.filter((rx) => isRxDispensed(rx));
 
   const filteredPrescriptions = useMemo(() => {
     return prescriptions.filter((rx) => {
-      const isDispensed = rx.status === 'Dispensed';
+      const isDispensed = isRxDispensed(rx);
 
       // Status Filter
       if (rxStatusFilter === 'undispensed' && isDispensed) return false;
@@ -218,6 +223,13 @@ export const PharmacyManagement: React.FC = () => {
     const diffDays = Math.ceil((exp.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
     return diffDays <= 90;
   });
+  const quarantinedItems = medicines.filter((m) => m.status === 'Quarantined');
+
+  const radarItems = useMemo(() => {
+    if (expirySubTab === 'near_expiry') return expiringSoonItems;
+    if (expirySubTab === 'quarantined') return quarantinedItems;
+    return [...quarantinedItems, ...expiringSoonItems];
+  }, [expirySubTab, expiringSoonItems, quarantinedItems]);
   const pharmacyInvoices = invoices.filter((inv) =>
     inv.items.some(
       (item) => item.category === 'Pharmacy' || item.description?.toLowerCase().includes('rx') || item.description?.toLowerCase().includes('batch')
@@ -238,64 +250,18 @@ export const PharmacyManagement: React.FC = () => {
   const paginatedMedicines = filteredMedicines.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const handleOpenAdd = () => {
-    setFormData({
-      name: '',
-      genericName: '',
-      sku: `MED-${Math.floor(1000 + Math.random() * 9000)}`,
-      batchNumber: `BAT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      category: 'Antibiotics',
-      stockQuantity: 100,
-      minThreshold: 20,
-      unitPrice: 15.0,
-      expiryDate: getFutureDate(2),
-      manufacturer: '',
-      locationRack: 'Aisle 1 - Rack A1',
-      requiresPrescription: true,
-    });
+    setSelectedMed(null);
     setIsAddModalOpen(true);
   };
 
   const handleOpenEdit = (med: Medicine) => {
     setSelectedMed(med);
-    setFormData({
-      name: med.name,
-      genericName: med.genericName,
-      sku: med.sku,
-      batchNumber: med.batchNumber,
-      category: med.category,
-      stockQuantity: med.stockQuantity,
-      minThreshold: med.minThreshold,
-      unitPrice: med.unitPrice,
-      expiryDate: med.expiryDate,
-      manufacturer: med.manufacturer,
-      locationRack: med.locationRack,
-      requiresPrescription: med.requiresPrescription,
-    });
-    setIsEditModalOpen(true);
+    setIsAddModalOpen(true);
   };
 
-  const handleSaveMedicine = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.name) return;
-
-    if (isEditModalOpen && selectedMed) {
-      const updated: Medicine = {
-        ...selectedMed,
-        ...formData,
-      };
-      MockStorage.saveMedicine(updated);
-      showToast('Medicine Updated', `${updated.name} inventory record saved.`);
-      setIsEditModalOpen(false);
-    } else {
-      const newMed: Medicine = {
-        id: `MED-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-        hospitalId: hospId,
-        ...formData,
-      };
-      MockStorage.saveMedicine(newMed);
-      showToast('Drug Added', `${newMed.name} stocked in pharmacy.`);
-      setIsAddModalOpen(false);
-    }
+  const handleReleaseFromQuarantine = (med: Medicine) => {
+    MockStorage.releaseFromQuarantine(med.id, user?.name || 'Chief Pharmacist', hospId);
+    showToast('Batch Released', `${med.name} (${med.batchNumber}) returned to active clinical inventory.`, 'success');
     refreshData();
   };
 
@@ -1125,17 +1091,59 @@ export const PharmacyManagement: React.FC = () => {
       {/* TAB: Expiry & Quarantine */}
       {currentTab === 'expiry' && (
         <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-purple-600" />
                 Batch Expiry Radar & Quarantine
               </h3>
-              <p className="text-xs text-slate-500">Monitor and quarantine batches within 90 days of expiration.</p>
+              <p className="text-xs text-slate-500">Monitor near-expiry batches (≤ 90 days) and isolated quarantined stock.</p>
             </div>
-            <Badge variant="purple" className="font-bold">
-              {expiringSoonItems.length} Batches Near Expiry
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="purple" className="font-bold">
+                {expiringSoonItems.length} Near Expiry
+              </Badge>
+              <Badge variant="error" className="font-bold">
+                {quarantinedItems.length} Quarantined
+              </Badge>
+            </div>
+          </div>
+
+          {/* Subtab Segmented Pills */}
+          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl self-start border border-slate-200/60 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setExpirySubTab('all')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                expirySubTab === 'all'
+                  ? 'bg-white text-slate-900 font-bold shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              All Monitored ({expiringSoonItems.length + quarantinedItems.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setExpirySubTab('near_expiry')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                expirySubTab === 'near_expiry'
+                  ? 'bg-amber-600 text-white font-bold shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Near Expiry ({expiringSoonItems.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setExpirySubTab('quarantined')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                expirySubTab === 'quarantined'
+                  ? 'bg-rose-600 text-white font-bold shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Quarantined Stock ({quarantinedItems.length})
+            </button>
           </div>
 
           <div className="overflow-x-auto border border-slate-200 rounded-xl">
@@ -1145,43 +1153,111 @@ export const PharmacyManagement: React.FC = () => {
                   <th className="p-3">Medicine & Batch</th>
                   <th className="p-3">Rack Location</th>
                   <th className="p-3">Expiry Date</th>
-                  <th className="p-3 text-center">Remaining Days</th>
+                  <th className="p-3 text-center">Status / Remaining</th>
                   <th className="p-3 text-center">Stock</th>
                   <th className="p-3 text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {expiringSoonItems.map((med) => {
-                  const diffDays = Math.ceil((new Date(med.expiryDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-                  return (
-                    <tr key={med.id}>
-                      <td className="p-3 font-bold">
-                        {med.name} <span className="text-slate-500 font-mono">({med.batchNumber})</span>
-                      </td>
-                      <td className="p-3 font-mono">{med.locationRack}</td>
-                      <td className="p-3">{med.expiryDate}</td>
-                      <td className="p-3 text-center">
-                        <span className="px-2.5 py-0.5 rounded-full font-bold text-xs bg-amber-50 text-amber-800 border border-amber-200">
-                          {diffDays} Days Left
-                        </span>
-                      </td>
-                      <td className="p-3 text-center font-bold">{med.stockQuantity}</td>
-                      <td className="p-3 text-center">
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          className="text-xs"
-                          onClick={() => {
-                            setSelectedMedForQuarantine(med);
-                            setIsQuarantineModalOpen(true);
-                          }}
-                        >
-                          <ShieldAlert className="w-3.5 h-3.5 mr-1" /> Quarantine Batch
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {radarItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center text-slate-400">
+                      {expirySubTab === 'quarantined'
+                        ? 'No quarantined medicines found. Active stock is verified safe.'
+                        : expirySubTab === 'near_expiry'
+                        ? 'No medicines approaching expiration within the next 90 days.'
+                        : 'No medicines require quarantine or expiry attention at this time.'}
+                    </td>
+                  </tr>
+                ) : (
+                  radarItems.map((med) => {
+                    const isQuarantined = med.status === 'Quarantined';
+                    const diffDays = Math.ceil(
+                      (new Date(med.expiryDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
+                    );
+
+                    return (
+                      <tr
+                        key={med.id}
+                        className={isQuarantined ? 'bg-rose-50/40 hover:bg-rose-50/70' : 'hover:bg-slate-50'}
+                      >
+                        <td className="p-3 font-bold">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-slate-900">{med.name}</span>
+                            <span className="text-slate-500 font-mono text-[11px]">({med.batchNumber})</span>
+                            {isQuarantined && (
+                              <Badge variant="error" size="sm">
+                                Quarantined
+                              </Badge>
+                            )}
+                          </div>
+                          {isQuarantined && med.quarantineReason && (
+                            <div className="text-[11px] text-rose-700 font-normal mt-0.5">
+                              Reason: {med.quarantineReason}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 font-mono text-slate-600">{med.locationRack}</td>
+                        <td className="p-3 text-slate-700">{med.expiryDate}</td>
+                        <td className="p-3 text-center">
+                          {isQuarantined ? (
+                            <span className="px-2.5 py-0.5 rounded-full font-bold text-xs bg-rose-100 text-rose-800 border border-rose-300 inline-flex items-center gap-1">
+                              <ShieldAlert className="w-3.5 h-3.5 text-rose-600" /> Quarantined
+                            </span>
+                          ) : (
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full font-bold text-xs ${
+                                diffDays <= 0
+                                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                  : diffDays <= 30
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                  : 'bg-yellow-50 text-yellow-800 border border-yellow-200'
+                              }`}
+                            >
+                              {diffDays <= 0 ? 'Expired' : `${diffDays} Days Left`}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 text-center font-bold text-slate-900">{med.stockQuantity}</td>
+                        <td className="p-3 text-center">
+                          {isQuarantined ? (
+                            <div className="flex items-center justify-center gap-1.5">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-xs border-emerald-300 text-emerald-800 hover:bg-emerald-50 font-semibold"
+                                onClick={() => handleReleaseFromQuarantine(med)}
+                              >
+                                <Check className="w-3.5 h-3.5 mr-1 text-emerald-600" /> Release to Stock
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-xs text-rose-600 hover:bg-rose-100 hover:text-rose-800"
+                                onClick={() => setConfirmDeleteId(med.id)}
+                                title="Dispose / Remove Batch"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              className="text-xs font-semibold"
+                              onClick={() => {
+                                setSelectedMedForQuarantine(med);
+                                setIsQuarantineModalOpen(true);
+                              }}
+                            >
+                              <ShieldAlert className="w-3.5 h-3.5 mr-1" /> Quarantine Batch
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -1304,147 +1380,17 @@ export const PharmacyManagement: React.FC = () => {
       )}
 
       {/* Add / Edit Medicine Modal */}
-      <Modal
-        isOpen={isAddModalOpen || isEditModalOpen}
+      {/* Standardized Shared Add/Edit Medicine Modal */}
+      <MedicineFormModal
+        isOpen={isAddModalOpen}
         onClose={() => {
           setIsAddModalOpen(false);
-          setIsEditModalOpen(false);
+          setSelectedMed(null);
         }}
-        title={isEditModalOpen ? 'Edit Medicine Details' : 'Add Medicine to Pharmacy'}
-      >
-        <form onSubmit={handleSaveMedicine} className="space-y-4 text-xs">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">Brand Name *</label>
-              <input
-                type="text"
-                required
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full p-2 border border-slate-300 rounded-lg bg-white"
-              />
-            </div>
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">Generic / Active Molecule</label>
-              <input
-                type="text"
-                value={formData.genericName}
-                onChange={(e) => setFormData({ ...formData, genericName: e.target.value })}
-                className="w-full p-2 border border-slate-300 rounded-lg bg-white"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">SKU</label>
-              <input
-                type="text"
-                value={formData.sku}
-                onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-                className="w-full p-2 border border-slate-300 rounded-lg font-mono bg-white"
-              />
-            </div>
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">Batch Number</label>
-              <input
-                type="text"
-                value={formData.batchNumber}
-                onChange={(e) => setFormData({ ...formData, batchNumber: e.target.value })}
-                className="w-full p-2 border border-slate-300 rounded-lg font-mono bg-white"
-              />
-            </div>
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">Category</label>
-              <select
-                value={formData.category}
-                onChange={(e) => setFormData({ ...formData, category: e.target.value as any })}
-                className="w-full p-2 border border-slate-300 rounded-lg bg-white"
-              >
-                <option value="Antibiotics">Antibiotics</option>
-                <option value="Analgesics">Analgesics</option>
-                <option value="Cardiovascular">Cardiovascular</option>
-                <option value="Antidiabetic">Antidiabetic</option>
-                <option value="Respiratory">Respiratory</option>
-                <option value="Emergency Drugs">Emergency Drugs</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">Stock Units</label>
-              <input
-                type="number"
-                min="0"
-                value={formData.stockQuantity}
-                onChange={(e) => setFormData({ ...formData, stockQuantity: parseInt(e.target.value) || 0 })}
-                className="w-full p-2 border border-slate-300 rounded-lg bg-white font-bold"
-              />
-            </div>
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">Min Threshold</label>
-              <input
-                type="number"
-                min="0"
-                value={formData.minThreshold}
-                onChange={(e) => setFormData({ ...formData, minThreshold: parseInt(e.target.value) || 0 })}
-                className="w-full p-2 border border-slate-300 rounded-lg bg-white"
-              />
-            </div>
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">Unit Price (₹)</label>
-              <input
-                type="number"
-                step="0.5"
-                min="0"
-                value={formData.unitPrice}
-                onChange={(e) => setFormData({ ...formData, unitPrice: parseFloat(e.target.value) || 0 })}
-                className="w-full p-2 border border-slate-300 rounded-lg bg-white font-bold"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">Location / Rack</label>
-              <input
-                type="text"
-                placeholder="e.g. Aisle 2 - Shelf B"
-                value={formData.locationRack}
-                onChange={(e) => setFormData({ ...formData, locationRack: e.target.value })}
-                className="w-full p-2 border border-slate-300 rounded-lg bg-white"
-              />
-            </div>
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">Expiry Date</label>
-              <input
-                type="date"
-                value={formData.expiryDate}
-                onChange={(e) => setFormData({ ...formData, expiryDate: e.target.value })}
-                className="w-full p-2 border border-slate-300 rounded-lg bg-white"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              type="button"
-              onClick={() => {
-                setIsAddModalOpen(false);
-                setIsEditModalOpen(false);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button variant="primary" size="sm" type="submit">
-              {isEditModalOpen ? 'Save Changes' : 'Save Medicine'}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        medicineToEdit={selectedMed}
+        hospitalId={hospId}
+        onSaved={() => refreshData()}
+      />
 
       {/* Dispense Modal: Pharmacist Pick & Deliver Workflow */}
       {isDispenseModalOpen && selectedRx && (

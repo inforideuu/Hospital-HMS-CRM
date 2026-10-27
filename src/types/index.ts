@@ -353,10 +353,41 @@ export interface Consultation {
   followUpDate?: string;
   followUpIntervalDays?: number;
   followUpReason?: string;
+  needsAdmission?: boolean;
+  admissionWardType?: WardType;
+  admissionPriority?: AdmissionRequestPriority;
+  admissionReason?: string;
+  admissionInstructions?: string;
   notes?: string;
   startedAt?: string;
   finalizedAt?: string;
   updatedAt?: string;
+}
+
+export type AdmissionRequestPriority = 'Emergency' | 'Urgent' | 'Routine' | 'Elective';
+export type AdmissionRequestStatus = 'Pending' | 'Admitted' | 'Cancelled';
+
+export interface AdmissionRequest {
+  id: string; // e.g. "ADMR-1001"
+  hospitalId: string;
+  consultationId?: string;
+  appointmentId?: string;
+  patientId: string;
+  patientName: string;
+  patientPhone?: string;
+  patientAge?: number;
+  patientGender?: Gender;
+  doctorId: string;
+  doctorName: string;
+  departmentName?: string;
+  recommendedWardType: WardType;
+  priority: AdmissionRequestPriority;
+  reason: string;
+  diagnosis?: string;
+  instructions?: string;
+  status: AdmissionRequestStatus;
+  admittedAdmissionId?: string;
+  createdAt: string;
 }
 
 export interface FollowUpRequest {
@@ -542,7 +573,8 @@ export interface Bed {
   notes?: string;
 }
 
-export type AdmissionStatus = 'Active' | 'Discharged' | 'Transferred';
+export type AdmissionStatus = 'Active' | 'Discharge Initiated' | 'Discharged' | 'Transferred';
+export type NurseConditionStatus = 'Stable & Improving' | 'Critical / High Attention' | 'Observation Continues' | 'Ready for Discharge Review';
 
 export interface Admission {
   id: string; // e.g. "ADM-5001"
@@ -563,6 +595,38 @@ export interface Admission {
   status: AdmissionStatus;
   notes?: string;
   initialDeposit: number;
+
+  // Step 1: Nurse Monitoring & Updates to Specialist
+  nurseNotes?: string;
+  nurseCondition?: NurseConditionStatus;
+  nurseUpdatedBy?: string;
+  nurseVitals?: {
+    bloodPressure?: string;
+    heartRate?: number;
+    temperature?: number;
+    oxygenLevel?: number;
+    recordedAt?: string;
+    recordedBy?: string;
+  };
+  nurseUpdatedAt?: string;
+
+  // Step 2: Specialist Discharge Initiation & Summary
+  dischargeInitiatedAt?: string;
+  dischargeDoctorId?: string;
+  dischargeDoctorName?: string;
+  dischargeSummary?: string;
+  dischargeAdvice?: string;
+  dischargePrescriptions?: string;
+
+  // Step 3: Complete All Billing
+  billingStatus?: 'Pending' | 'Paid' | 'Cleared';
+  invoiceId?: string;
+  finalBilledAmount?: number;
+  finalPaidAmount?: number;
+
+  // Step 4: Final Clearance Handover
+  finalDischargedBy?: string;
+  finalDischargedRole?: 'Nurse' | 'Receptionist' | 'Admin';
 }
 
 export type InvoiceStatus = 'Paid' | 'Pending' | 'Partially Paid' | 'Overdue' | 'Cancelled' | 'Unpaid';

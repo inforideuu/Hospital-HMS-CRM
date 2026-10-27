@@ -69,6 +69,7 @@ import { EnterpriseSubscriptionDetails } from '../pages/hospital/enterprise/Ente
 import { DoctorDashboard } from '../pages/hospital/doctor/DoctorDashboard';
 import { DoctorAppointments } from '../pages/hospital/doctor/DoctorAppointments';
 import { DoctorPatientQueue } from '../pages/hospital/doctor/DoctorPatientQueue';
+import { DoctorInpatients } from '../pages/hospital/doctor/DoctorInpatients';
 import { ConsultationWorkspace } from '../pages/hospital/doctor/ConsultationWorkspace';
 import { DoctorScheduleView } from '../pages/hospital/doctor/DoctorScheduleView';
 import { DoctorProfileView } from '../pages/hospital/doctor/DoctorProfileView';
@@ -227,6 +228,14 @@ export const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['doctor', 'hospital_admin', 'nurse']}>
               <DoctorPatientQueue />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="doctor/inpatients"
+          element={
+            <ProtectedRoute allowedRoles={['doctor', 'hospital_admin', 'nurse']}>
+              <DoctorInpatients />
             </ProtectedRoute>
           }
         />

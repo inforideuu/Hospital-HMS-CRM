@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   BedDouble,
   Plus,
@@ -25,11 +25,17 @@ import {
   Sparkles,
   Zap,
   Hash,
+  BellRing,
+  Clock,
+  HeartPulse,
+  CreditCard,
+  Receipt,
+  FileCheck,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
-import { Admission, Bed, Ward, WardType, BedStatus } from '../../../types';
+import { Admission, Bed, Ward, WardType, BedStatus, AdmissionRequest, NurseConditionStatus } from '../../../types';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -38,13 +44,13 @@ import { Input, Textarea } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { Modal } from '../../../components/ui/Modal';
 import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
-import { EmptyState } from '../../../components/ui/EmptyState';
 import { SubscriptionUpgradeModal } from '../../../components/common/SubscriptionUpgradeModal';
+import { PatientCombobox } from '../../../components/common/PatientCombobox';
 
-type MainTab = 'overview' | 'wards_beds' | 'admit' | 'history';
+type MainTab = 'overview' | 'wards_beds' | 'requests' | 'admit' | 'history';
 
 export const AdmissionsManagement: React.FC = () => {
-  const { currentHospital } = useAuth();
+  const { currentHospital, user } = useAuth();
   const { showToast } = useNotification();
   const hospId = currentHospital?.id || 'HOSP-001';
 
@@ -109,6 +115,7 @@ export const AdmissionsManagement: React.FC = () => {
 
   const [isAdmitModalOpen, setIsAdmitModalOpen] = useState(false);
   const [admitSelectedWardId, setAdmitSelectedWardId] = useState<string>('');
+  const [patientSelectError, setPatientSelectError] = useState('');
   const [admitFormData, setAdmitFormData] = useState({
     patientId: patients[0]?.id || '',
     doctorId: doctors[0]?.id || '',
@@ -126,11 +133,42 @@ export const AdmissionsManagement: React.FC = () => {
   const [deleteWardConfirmId, setDeleteWardConfirmId] = useState<string | null>(null);
   const [deleteBedConfirmId, setDeleteBedConfirmId] = useState<string | null>(null);
 
+  // Inpatient Discharge Workflow Modals
+  const [isDoctorDischargeModalOpen, setIsDoctorDischargeModalOpen] = useState(false);
+  const [selectedAdmForDoctorDischarge, setSelectedAdmForDoctorDischarge] = useState<Admission | null>(null);
+  const [doctorDischargeForm, setDoctorDischargeForm] = useState({
+    diagnosis: '',
+    summary: '',
+    advice: '',
+    prescriptions: '',
+  });
+
+  const [isBillingModalOpen, setIsBillingModalOpen] = useState(false);
+  const [selectedAdmForBilling, setSelectedAdmForBilling] = useState<Admission | null>(null);
+  const [billingPaymentMethod, setBillingPaymentMethod] = useState<'UPI' | 'Cash' | 'Credit Card' | 'Insurance'>('UPI');
+
+  const [isFinalReleaseModalOpen, setIsFinalReleaseModalOpen] = useState(false);
+  const [selectedAdmForFinalRelease, setSelectedAdmForFinalRelease] = useState<Admission | null>(null);
+
+  // Doctor Admission Referrals Queue
+  const [admissionRequests, setAdmissionRequests] = useState<AdmissionRequest[]>(() => MockStorage.getAdmissionRequests(hospId));
+  const [activeAdmissionRequestId, setActiveAdmissionRequestId] = useState<string | null>(null);
+  const pendingAdmissionRequests = admissionRequests.filter((r) => r.status === 'Pending');
+
   const refreshData = () => {
     setWards(MockStorage.getWards(hospId));
     setBeds(MockStorage.getBeds(hospId));
     setAdmissions(MockStorage.getAdmissions(hospId));
+    setAdmissionRequests(MockStorage.getAdmissionRequests(hospId));
   };
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      refreshData();
+    };
+    window.addEventListener('pulse_storage_updated', handleStorageChange);
+    return () => window.removeEventListener('pulse_storage_updated', handleStorageChange);
+  }, [hospId]);
 
   // Helper Metrics
   const activeAdmissions = admissions.filter((a) => a.status === 'Active');
@@ -138,11 +176,12 @@ export const AdmissionsManagement: React.FC = () => {
 
   const availableBeds = beds.filter((b) => b.status === 'Available');
   const occupiedBeds = beds.filter((b) => b.status === 'Occupied');
+  const occupiedCount = Math.max(occupiedBeds.length, activeAdmissions.length);
   const maintenanceBeds = beds.filter((b) => b.status === 'Maintenance');
   const reservedBeds = beds.filter((b) => b.status === 'Reserved');
 
   const totalCapacity = beds.length;
-  const occupancyRate = totalCapacity > 0 ? Math.round((occupiedBeds.length / totalCapacity) * 100) : 0;
+  const occupancyRate = totalCapacity > 0 ? Math.round((occupiedCount / totalCapacity) * 100) : 0;
 
   // Wards & Beds handlers with Subscription Limits
   const handleOpenCreateWard = () => {
@@ -470,6 +509,7 @@ export const AdmissionsManagement: React.FC = () => {
       notes: '',
       initialDeposit: firstFree ? firstFree.dailyRate * 3 : 1000,
     });
+    setPatientSelectError('');
 
     setIsAdmitModalOpen(true);
   };
@@ -491,9 +531,48 @@ export const AdmissionsManagement: React.FC = () => {
     }));
   };
 
+  const handleAdmitFromDoctorRequest = (req: AdmissionRequest) => {
+    setActiveAdmissionRequestId(req.id);
+    const targetW =
+      wards.find((w) => w.wardType === req.recommendedWardType) ||
+      wards.find((w) => w.id === req.recommendedWardType) ||
+      wards[0];
+
+    const wardAvailBeds = beds.filter(
+      (b) => b.status === 'Available' && (!targetW?.id || b.wardId === targetW.id || b.wardType === targetW.wardType)
+    );
+    const firstFree = wardAvailBeds[0] || availableBeds[0];
+
+    setAdmitSelectedWardId(targetW?.id || '');
+    setAdmitFormData({
+      patientId: req.patientId,
+      doctorId: req.doctorId || doctors[0]?.id || '',
+      wardId: targetW?.id || firstFree?.wardId || '',
+      bedNumber: firstFree?.bedNumber || '',
+      wardType: targetW?.wardType || firstFree?.wardType || req.recommendedWardType || 'General Ward',
+      admissionType: req.priority === 'Emergency' ? 'Emergency' : 'Elective',
+      reason: req.reason || req.diagnosis || 'Inpatient admission referral from specialist',
+      notes: req.instructions ? `Doctor Directives: ${req.instructions}` : '',
+      initialDeposit: firstFree ? firstFree.dailyRate * 3 : 1500,
+    });
+    setPatientSelectError('');
+    setIsAdmitModalOpen(true);
+  };
+
+  const handleCancelAdmissionRequest = (reqId: string) => {
+    MockStorage.updateAdmissionRequestStatus(reqId, 'Cancelled');
+    showToast('Referral Dismissed', 'Admission request was marked as cancelled.', 'info');
+    refreshData();
+  };
+
   const handleAdmitSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const pat = patients.find((p) => p.id === admitFormData.patientId);
+    if (!admitFormData.patientId) {
+      setPatientSelectError('Please select a registered patient to admit.');
+      showToast('Validation Error', 'Please select a registered patient for admission.', 'error');
+      return;
+    }
+    const pat = patients.find((p) => p.id === admitFormData.patientId) || MockStorage.getPatientById(admitFormData.patientId);
     const doc = doctors.find((d) => d.id === admitFormData.doctorId);
     const chosenBed = beds.find((b) => b.bedNumber === admitFormData.bedNumber);
 
@@ -527,10 +606,23 @@ export const AdmissionsManagement: React.FC = () => {
 
     MockStorage.saveAdmission(newAdmission);
 
+    if (activeAdmissionRequestId) {
+      MockStorage.updateAdmissionRequestStatus(activeAdmissionRequestId, 'Admitted', newAdmission.id);
+      setActiveAdmissionRequestId(null);
+    }
+
     // Update patient status to Inpatient
     pat.status = 'Inpatient';
     pat.roomBedNumber = admitFormData.bedNumber;
     MockStorage.savePatient(pat);
+
+    // Explicitly update bed status to Occupied
+    if (chosenBed) {
+      chosenBed.status = 'Occupied';
+      chosenBed.currentPatientId = pat.id;
+      chosenBed.currentPatientName = pat.name;
+      MockStorage.updateBedStatus(chosenBed.id, 'Occupied');
+    }
 
     showToast(
       'Patient Admitted Successfully',
@@ -563,6 +655,98 @@ export const AdmissionsManagement: React.FC = () => {
       setDischargeConfirmId(null);
       refreshData();
     }
+  };
+
+  // Step 2: Specialist Discharge Handlers
+  const handleOpenDoctorDischargeModal = (adm: Admission) => {
+    setSelectedAdmForDoctorDischarge(adm);
+    setDoctorDischargeForm({
+      diagnosis: adm.diagnosis || adm.reason || '',
+      summary: adm.dischargeSummary || `Patient showed steady clinical improvement. Afebrile for 24h, vital parameters stabilized, tolerating oral diet and ambulating comfortably.`,
+      advice: adm.dischargeAdvice || `Adequate fluid intake, wound care/dressing as advised. Avoid heavy lifting for 7 days. Review in OPD clinic after 1 week.`,
+      prescriptions: adm.dischargePrescriptions || `1. Tab Cefixime 200mg BD x 5 days\n2. Tab Paracetamol 650mg SOS\n3. Tab Pantoprazole 40mg OD before breakfast x 5 days`,
+    });
+    setIsDoctorDischargeModalOpen(true);
+  };
+
+  const handleConfirmDoctorDischarge = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAdmForDoctorDischarge) return;
+
+    const res = MockStorage.initiateDoctorDischarge(selectedAdmForDoctorDischarge.id, {
+      dischargeSummary: doctorDischargeForm.summary.trim(),
+      dischargeAdvice: doctorDischargeForm.advice.trim(),
+      dischargePrescriptions: doctorDischargeForm.prescriptions.trim(),
+      doctorId: selectedAdmForDoctorDischarge.doctorId,
+      doctorName: selectedAdmForDoctorDischarge.doctorName,
+    });
+
+    if (res.success) {
+      showToast(
+        'Medical Discharge Initiated',
+        `Discharge signed by Dr. ${selectedAdmForDoctorDischarge.doctorName}. Inpatient invoice generated for cashier settlement.`
+      );
+      setIsDoctorDischargeModalOpen(false);
+      refreshData();
+    }
+  };
+
+  // Step 3: Billing Settlement Handlers
+  const handleOpenBillingModal = (adm: Admission) => {
+    setSelectedAdmForBilling(adm);
+    setIsBillingModalOpen(true);
+  };
+
+  const handleConfirmBillingSettlement = () => {
+    if (!selectedAdmForBilling) return;
+    MockStorage.settleInpatientBilling(selectedAdmForBilling.id, selectedAdmForBilling.invoiceId);
+    showToast(
+      'Billing Settled & Cleared',
+      `Payment received via ${billingPaymentMethod}. Discharge gate pass issued for Bed ${selectedAdmForBilling.bedNumber}.`
+    );
+    setIsBillingModalOpen(false);
+    refreshData();
+  };
+
+  // Step 4: Final Clearance & Bed Release Handlers
+  const handleOpenFinalReleaseModal = (adm: Admission) => {
+    if (adm.status !== 'Discharge Initiated') {
+      showToast(
+        'Action Blocked',
+        'Doctor has not yet initiated medical discharge. Attending specialist must evaluate health and write discharge summary first.',
+        'error'
+      );
+      return;
+    }
+    if (adm.billingStatus === 'Pending') {
+      showToast(
+        'Action Blocked',
+        'Inpatient billing settlement is pending. Settle invoice at Cashier Desk before final release.',
+        'error'
+      );
+      return;
+    }
+    setSelectedAdmForFinalRelease(adm);
+    setIsFinalReleaseModalOpen(true);
+  };
+
+  const handleConfirmFinalRelease = () => {
+    if (!selectedAdmForFinalRelease) return;
+    const res = MockStorage.completeFinalDischarge(
+      selectedAdmForFinalRelease.id,
+      user?.name || 'Reception Desk',
+      'Receptionist'
+    );
+    if (!res.success) {
+      showToast('Discharge Blocked', res.error || 'Cannot complete discharge.', 'error');
+      return;
+    }
+    showToast(
+      'Discharge Complete',
+      `${selectedAdmForFinalRelease.patientName} discharged. Bed ${selectedAdmForFinalRelease.bedNumber} is now Available.`
+    );
+    setIsFinalReleaseModalOpen(false);
+    refreshData();
   };
 
   // Filtered lists for rendering
@@ -651,6 +835,21 @@ export const AdmissionsManagement: React.FC = () => {
           Wards & Beds ({wards.length} Wards • {beds.length}/{maxBedsLimit} Beds)
         </button>
         <button
+          onClick={() => setActiveTab('requests')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-xs transition-all ${activeTab === 'requests'
+              ? 'bg-rose-600 text-white shadow-xs font-semibold'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+        >
+          <BellRing className="w-4 h-4" />
+          Doctor Referrals
+          {pendingAdmissionRequests.length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-rose-500 text-white shadow-xs animate-pulse">
+              {pendingAdmissionRequests.length}
+            </span>
+          )}
+        </button>
+        <button
           onClick={() => {
             setActiveTab('admit');
             handleOpenAdmitModal();
@@ -721,6 +920,37 @@ export const AdmissionsManagement: React.FC = () => {
         </Button>
       </div>
 
+      {/* Doctor Referrals Alert Banner on Overview */}
+      {pendingAdmissionRequests.length > 0 && activeTab === 'overview' && (
+        <div className="p-4 rounded-xl bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 border border-rose-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <BellRing className="w-5 h-5 animate-bounce" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-rose-900">
+                  {pendingAdmissionRequests.length} Doctor Inpatient Admission Order{pendingAdmissionRequests.length > 1 ? 's' : ''} Awaiting Bed Allocation
+                </h3>
+                <Badge variant="error" size="sm">Action Required</Badge>
+              </div>
+              <p className="text-xs text-rose-800 mt-0.5">
+                Specialists have recommended inpatient ward stays from OPD consultation chambers. Review orders and assign beds.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setActiveTab('requests')}
+            className="bg-rose-600 hover:bg-rose-700 text-white font-bold shrink-0"
+            rightIcon={<ArrowRight className="w-4 h-4" />}
+          >
+            Review Referrals & Assign Beds
+          </Button>
+        </div>
+      )}
+
       {/* KPI Overview Telemetry */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
         <div className="p-4 rounded-xl bg-white border border-slate-200/80 shadow-xs">
@@ -744,7 +974,7 @@ export const AdmissionsManagement: React.FC = () => {
         <div className="p-4 rounded-xl bg-white border border-slate-200/80 shadow-xs">
           <p className="text-[11px] font-semibold text-indigo-600 uppercase tracking-wider">Occupied (IPD)</p>
           <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-2xl font-bold text-indigo-600">{occupiedBeds.length}</span>
+            <span className="text-2xl font-bold text-indigo-600">{occupiedCount}</span>
             <span className="text-xs font-semibold text-indigo-500">({occupancyRate}%)</span>
           </div>
           <p className="text-[10px] text-indigo-400 mt-0.5">Current Inpatients</p>
@@ -864,7 +1094,7 @@ export const AdmissionsManagement: React.FC = () => {
                       </p>
                     ) : (
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-slate-400 font-medium">${bed.dailyRate}/day</span>
+                        <span className="text-[10px] text-slate-400 font-medium">₹{bed.dailyRate}/day</span>
                         <button
                           onClick={() => handleQuickStatusChange(bed.id, isAvail ? 'Maintenance' : 'Available')}
                           className="text-[10px] underline text-slate-500 hover:text-slate-800"
@@ -1114,18 +1344,17 @@ export const AdmissionsManagement: React.FC = () => {
           />
           <div className="p-6">
             <form onSubmit={handleAdmitSubmit} className="space-y-4">
-              <Select
-                label="Step 1: Select Patient *"
-                value={admitFormData.patientId}
-                onChange={(e) => setAdmitFormData({ ...admitFormData, patientId: e.target.value })}
+              <PatientCombobox
+                label="Select Patient *"
                 required
-              >
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.id}) — Status: {p.status}
-                  </option>
-                ))}
-              </Select>
+                hospitalId={hospId}
+                selectedPatientId={admitFormData.patientId}
+                onSelectPatient={(p) => {
+                  setAdmitFormData((prev) => ({ ...prev, patientId: p ? p.id : '' }));
+                  if (p) setPatientSelectError('');
+                }}
+                error={patientSelectError}
+              />
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Select
@@ -1238,6 +1467,144 @@ export const AdmissionsManagement: React.FC = () => {
         </Card>
       )}
 
+      {/* TAB 4: DOCTOR ADMISSION REFERRALS QUEUE */}
+      {activeTab === 'requests' && (
+        <Card>
+          <CardHeader
+            title="Specialist Inpatient Admission Orders"
+            subtitle="Admissions recommended by doctors during OPD / Emergency consultations. Allocate an available bed to admit."
+            action={
+              <div className="flex items-center gap-2">
+                <Badge variant={pendingAdmissionRequests.length > 0 ? 'error' : 'neutral'} size="sm">
+                  {pendingAdmissionRequests.length} Pending Bed Allocation
+                </Badge>
+              </div>
+            }
+          />
+          <div className="p-6">
+            {admissionRequests.length === 0 ? (
+              <div className="text-center py-12 border border-dashed border-slate-200 rounded-xl">
+                <BedDouble className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                <h4 className="text-sm font-bold text-slate-700">No Doctor Referrals</h4>
+                <p className="text-xs text-slate-400 mt-1">
+                  When a specialist recommends inpatient admission during a consultation, it will appear here for bed allocation.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase text-[10px] tracking-wider">
+                      <th className="py-3 px-3">Priority</th>
+                      <th className="py-3 px-3">Patient Details</th>
+                      <th className="py-3 px-3">Recommending Doctor</th>
+                      <th className="py-3 px-3">Target Ward Type</th>
+                      <th className="py-3 px-3">Clinical Indication & Directives</th>
+                      <th className="py-3 px-3">Status</th>
+                      <th className="py-3 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {admissionRequests.map((req) => {
+                      const isPending = req.status === 'Pending';
+                      const priorityColor =
+                        req.priority === 'Emergency'
+                          ? 'bg-rose-100 text-rose-800 border-rose-200'
+                          : req.priority === 'Urgent'
+                          ? 'bg-amber-100 text-amber-800 border-amber-200'
+                          : req.priority === 'Routine'
+                          ? 'bg-sky-100 text-sky-800 border-sky-200'
+                          : 'bg-indigo-100 text-indigo-800 border-indigo-200';
+
+                      return (
+                        <tr key={req.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${priorityColor}`}>
+                              {req.priority === 'Emergency' && '🚨 '}
+                              {req.priority === 'Urgent' && '⚡ '}
+                              {req.priority}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="font-bold text-slate-900">{req.patientName}</div>
+                            <div className="text-[11px] text-slate-400 font-mono">
+                              {req.patientId} • {req.patientAge ? `${req.patientAge}y` : ''} {req.patientGender || ''}
+                            </div>
+                            {req.patientPhone && (
+                              <div className="text-[10px] text-slate-500 mt-0.5">{req.patientPhone}</div>
+                            )}
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="font-semibold text-slate-800">{req.doctorName}</div>
+                            <div className="text-[11px] text-slate-500">{req.departmentName || 'Specialist'}</div>
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <span className="font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                              {req.recommendedWardType}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 max-w-xs">
+                            <div className="font-medium text-slate-800 line-clamp-1">{req.reason}</div>
+                            {req.instructions && (
+                              <div className="text-[11px] text-rose-700 line-clamp-1 italic mt-0.5">
+                                Care: {req.instructions}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <Badge
+                              variant={
+                                req.status === 'Pending'
+                                  ? 'warning'
+                                  : req.status === 'Admitted'
+                                  ? 'success'
+                                  : 'neutral'
+                              }
+                              size="sm"
+                            >
+                              {req.status}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-3 text-right whitespace-nowrap">
+                            {isPending ? (
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  variant="primary"
+                                  size="xs"
+                                  onClick={() => handleAdmitFromDoctorRequest(req)}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                                  leftIcon={<UserPlus className="w-3.5 h-3.5" />}
+                                >
+                                  Allocate Bed & Admit
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="xs"
+                                  onClick={() => handleCancelAdmissionRequest(req.id)}
+                                  className="text-slate-400 hover:text-rose-600"
+                                >
+                                  Dismiss
+                                </Button>
+                              </div>
+                            ) : req.status === 'Admitted' ? (
+                              <span className="text-[11px] text-emerald-700 font-medium flex items-center justify-end gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Admitted to Bed
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">Cancelled</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+
       {/* TAB 4: ADMISSIONS HISTORY & ACTIVE ROSTER */}
       {activeTab === 'history' && (
         <Card>
@@ -1286,67 +1653,142 @@ export const AdmissionsManagement: React.FC = () => {
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-500 font-semibold uppercase tracking-wider">
+                <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
                   <th className="px-5 py-3.5">Admission Code & Patient</th>
                   <th className="px-4 py-3.5">Allocated Ward & Bed</th>
                   <th className="px-4 py-3.5">Attending Specialist</th>
-                  <th className="px-4 py-3.5">Intake Date & Type</th>
-                  <th className="px-4 py-3.5">Diagnosis / Reason</th>
-                  <th className="px-4 py-3.5">Status</th>
-                  <th className="px-5 py-3.5 text-right">Actions</th>
+                  <th className="px-4 py-3.5">Nurse Monitoring & Updates</th>
+                  <th className="px-4 py-3.5">Discharge Lifecycle Stage</th>
+                  <th className="px-5 py-3.5 text-right">Workflow Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredAdmissions.map((adm) => (
-                  <tr key={adm.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="px-5 py-3.5">
-                      <p className="font-bold text-slate-900">{adm.patientName}</p>
-                      <p className="text-[10px] text-indigo-600 font-mono">{adm.id} • {adm.patientId}</p>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
-                        {adm.bedNumber}
-                      </span>
-                      <p className="text-[10px] text-slate-500 mt-0.5">{adm.wardType}</p>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <p className="font-bold text-slate-900">{adm.doctorName}</p>
-                      <p className="text-[10px] text-slate-400">{adm.departmentName}</p>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <p className="font-medium text-slate-700">{adm.admissionDate}</p>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200">
-                        {adm.admissionType}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3.5 text-slate-600 max-w-[200px] truncate">{adm.reason}</td>
-                    <td className="px-4 py-3.5">
-                      <span
-                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${adm.status === 'Active'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-slate-100 text-slate-600 border border-slate-200'
-                          }`}
-                      >
-                        {adm.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      {adm.status === 'Active' ? (
-                        <Button
-                          variant="outline"
-                          size="xs"
-                          className="text-rose-600 hover:bg-rose-50 border-rose-200"
-                          onClick={() => setDischargeConfirmId(adm.id)}
-                          leftIcon={<LogOut className="w-3.5 h-3.5" />}
-                        >
-                          Discharge Patient
-                        </Button>
-                      ) : (
-                        <span className="text-[10px] text-slate-400">Discharged {adm.dischargeDate}</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {filteredAdmissions.map((adm) => {
+                  const isDischargeInitiated = adm.status === 'Discharge Initiated';
+                  const isDischarged = adm.status === 'Discharged';
+                  const isBillingPaid = adm.billingStatus === 'Paid' || adm.billingStatus === 'Cleared';
+                  const conditionColor =
+                    adm.nurseCondition === 'Ready for Discharge Review'
+                      ? 'bg-purple-100 text-purple-800 border-purple-200'
+                      : adm.nurseCondition === 'Critical / High Attention'
+                      ? 'bg-rose-100 text-rose-800 border-rose-200'
+                      : 'bg-emerald-100 text-emerald-800 border-emerald-200';
+
+                  return (
+                    <tr key={adm.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="px-5 py-3.5">
+                        <p className="font-bold text-slate-900">{adm.patientName}</p>
+                        <p className="text-[10px] text-indigo-600 font-mono">{adm.id} • {adm.patientId}</p>
+                        <p className="text-[10px] text-slate-500 line-clamp-1">{adm.diagnosis || adm.reason}</p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                          Bed {adm.bedNumber}
+                        </span>
+                        <p className="text-[10px] text-slate-500 mt-0.5">{adm.wardType}</p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <p className="font-bold text-slate-900">{adm.doctorName}</p>
+                        <p className="text-[10px] text-slate-400">{adm.departmentName}</p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {adm.nurseVitals ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 text-slate-700 border">
+                                BP {adm.nurseVitals.bloodPressure || '120/80'}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 text-slate-700 border">
+                                SpO2 {adm.nurseVitals.oxygenLevel || 98}%
+                              </span>
+                            </div>
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${conditionColor}`}>
+                              {adm.nurseCondition || 'Stable & Improving'}
+                            </span>
+                            {adm.nurseNotes && (
+                              <p className="text-[10px] text-slate-500 italic line-clamp-1">
+                                "{adm.nurseNotes}"
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-slate-400 italic">Vitals monitoring underway</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        {isDischarged ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                            Discharged ({adm.dischargeDate})
+                          </span>
+                        ) : isDischargeInitiated ? (
+                          <div className="space-y-1">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200 block w-max">
+                              🩺 Doctor Discharge Initiated
+                            </span>
+                            {isBillingPaid ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 block w-max">
+                                💳 Billing Settled & Paid
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200 block w-max">
+                                💳 Invoice #{adm.invoiceId || 'Settlement Pending'}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Inpatient Care Active
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {adm.status === 'Active' && (
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              className="text-indigo-600 hover:bg-indigo-50 border-indigo-200 font-semibold"
+                              onClick={() => handleOpenDoctorDischargeModal(adm)}
+                              leftIcon={<Stethoscope className="w-3.5 h-3.5" />}
+                            >
+                              Doctor: Initiate Discharge
+                            </Button>
+                          )}
+
+                          {isDischargeInitiated && !isBillingPaid && (
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              className="text-amber-700 hover:bg-amber-50 border-amber-300 font-semibold"
+                              onClick={() => handleOpenBillingModal(adm)}
+                              leftIcon={<CreditCard className="w-3.5 h-3.5 text-amber-600" />}
+                            >
+                              Settle Bill at Cashier
+                            </Button>
+                          )}
+
+                          {isDischargeInitiated && isBillingPaid && (
+                            <Button
+                              variant="primary"
+                              size="xs"
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                              onClick={() => handleOpenFinalReleaseModal(adm)}
+                              leftIcon={<LogOut className="w-3.5 h-3.5" />}
+                            >
+                              Release Bed & Discharge
+                            </Button>
+                          )}
+
+                          {isDischarged && (
+                            <span className="text-[10px] text-slate-400 font-medium flex items-center justify-end gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Complete
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1654,22 +2096,21 @@ export const AdmissionsManagement: React.FC = () => {
         maxWidth="lg"
       >
         <form onSubmit={handleAdmitSubmit} className="space-y-4">
-          <Select
-            label="Step 1: Select Patient *"
-            value={admitFormData.patientId}
-            onChange={(e) => setAdmitFormData({ ...admitFormData, patientId: e.target.value })}
+          <PatientCombobox
+            label="Select Patient *"
             required
-          >
-            {patients.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.id}) — Current: {p.status}
-              </option>
-            ))}
-          </Select>
+            hospitalId={hospId}
+            selectedPatientId={admitFormData.patientId}
+            onSelectPatient={(p) => {
+              setAdmitFormData((prev) => ({ ...prev, patientId: p ? p.id : '' }));
+              if (p) setPatientSelectError('');
+            }}
+            error={patientSelectError}
+          />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Select
-              label="Step 2: Select Ward *"
+              label="Select Ward *"
               value={admitSelectedWardId}
               onChange={(e) => handleWardChangeInAdmit(e.target.value)}
               required
@@ -1682,7 +2123,7 @@ export const AdmissionsManagement: React.FC = () => {
             </Select>
 
             <Select
-              label="Step 3: Select Available Bed *"
+              label="Select Available Bed *"
               value={admitFormData.bedNumber}
               onChange={(e) => {
                 const b = beds.find((bed) => bed.bedNumber === e.target.value);
@@ -1769,6 +2210,242 @@ export const AdmissionsManagement: React.FC = () => {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* STEP 2 MODAL: Specialist Doctor Discharge Order & Summary */}
+      <Modal
+        isOpen={isDoctorDischargeModalOpen}
+        onClose={() => setIsDoctorDischargeModalOpen(false)}
+        title="Specialist Medical Discharge Order & Summary"
+        subtitle={`Patient: ${selectedAdmForDoctorDischarge?.patientName} • Bed: ${selectedAdmForDoctorDischarge?.bedNumber} • Attending: Dr. ${selectedAdmForDoctorDischarge?.doctorName}`}
+        maxWidth="lg"
+      >
+        {selectedAdmForDoctorDischarge && (
+          <form onSubmit={handleConfirmDoctorDischarge} className="space-y-4 text-xs">
+            {/* Nurse's latest monitoring review */}
+            {selectedAdmForDoctorDischarge.nurseVitals && (
+              <div className="p-3.5 rounded-xl bg-purple-50 border border-purple-200 text-purple-950 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-purple-800 flex items-center gap-1.5">
+                    <HeartPulse className="w-3.5 h-3.5 text-purple-600" />
+                    Nurse's Bedside Clinical Update
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-purple-700 border border-purple-200">
+                    {selectedAdmForDoctorDischarge.nurseCondition || 'Stable & Improving'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 font-mono text-[11px] text-purple-900">
+                  <span>BP: <strong>{selectedAdmForDoctorDischarge.nurseVitals.bloodPressure || '120/80'}</strong></span>
+                  <span>Pulse: <strong>{selectedAdmForDoctorDischarge.nurseVitals.heartRate || 75} bpm</strong></span>
+                  <span>SpO2: <strong>{selectedAdmForDoctorDischarge.nurseVitals.oxygenLevel || 98}%</strong></span>
+                  <span>Temp: <strong>{selectedAdmForDoctorDischarge.nurseVitals.temperature || 98.6}°F</strong></span>
+                </div>
+                {selectedAdmForDoctorDischarge.nurseNotes && (
+                  <p className="text-[11px] text-purple-900 italic">
+                    Nurse Notes: "{selectedAdmForDoctorDischarge.nurseNotes}"
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                Final Discharge Diagnosis *
+              </label>
+              <Input
+                value={doctorDischargeForm.diagnosis}
+                onChange={(e) => setDoctorDischargeForm({ ...doctorDischargeForm, diagnosis: e.target.value })}
+                placeholder="e.g. Acute Gastroenteritis - Resolved"
+                required
+                className="text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                Clinical Summary of Hospital Course & Treatment *
+              </label>
+              <Textarea
+                rows={3}
+                value={doctorDischargeForm.summary}
+                onChange={(e) => setDoctorDischargeForm({ ...doctorDischargeForm, summary: e.target.value })}
+                placeholder="Document patient's recovery trajectory, diagnostic findings, and clinical milestones..."
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Take-Home Discharge Prescriptions
+                </label>
+                <Textarea
+                  rows={3}
+                  value={doctorDischargeForm.prescriptions}
+                  onChange={(e) => setDoctorDischargeForm({ ...doctorDischargeForm, prescriptions: e.target.value })}
+                  placeholder="e.g. 1. Tab Cefixime 200mg BD x 5 days"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Home Care Advice & Follow-Up Instructions
+                </label>
+                <Textarea
+                  rows={3}
+                  value={doctorDischargeForm.advice}
+                  onChange={(e) => setDoctorDischargeForm({ ...doctorDischargeForm, advice: e.target.value })}
+                  placeholder="e.g. Follow-up in OPD after 7 days, diet guidelines, emergency warning signs..."
+                />
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                <strong>Next Workflow Step:</strong> Submitting this medical discharge signs off clinical care and automatically issues an Inpatient Bill for cashier settlement before bed release.
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button type="button" variant="outline" size="sm" onClick={() => setIsDoctorDischargeModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" size="sm" leftIcon={<Stethoscope className="w-4 h-4" />}>
+                Sign Off & Initiate Discharge
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* STEP 3 MODAL: Inpatient Billing Settlement Modal */}
+      <Modal
+        isOpen={isBillingModalOpen}
+        onClose={() => setIsBillingModalOpen(false)}
+        title="Inpatient Billing & Financial Settlement"
+        subtitle={`Patient: ${selectedAdmForBilling?.patientName} • Bed: ${selectedAdmForBilling?.bedNumber}`}
+        maxWidth="md"
+      >
+        {selectedAdmForBilling && (
+          <div className="space-y-4 text-xs">
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-900 text-sm">Invoice #{selectedAdmForBilling.invoiceId || 'IPD-BILL'}</span>
+                <Badge variant="warning" size="sm">Settlement Pending</Badge>
+              </div>
+
+              <div className="divide-y divide-slate-200 text-slate-700 text-xs">
+                <div className="flex justify-between py-1.5">
+                  <span>Inpatient Bed & Ward Daily Rate ({selectedAdmForBilling.wardType}):</span>
+                  <span className="font-mono font-semibold">Included</span>
+                </div>
+                <div className="flex justify-between py-1.5">
+                  <span>24/7 Nursing & Vitals Telemetry Care:</span>
+                  <span className="font-mono font-semibold">Included</span>
+                </div>
+                <div className="flex justify-between py-1.5">
+                  <span>Specialist Daily Inpatient Rounds (Dr. {selectedAdmForBilling.doctorName}):</span>
+                  <span className="font-mono font-semibold">Included</span>
+                </div>
+                <div className="flex justify-between py-1.5 text-emerald-700">
+                  <span>Less Admission Advance Deposit Paid:</span>
+                  <span className="font-mono font-bold">- ₹{selectedAdmForBilling.initialDeposit}</span>
+                </div>
+                <div className="flex justify-between py-2 text-slate-900 font-bold text-sm bg-slate-100/80 px-2 rounded-lg mt-1">
+                  <span>Net Balance Payable:</span>
+                  <span className="font-mono text-indigo-700">₹{selectedAdmForBilling.finalBilledAmount ? Math.max(0, selectedAdmForBilling.finalBilledAmount - selectedAdmForBilling.initialDeposit) : 2500}</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1.5">
+                Select Settlement Payment Method *
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {(['UPI', 'Cash', 'Credit Card', 'Insurance'] as const).map((method) => (
+                  <button
+                    key={method}
+                    type="button"
+                    onClick={() => setBillingPaymentMethod(method)}
+                    className={`py-2 px-3 rounded-lg border text-center font-semibold text-xs transition-all ${
+                      billingPaymentMethod === method
+                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-200'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    {method}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>Confirming payment marks the bill as <strong>Paid</strong> and authorizes the Receptionist/Nurse to issue the Gate Pass and release the bed.</span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button variant="outline" size="sm" onClick={() => setIsBillingModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleConfirmBillingSettlement}
+                leftIcon={<CreditCard className="w-4 h-4" />}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold"
+              >
+                Confirm Payment & Clear Billing
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* STEP 4 MODAL: Final Bed Release & Discharge Completion Modal */}
+      <Modal
+        isOpen={isFinalReleaseModalOpen}
+        onClose={() => setIsFinalReleaseModalOpen(false)}
+        title="Complete Discharge & Release Hospital Bed"
+        subtitle={`Patient: ${selectedAdmForFinalRelease?.patientName} • Bed: ${selectedAdmForFinalRelease?.bedNumber}`}
+        maxWidth="md"
+      >
+        {selectedAdmForFinalRelease && (
+          <div className="space-y-4 text-xs">
+            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 space-y-2">
+              <div className="flex items-center gap-2 text-emerald-900 font-bold text-sm">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                Discharge Clearance Protocol Complete
+              </div>
+              <ul className="space-y-1 text-emerald-800 text-xs">
+                <li>• 🩺 Doctor Discharge: Signed by Dr. {selectedAdmForFinalRelease.doctorName}</li>
+                <li>• 📋 Summary: {selectedAdmForFinalRelease.dischargeSummary || 'Clinical recovery achieved'}</li>
+                <li>• 💳 Billing Settlement: Paid in full (Invoice: {selectedAdmForFinalRelease.invoiceId || 'Settled'})</li>
+              </ul>
+            </div>
+
+            <p className="text-slate-600">
+              Issuing final clearance will mark <strong>{selectedAdmForFinalRelease.patientName}</strong> as <strong>Discharged</strong>, archive this stay to history, and release <strong>Bed {selectedAdmForFinalRelease.bedNumber}</strong> back to <strong>Available</strong> status.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button variant="outline" size="sm" onClick={() => setIsFinalReleaseModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleConfirmFinalRelease}
+                leftIcon={<LogOut className="w-4 h-4" />}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+              >
+                Complete Final Discharge & Free Bed
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* SUBSCRIPTION UPGRADE MODAL */}

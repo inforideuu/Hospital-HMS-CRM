@@ -21,11 +21,15 @@ import {
   ShieldCheck,
   QrCode,
   Layers,
+  HeartPulse,
+  CreditCard,
+  LogOut,
+  ArrowRight,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
-import { LabOrder, Admission, Bed, Patient } from '../../../types';
+import { LabOrder, Admission, Bed, Patient, NurseConditionStatus } from '../../../types';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -79,6 +83,82 @@ export const NurseDashboard: React.FC = () => {
   const [nurseExecutionNotes, setNurseExecutionNotes] = useState('');
   const [nurseExecutionConfirmed, setNurseExecutionConfirmed] = useState(true);
 
+  // Inpatient Monitoring & Vitals Modal
+  const [isNurseVitalsModalOpen, setIsNurseVitalsModalOpen] = useState(false);
+  const [selectedAdmissionForVitals, setSelectedAdmissionForVitals] = useState<Admission | null>(null);
+  const [nurseVitalsForm, setNurseVitalsForm] = useState({
+    bloodPressure: '120/80',
+    heartRate: '76',
+    temperature: '98.6',
+    oxygenLevel: '99',
+    nurseCondition: 'Stable & Improving' as NurseConditionStatus,
+    nurseNotes: '',
+    nurseName: '',
+  });
+
+  // Final Discharge Modal for Nurse
+  const [isFinalDischargeModalOpen, setIsFinalDischargeModalOpen] = useState(false);
+  const [selectedAdmissionForDischarge, setSelectedAdmissionForDischarge] = useState<Admission | null>(null);
+
+  const handleOpenNurseVitals = (adm: Admission) => {
+    setSelectedAdmissionForVitals(adm);
+    setNurseVitalsForm({
+      bloodPressure: adm.nurseVitals?.bloodPressure || '120/80',
+      heartRate: adm.nurseVitals?.heartRate ? String(adm.nurseVitals.heartRate) : '76',
+      temperature: adm.nurseVitals?.temperature ? String(adm.nurseVitals.temperature) : '98.6',
+      oxygenLevel: adm.nurseVitals?.oxygenLevel ? String(adm.nurseVitals.oxygenLevel) : '99',
+      nurseCondition: adm.nurseCondition || 'Stable & Improving',
+      nurseNotes: adm.nurseNotes || '',
+      nurseName: adm.nurseUpdatedBy || adm.nurseVitals?.recordedBy || user?.name || 'Staff Nurse',
+    });
+    setIsNurseVitalsModalOpen(true);
+  };
+
+  const handleSaveNurseVitals = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAdmissionForVitals) return;
+
+    const reportingNurseName = nurseVitalsForm.nurseName.trim() || user?.name || 'Ward Staff Nurse';
+
+    MockStorage.updateNurseMonitoring(selectedAdmissionForVitals.id, {
+      nurseNotes: nurseVitalsForm.nurseNotes.trim(),
+      nurseCondition: nurseVitalsForm.nurseCondition,
+      vitals: {
+        bloodPressure: nurseVitalsForm.bloodPressure,
+        heartRate: Number(nurseVitalsForm.heartRate) || 75,
+        temperature: Number(nurseVitalsForm.temperature) || 98.6,
+        oxygenLevel: Number(nurseVitalsForm.oxygenLevel) || 98,
+      },
+      recordedBy: reportingNurseName,
+    });
+
+    showToast(
+      'Clinical Update Submitted',
+      `Vitals & status for ${selectedAdmissionForVitals.patientName} submitted to Attending Doctor ${selectedAdmissionForVitals.doctorName}.`
+    );
+    setIsNurseVitalsModalOpen(false);
+    refreshData();
+  };
+
+  const handleConfirmFinalDischarge = () => {
+    if (!selectedAdmissionForDischarge) return;
+    const res = MockStorage.completeFinalDischarge(
+      selectedAdmissionForDischarge.id,
+      user?.name || 'Staff Nurse',
+      'Nurse'
+    );
+    if (!res.success) {
+      showToast('Discharge Blocked', res.error || 'Cannot complete discharge.', 'error');
+      return;
+    }
+    showToast(
+      'Patient Discharged',
+      `${selectedAdmissionForDischarge.patientName} discharged. Bed ${selectedAdmissionForDischarge.bedNumber} is now Available.`
+    );
+    setIsFinalDischargeModalOpen(false);
+    refreshData();
+  };
+
   const refreshData = () => {
     setIsRefreshing(true);
     setLabOrders(MockStorage.getLabOrders(hospId));
@@ -116,7 +196,7 @@ export const NurseDashboard: React.FC = () => {
   );
 
   const activeAdmissionsList = useMemo(
-    () => admissions.filter((a) => a.status === 'Active'),
+    () => admissions.filter((a) => a.status === 'Active' || a.status === 'Discharge Initiated'),
     [admissions]
   );
 
@@ -688,62 +768,146 @@ export const NurseDashboard: React.FC = () => {
           {activeTab === 'inpatients' && (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase text-[10px] tracking-wider">
                   <tr>
-                    <th className="px-4 py-3">Patient Demographics</th>
-                    <th className="px-4 py-3">Assigned Bed & Ward</th>
-                    <th className="px-4 py-3">Admitting Physician</th>
-                    <th className="px-4 py-3">Admission Date</th>
-                    <th className="px-4 py-3">Diagnosis</th>
-                    <th className="px-4 py-3">Bed Status</th>
-                    <th className="px-4 py-3 text-right">Action</th>
+                    <th className="px-4 py-3">Patient & UHID</th>
+                    <th className="px-4 py-3">Bed & Ward</th>
+                    <th className="px-4 py-3">Attending Doctor</th>
+                    <th className="px-4 py-3">Nurse Monitoring & Vitals</th>
+                    <th className="px-4 py-3">Discharge Lifecycle Stage</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {activeAdmissionsList.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-12 text-center text-slate-400">
+                      <td colSpan={6} className="py-12 text-center text-slate-400">
                         <BedDouble className="w-8 h-8 text-slate-300 mx-auto mb-2" />
                         <p className="font-semibold text-slate-700">No active inpatient admissions</p>
                         <p className="text-[11px] text-slate-400 mt-0.5">All inpatient beds are currently vacant.</p>
                       </td>
                     </tr>
                   ) : (
-                    activeAdmissionsList.map((adm) => (
-                      <tr key={adm.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-4 py-3">
-                          <p className="font-bold text-slate-900">{adm.patientName}</p>
-                          <p className="text-[10px] text-slate-400">ID: {adm.patientId}</p>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="font-bold text-indigo-700">Bed {adm.bedNumber}</span>
-                          <p className="text-[10px] text-slate-500">{adm.wardType} • {adm.departmentName}</p>
-                        </td>
-                        <td className="px-4 py-3 font-medium text-slate-800">
-                          {adm.doctorName}
-                        </td>
-                        <td className="px-4 py-3 text-slate-600">
-                          {adm.admissionDate}
-                        </td>
-                        <td className="px-4 py-3 text-slate-700">
-                          {adm.diagnosis || adm.reason || 'Inpatient Observation'}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
-                            Occupied
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            onClick={() => navigate(`/hospital/patients/${adm.patientId}`)}
-                          >
-                            View EHR
-                          </Button>
-                        </td>
-                      </tr>
-                    ))
+                    activeAdmissionsList.map((adm) => {
+                      const isDischargeInitiated = adm.status === 'Discharge Initiated';
+                      const isBillingPaid = adm.billingStatus === 'Paid' || adm.billingStatus === 'Cleared';
+                      const conditionColor =
+                        adm.nurseCondition === 'Ready for Discharge Review'
+                          ? 'bg-purple-100 text-purple-800 border-purple-200'
+                          : adm.nurseCondition === 'Critical / High Attention'
+                          ? 'bg-rose-100 text-rose-800 border-rose-200'
+                          : 'bg-emerald-100 text-emerald-800 border-emerald-200';
+
+                      return (
+                        <tr key={adm.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3">
+                            <p className="font-bold text-slate-900">{adm.patientName}</p>
+                            <p className="text-[10px] text-slate-400 font-mono">UHID: {adm.patientId}</p>
+                            <p className="text-[10px] text-slate-500">{adm.diagnosis || adm.reason}</p>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                              Bed {adm.bedNumber}
+                            </span>
+                            <p className="text-[10px] text-slate-500 mt-0.5">{adm.wardType} • {adm.departmentName}</p>
+                          </td>
+                          <td className="px-4 py-3">
+                            <p className="font-semibold text-slate-800">{adm.doctorName}</p>
+                            <span className="text-[10px] text-slate-400">Admitted {adm.admissionDate}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            {adm.nurseVitals ? (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 text-slate-700 border">
+                                    BP {adm.nurseVitals.bloodPressure || '120/80'}
+                                  </span>
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 text-slate-700 border">
+                                    Pulse {adm.nurseVitals.heartRate || 75}
+                                  </span>
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 text-slate-700 border">
+                                    SpO2 {adm.nurseVitals.oxygenLevel || 98}%
+                                  </span>
+                                </div>
+                                <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${conditionColor}`}>
+                                  {adm.nurseCondition || 'Stable & Improving'}
+                                </span>
+                                {adm.nurseNotes && (
+                                  <p className="text-[10px] text-slate-500 italic line-clamp-1">
+                                    "{adm.nurseNotes}"
+                                  </p>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200 inline-block font-medium">
+                                ⚠️ Vitals & Update Required
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            {!isDischargeInitiated ? (
+                              <span className="px-2 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 flex items-center gap-1 w-max">
+                                <Clock className="w-3 h-3" /> Inpatient Care Active
+                              </span>
+                            ) : isBillingPaid ? (
+                              <span className="px-2 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1 w-max">
+                                <CheckCircle2 className="w-3 h-3" /> Ready for Final Discharge
+                              </span>
+                            ) : (
+                              <span className="px-2 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 flex items-center gap-1 w-max">
+                                <CreditCard className="w-3 h-3" /> Dr. Approved • Billing Pending
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                variant="outline"
+                                size="xs"
+                                onClick={() => handleOpenNurseVitals(adm)}
+                                leftIcon={<HeartPulse className="w-3.5 h-3.5 text-rose-500" />}
+                                className="font-semibold"
+                              >
+                                Log Vitals & Update Doctor
+                              </Button>
+
+                              {isDischargeInitiated && isBillingPaid ? (
+                                <Button
+                                  variant="primary"
+                                  size="xs"
+                                  onClick={() => {
+                                    setSelectedAdmissionForDischarge(adm);
+                                    setIsFinalDischargeModalOpen(true);
+                                  }}
+                                  leftIcon={<LogOut className="w-3.5 h-3.5" />}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                                >
+                                  Complete Discharge
+                                </Button>
+                              ) : isDischargeInitiated && !isBillingPaid ? (
+                                <Button
+                                  variant="ghost"
+                                  size="xs"
+                                  disabled
+                                  className="text-slate-400 text-[10px]"
+                                  title="Cannot discharge until billing is settled"
+                                >
+                                  Awaiting Cashier
+                                </Button>
+                              ) : null}
+
+                              <Button
+                                variant="ghost"
+                                size="xs"
+                                onClick={() => navigate(`/hospital/patients/${adm.patientId}`)}
+                              >
+                                View EHR
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1142,6 +1306,183 @@ export const NurseDashboard: React.FC = () => {
                   Print Report
                 </Button>
               </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* MODAL 4: Nurse Inpatient Vitals & Condition Update to Specialist */}
+      <Modal
+        isOpen={isNurseVitalsModalOpen}
+        onClose={() => setIsNurseVitalsModalOpen(false)}
+        title="Bedside Monitoring: Log Vitals & Update Specialist"
+        subtitle={`Patient: ${selectedAdmissionForVitals?.patientName} • Bed: ${selectedAdmissionForVitals?.bedNumber} • Attending: Dr. ${selectedAdmissionForVitals?.doctorName}`}
+        maxWidth="md"
+      >
+        {selectedAdmissionForVitals && (
+          <form onSubmit={handleSaveNurseVitals} className="space-y-4">
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs flex items-center justify-between">
+              <div>
+                <span className="font-bold text-slate-900">{selectedAdmissionForVitals.patientName}</span>
+                <p className="text-[11px] text-slate-500 font-mono">ID: {selectedAdmissionForVitals.patientId} • {selectedAdmissionForVitals.wardType}</p>
+              </div>
+              <span className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-bold border border-indigo-100">
+                Bed {selectedAdmissionForVitals.bedNumber}
+              </span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200/80">
+              <label className="block text-[11px] font-bold text-teal-900 mb-1">
+                Reporting Nurse / Duty Nurse Signature *
+              </label>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-teal-200/80 text-teal-800 flex items-center justify-center font-bold text-sm shrink-0">
+                  👩‍⚕️
+                </div>
+                <Input
+                  value={nurseVitalsForm.nurseName}
+                  onChange={(e) => setNurseVitalsForm({ ...nurseVitalsForm, nurseName: e.target.value })}
+                  placeholder="e.g. Staff Nurse Clara Vance"
+                  required
+                  className="text-xs bg-white font-medium"
+                />
+              </div>
+              <p className="text-[10px] text-teal-700 mt-1">
+                Your name will be visible to Dr. <strong>{selectedAdmissionForVitals.doctorName}</strong> on their Inpatients care dashboard.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Blood Pressure</label>
+                <Input
+                  value={nurseVitalsForm.bloodPressure}
+                  onChange={(e) => setNurseVitalsForm({ ...nurseVitalsForm, bloodPressure: e.target.value })}
+                  placeholder="120/80"
+                  required
+                  className="text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Pulse (bpm)</label>
+                <Input
+                  value={nurseVitalsForm.heartRate}
+                  onChange={(e) => setNurseVitalsForm({ ...nurseVitalsForm, heartRate: e.target.value })}
+                  placeholder="76"
+                  type="number"
+                  required
+                  className="text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Temperature (°F)</label>
+                <Input
+                  value={nurseVitalsForm.temperature}
+                  onChange={(e) => setNurseVitalsForm({ ...nurseVitalsForm, temperature: e.target.value })}
+                  placeholder="98.6"
+                  type="number"
+                  step="0.1"
+                  required
+                  className="text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">SpO2 (%)</label>
+                <Input
+                  value={nurseVitalsForm.oxygenLevel}
+                  onChange={(e) => setNurseVitalsForm({ ...nurseVitalsForm, oxygenLevel: e.target.value })}
+                  placeholder="99"
+                  type="number"
+                  required
+                  className="text-xs"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                Patient Clinical Condition & Recovery Status *
+              </label>
+              <select
+                value={nurseVitalsForm.nurseCondition}
+                onChange={(e) => setNurseVitalsForm({ ...nurseVitalsForm, nurseCondition: e.target.value as NurseConditionStatus })}
+                className="w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-800 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value="Stable & Improving">Stable & Improving (Patient recovering well)</option>
+                <option value="Ready for Discharge Review">Ready for Discharge Review (Vitals normal, fit for doctor discharge evaluation)</option>
+                <option value="Observation Continues">Observation Continues (Needs continued medication/fluids)</option>
+                <option value="Critical / High Attention">Critical / High Attention (Requires immediate doctor visit)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                Clinical Observation Notes for Attending Doctor *
+              </label>
+              <Textarea
+                rows={3}
+                value={nurseVitalsForm.nurseNotes}
+                onChange={(e) => setNurseVitalsForm({ ...nurseVitalsForm, nurseNotes: e.target.value })}
+                placeholder="e.g. Patient afebrile for 24h, oral diet tolerated, surgical incision clean, pain score 1/10. Ready for specialist discharge assessment."
+                required
+              />
+            </div>
+
+            <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-100 text-indigo-900 text-xs">
+              💡 <strong>Hospital Flow:</strong> Submitting this observation sends this report directly to Dr. <strong>{selectedAdmissionForVitals.doctorName}</strong>. The specialist uses this update to initiate the official medical discharge.
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button type="button" variant="outline" size="sm" onClick={() => setIsNurseVitalsModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" size="sm" leftIcon={<HeartPulse className="w-4 h-4" />}>
+                Submit Clinical Update to Specialist
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* MODAL 5: Nurse Final Discharge & Bed Release */}
+      <Modal
+        isOpen={isFinalDischargeModalOpen}
+        onClose={() => setIsFinalDischargeModalOpen(false)}
+        title="Complete Patient Discharge & Release Bed"
+        subtitle={`Patient: ${selectedAdmissionForDischarge?.patientName} • Bed: ${selectedAdmissionForDischarge?.bedNumber}`}
+        maxWidth="md"
+      >
+        {selectedAdmissionForDischarge && (
+          <div className="space-y-4 text-xs">
+            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 space-y-2">
+              <div className="flex items-center gap-2 text-emerald-900 font-bold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                All Discharge Prerequisite Checks Passed
+              </div>
+              <ul className="space-y-1 text-emerald-800 text-[11px]">
+                <li>• 🩺 Doctor Medical Discharge: Signed by Dr. {selectedAdmissionForDischarge.doctorName}</li>
+                <li>• 📋 Discharge Summary: {selectedAdmissionForDischarge.dischargeSummary || 'Clinical recovery achieved'}</li>
+                <li>• 💳 Inpatient Billing: Paid & Cleared (Invoice: {selectedAdmissionForDischarge.invoiceId || 'Settled'})</li>
+              </ul>
+            </div>
+
+            <p className="text-slate-600">
+              Confirming final discharge will remove cannula/lines, deliver discharge medication advice to the family, and reset <strong>Bed {selectedAdmissionForDischarge.bedNumber}</strong> to <strong>Available</strong> for new inpatient intakes.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button variant="outline" size="sm" onClick={() => setIsFinalDischargeModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleConfirmFinalDischarge}
+                leftIcon={<LogOut className="w-4 h-4" />}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+              >
+                Confirm Final Discharge & Release Bed
+              </Button>
             </div>
           </div>
         )}

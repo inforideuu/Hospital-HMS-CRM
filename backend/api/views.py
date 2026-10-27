@@ -784,6 +784,35 @@ class AdmissionViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(hospital_id=hospital_id)
         return queryset
 
+    def perform_create(self, serializer):
+        admission = serializer.save()
+        self._sync_bed_status(admission)
+
+    def perform_update(self, serializer):
+        admission = serializer.save()
+        self._sync_bed_status(admission)
+
+    def _sync_bed_status(self, admission):
+        try:
+            if not admission.bed_number:
+                return
+            # Find bed by bed_number and hospital
+            bed = Bed.objects.filter(bed_number=admission.bed_number, hospital_id=admission.hospital_id).first()
+            if not bed:
+                bed = Bed.objects.filter(bed_number=admission.bed_number).first()
+            if bed:
+                if admission.status in ['Discharged', 'Cancelled']:
+                    bed.status = 'Available'
+                    bed.current_patient_id = None
+                    bed.current_patient_name = None
+                else:
+                    bed.status = 'Occupied'
+                    bed.current_patient_id = str(admission.patient_id)
+                    bed.current_patient_name = str(admission.patient.name if admission.patient else '')
+                bed.save()
+        except Exception:
+            pass
+
 class BillingInvoiceViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
     queryset = BillingInvoice.objects.all()
     serializer_class = BillingInvoiceSerializer

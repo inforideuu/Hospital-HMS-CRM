@@ -1320,7 +1320,38 @@ export const MockStorage = {
 
   // Beds & Admissions
   getBeds(hospitalId?: string): Bed[] {
-    const list = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+    let list = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+    const admissions = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const activeAdmissions = admissions.filter((a) => a.status === 'Active' || (a.status as string) === 'Admitted');
+
+    let changed = false;
+    for (const b of list) {
+      if (!b.bedNumber) continue;
+      const normBed = b.bedNumber.trim().toLowerCase();
+      const adm = activeAdmissions.find(
+        (a) =>
+          a.bedNumber &&
+          a.bedNumber.trim().toLowerCase() === normBed &&
+          (!b.hospitalId || !a.hospitalId || b.hospitalId === a.hospitalId)
+      );
+
+      if (adm) {
+        if (b.status !== 'Occupied' || b.currentPatientId !== adm.patientId) {
+          b.status = 'Occupied';
+          b.currentPatientId = adm.patientId;
+          b.currentPatientName = adm.patientName;
+          changed = true;
+        }
+      } else if (b.status === 'Occupied' && !b.currentPatientId) {
+        b.status = 'Available';
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      setStored(STORAGE_KEYS.BEDS, list);
+    }
+
     if (hospitalId) {
       return list.filter((b) => b.hospitalId === hospitalId);
     }
@@ -1359,13 +1390,21 @@ export const MockStorage = {
     }
     setStored(STORAGE_KEYS.ADMISSIONS, list);
 
-    const beds = this.getBeds(admission.hospitalId);
-    const bed = beds.find((b) => b.bedNumber === admission.bedNumber);
+    const allBeds = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+    const normBedNumber = (admission.bedNumber || '').trim().toLowerCase();
+    const bed =
+      allBeds.find(
+        (b) =>
+          b.bedNumber &&
+          b.bedNumber.trim().toLowerCase() === normBedNumber &&
+          (!admission.hospitalId || !b.hospitalId || b.hospitalId === admission.hospitalId)
+      ) || allBeds.find((b) => b.bedNumber && b.bedNumber.trim().toLowerCase() === normBedNumber);
+
     if (bed) {
       bed.status = 'Occupied';
       bed.currentPatientId = admission.patientId;
       bed.currentPatientName = admission.patientName;
-      setStored(STORAGE_KEYS.BEDS, beds);
+      setStored(STORAGE_KEYS.BEDS, allBeds);
     }
     this.logActivity('Admitted Patient to Ward', `${admission.patientName} in ${admission.bedNumber}`, 'patient', 'Staff', 'Hospital User', admission.hospitalId);
   },
@@ -1378,13 +1417,21 @@ export const MockStorage = {
       adm.dischargeDate = new Date().toISOString().split('T')[0];
       setStored(STORAGE_KEYS.ADMISSIONS, list);
 
-      const beds = this.getBeds(adm.hospitalId);
-      const bed = beds.find((b) => b.bedNumber === adm.bedNumber);
+      const allBeds = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+      const normBedNumber = (adm.bedNumber || '').trim().toLowerCase();
+      const bed =
+        allBeds.find(
+          (b) =>
+            b.bedNumber &&
+            b.bedNumber.trim().toLowerCase() === normBedNumber &&
+            (!adm.hospitalId || !b.hospitalId || b.hospitalId === adm.hospitalId)
+        ) || allBeds.find((b) => b.bedNumber && b.bedNumber.trim().toLowerCase() === normBedNumber);
+
       if (bed) {
         bed.status = 'Available';
         bed.currentPatientId = undefined;
         bed.currentPatientName = undefined;
-        setStored(STORAGE_KEYS.BEDS, beds);
+        setStored(STORAGE_KEYS.BEDS, allBeds);
       }
       this.logActivity('Discharged Patient', `${adm.patientName} (${adm.id})`, 'patient', 'Staff', 'Hospital User', adm.hospitalId);
     }

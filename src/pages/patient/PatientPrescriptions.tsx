@@ -9,6 +9,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { printPrescription } from '../../utils/prescriptionPrint';
 import {
   Pill,
   Search,
@@ -81,7 +82,9 @@ export const PatientPrescriptions: React.FC = () => {
   };
 
   const handlePrint = (p: Prescription) => {
-    window.print();
+    printPrescription(p, {
+      hospitalName: 'PulseCore Super Specialty Hospital',
+    });
   };
 
   const getStatusBadgeVariant = (status: Prescription['status']) => {

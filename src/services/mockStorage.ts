@@ -51,6 +51,10 @@ import {
   Organization,
   BranchCreationRequest,
   FollowUpRequest,
+  AdmissionRequest,
+  AdmissionRequestPriority,
+  AdmissionRequestStatus,
+  NurseConditionStatus,
 } from '../types';
 import {
   initialOrganizations,
@@ -145,7 +149,31 @@ const STORAGE_KEYS = {
   ORGANIZATIONS: 'pulse_organizations',
   BRANCH_REQUESTS: 'pulse_branch_requests',
   FOLLOW_UP_REQUESTS: 'pulse_follow_up_requests',
+  ADMISSION_REQUESTS: 'pulse_admission_requests',
 };
+
+const initialAdmissionRequests: AdmissionRequest[] = [
+  {
+    id: 'ADMR-101',
+    hospitalId: 'HOSP-001',
+    appointmentId: 'APT-1002',
+    patientId: 'PAT-1002',
+    patientName: 'Jane Smith',
+    patientPhone: '+91 98765 43211',
+    patientAge: 32,
+    patientGender: 'Female',
+    doctorId: 'DOC-101',
+    doctorName: 'Dr. Sarah Wilson',
+    departmentName: 'General Medicine',
+    recommendedWardType: 'General Ward',
+    priority: 'Urgent',
+    reason: 'Acute Pyelonephritis with high-grade spike & vomiting. Needs IV Ceftriaxone & IV fluid hydration.',
+    diagnosis: 'Acute Pyelonephritis',
+    instructions: 'Start IV NS 100ml/hr, monitor temperature chart q2h, check urine routine.',
+    status: 'Pending',
+    createdAt: new Date().toISOString(),
+  },
+];
 
 function notifyStorageChange<T>(key: string, value: T): void {
   if (typeof window === 'undefined') return;
@@ -910,7 +938,35 @@ export async function syncWithDjangoBackend() {
         if (a && a.id) mergedMap.set(a.id, a);
       }
       for (const a of mapped) {
-        if (a && a.id) mergedMap.set(a.id, a);
+        if (a && a.id) {
+          const local = mergedMap.get(a.id);
+          let parsedNotes: any = null;
+          try {
+            if (a.notes && typeof a.notes === 'string' && a.notes.startsWith('{')) {
+              parsedNotes = JSON.parse(a.notes);
+            }
+          } catch (e) {}
+
+          mergedMap.set(a.id, {
+            ...a,
+            nurseCondition: local?.nurseCondition || parsedNotes?.nurseCondition || a.nurseCondition,
+            nurseNotes: local?.nurseNotes || parsedNotes?.nurseNotes || a.nurseNotes,
+            nurseVitals: local?.nurseVitals || parsedNotes?.nurseVitals || a.nurseVitals,
+            nurseUpdatedAt: local?.nurseUpdatedAt || parsedNotes?.nurseUpdatedAt || a.nurseUpdatedAt,
+            dischargeInitiatedAt: local?.dischargeInitiatedAt || a.dischargeInitiatedAt,
+            dischargeDoctorId: local?.dischargeDoctorId || a.dischargeDoctorId,
+            dischargeDoctorName: local?.dischargeDoctorName || a.dischargeDoctorName,
+            dischargeSummary: local?.dischargeSummary || a.dischargeSummary,
+            dischargeAdvice: local?.dischargeAdvice || a.dischargeAdvice,
+            dischargePrescriptions: local?.dischargePrescriptions || a.dischargePrescriptions,
+            billingStatus: local?.billingStatus || a.billingStatus,
+            invoiceId: local?.invoiceId || a.invoiceId,
+            finalBilledAmount: local?.finalBilledAmount || a.finalBilledAmount,
+            finalPaidAmount: local?.finalPaidAmount || a.finalPaidAmount,
+            finalDischargedBy: local?.finalDischargedBy || a.finalDischargedBy,
+            finalDischargedRole: local?.finalDischargedRole || a.finalDischargedRole,
+          });
+        }
       }
       const reconciled = Array.from(mergedMap.values());
       if (reconciled.length !== currentAdmissions.length || JSON.stringify(reconciled) !== JSON.stringify(currentAdmissions)) {
@@ -1017,7 +1073,28 @@ export async function syncWithDjangoBackend() {
         if (rx && rx.id) mergedMap.set(rx.id, rx);
       }
       for (const rx of mapped) {
-        if (rx && rx.id) mergedMap.set(rx.id, rx);
+        if (rx && rx.id) {
+          const local = mergedMap.get(rx.id);
+          const isLocallyDispensed = local && (local.status === 'Dispensed' || Boolean(local.dispensedAt));
+          if (isLocallyDispensed) {
+            mergedMap.set(rx.id, {
+              ...rx,
+              ...local,
+              status: 'Dispensed',
+              dispensedAt: local.dispensedAt || new Date().toISOString(),
+              dispensedBy: local.dispensedBy,
+              dispensedInvoiceId: local.dispensedInvoiceId,
+            });
+          } else {
+            mergedMap.set(rx.id, {
+              ...(local || {}),
+              ...rx,
+              dispensedAt: local?.dispensedAt,
+              dispensedBy: local?.dispensedBy,
+              dispensedInvoiceId: local?.dispensedInvoiceId,
+            });
+          }
+        }
       }
       const reconciled = Array.from(mergedMap.values());
       if (reconciled.length !== currentRx.length || JSON.stringify(reconciled) !== JSON.stringify(currentRx)) {
@@ -1225,6 +1302,10 @@ export async function syncWithDjangoBackend() {
     }
 
     if (bedsRes && bedsRes.status === 'fulfilled' && Array.isArray(bedsRes.value) && bedsRes.value.length > 0) {
+      const currentBeds = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+      const currentAdmissions = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+      const activeAdms = currentAdmissions.filter((a) => a.status === 'Active' || (a.status as string) === 'Admitted');
+
       const mapped: Bed[] = bedsRes.value.map((b: any) => ({
         id: b.id,
         hospitalId: b.hospital || b.hospital_id || 'hosp-1',
@@ -1233,13 +1314,45 @@ export async function syncWithDjangoBackend() {
         bedNumber: b.bed_number || b.bedNumber,
         wardType: b.ward_type || b.wardType || 'General Ward',
         floor: b.floor || '1st Floor',
-        status: b.status as any || 'Available',
+        status: (b.status as any) || 'Available',
         currentPatientId: b.current_patient_id || b.currentPatientId,
         currentPatientName: b.current_patient_name || b.currentPatientName,
         dailyRate: Number(b.daily_rate || b.dailyRate || 1000),
         notes: b.notes || '',
       }));
-      localStorage.setItem(STORAGE_KEYS.BEDS, JSON.stringify(mapped));
+
+      const mergedMap = new Map<string, Bed>();
+      for (const b of currentBeds) {
+        if (b && b.id) mergedMap.set(b.id, b);
+      }
+      for (const b of mapped) {
+        if (b && b.id) {
+          const local = mergedMap.get(b.id);
+          mergedMap.set(b.id, {
+            ...b,
+            status: local?.status === 'Occupied' ? 'Occupied' : b.status,
+            currentPatientId: local?.currentPatientId || b.currentPatientId,
+            currentPatientName: local?.currentPatientName || b.currentPatientName,
+          });
+        }
+      }
+
+      // Reconcile with active admissions
+      const reconciled = Array.from(mergedMap.values());
+      for (const b of reconciled) {
+        if (!b.bedNumber) continue;
+        const normNum = b.bedNumber.trim().toLowerCase();
+        const activeAdm = activeAdms.find(
+          (a) => a.bedNumber && a.bedNumber.trim().toLowerCase() === normNum
+        );
+        if (activeAdm) {
+          b.status = 'Occupied';
+          b.currentPatientId = activeAdm.patientId;
+          b.currentPatientName = activeAdm.patientName;
+        }
+      }
+
+      localStorage.setItem(STORAGE_KEYS.BEDS, JSON.stringify(reconciled));
       updated = true;
     }
 
@@ -2682,6 +2795,48 @@ export const MockStorage = {
       list = cleaned;
     }
 
+    // Self-heal and normalize prescription fulfillment states
+    const invoices = getStored<Invoice[]>(STORAGE_KEYS.INVOICES, initialInvoices);
+    const invoiceMap = new Map<string, Invoice>();
+    invoices.forEach((inv) => {
+      if (inv.prescriptionId) {
+        invoiceMap.set(inv.prescriptionId, inv);
+      }
+    });
+
+    let hasNormalization = false;
+    list = list.map((p) => {
+      const linkedInvoice = invoiceMap.get(p.id);
+      const isDispensed = p.status === 'Dispensed' || Boolean(p.dispensedAt) || Boolean(linkedInvoice);
+
+      if (isDispensed) {
+        const nextDispensedAt = p.dispensedAt || linkedInvoice?.issueDate || linkedInvoice?.createdAt || new Date().toISOString();
+        const nextDispensedInvoiceId = p.dispensedInvoiceId || linkedInvoice?.id;
+        const nextDispensedBy = p.dispensedBy || linkedInvoice?.collectedBy || 'Pharmacist';
+
+        if (
+          p.status !== 'Dispensed' ||
+          p.dispensedAt !== nextDispensedAt ||
+          p.dispensedInvoiceId !== nextDispensedInvoiceId ||
+          p.dispensedBy !== nextDispensedBy
+        ) {
+          hasNormalization = true;
+          return {
+            ...p,
+            status: 'Dispensed',
+            dispensedAt: nextDispensedAt,
+            dispensedInvoiceId: nextDispensedInvoiceId,
+            dispensedBy: nextDispensedBy,
+          };
+        }
+      }
+      return p;
+    });
+
+    if (hasNormalization) {
+      setStored(STORAGE_KEYS.PRESCRIPTIONS, list);
+    }
+
     if (patientId) {
       return list.filter((p) => p.patientId === patientId);
     }
@@ -2982,6 +3137,52 @@ export const MockStorage = {
         }
       }
 
+      // Inpatient Admission Order Handling
+      if (consultation.needsAdmission) {
+        const admReqList = getStored<AdmissionRequest[]>(STORAGE_KEYS.ADMISSION_REQUESTS, initialAdmissionRequests);
+        const existingAdmReq = admReqList.find(
+          (r) =>
+            r.consultationId === consultation.id ||
+            (consultation.appointmentId && r.appointmentId === consultation.appointmentId)
+        );
+
+        const aptList = getStored<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
+        const originalApt = consultation.appointmentId ? aptList.find((a) => a.id === consultation.appointmentId) : undefined;
+
+        if (existingAdmReq) {
+          existingAdmReq.recommendedWardType = consultation.admissionWardType || 'General Ward';
+          existingAdmReq.priority = consultation.admissionPriority || 'Urgent';
+          existingAdmReq.reason = consultation.admissionReason || consultation.diagnosis || 'Inpatient admission recommended by specialist';
+          existingAdmReq.instructions = consultation.admissionInstructions;
+          existingAdmReq.diagnosis = consultation.diagnosis;
+          setStored(STORAGE_KEYS.ADMISSION_REQUESTS, admReqList);
+        } else {
+          const newAdmReq: AdmissionRequest = {
+            id: `ADMR-${Date.now().toString().slice(-4)}`,
+            hospitalId: consultation.hospitalId || 'HOSP-001',
+            consultationId: consultation.id,
+            appointmentId: consultation.appointmentId,
+            patientId: consultation.patientId,
+            patientName: consultation.patientName,
+            patientPhone: originalApt?.patientPhone || '9876543210',
+            patientAge: originalApt?.patientAge,
+            patientGender: originalApt?.patientGender,
+            doctorId: consultation.doctorId,
+            doctorName: consultation.doctorName,
+            departmentName: originalApt?.departmentName || 'General Medicine',
+            recommendedWardType: consultation.admissionWardType || 'General Ward',
+            priority: consultation.admissionPriority || 'Urgent',
+            reason: consultation.admissionReason || consultation.diagnosis || 'Inpatient admission recommended by specialist',
+            diagnosis: consultation.diagnosis,
+            instructions: consultation.admissionInstructions,
+            status: 'Pending',
+            createdAt: new Date().toISOString(),
+          };
+          admReqList.unshift(newAdmReq);
+          setStored(STORAGE_KEYS.ADMISSION_REQUESTS, admReqList);
+        }
+      }
+
       // If this consultation itself was completing a follow-up appointment, mark the follow-up request completed
       if (consultation.appointmentId) {
         const flwList = getStored<FollowUpRequest[]>(STORAGE_KEYS.FOLLOW_UP_REQUESTS, []);
@@ -3047,6 +3248,49 @@ export const MockStorage = {
       if (scheduledDate) req.scheduledDate = scheduledDate;
       if (scheduledTime) req.scheduledTime = scheduledTime;
       setStored(STORAGE_KEYS.FOLLOW_UP_REQUESTS, list);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('pulse_storage_updated'));
+      }
+    }
+  },
+
+  // Inpatient Admission Requests Management
+  getAdmissionRequests(hospitalId?: string, patientId?: string): AdmissionRequest[] {
+    let list = getStored<AdmissionRequest[]>(STORAGE_KEYS.ADMISSION_REQUESTS, initialAdmissionRequests);
+    if (hospitalId) {
+      list = list.filter((r) => this.matchHospitalId(r.hospitalId, hospitalId) || !r.hospitalId);
+    }
+    if (patientId) {
+      list = list.filter((r) => r.patientId === patientId);
+    }
+    return list;
+  },
+
+  saveAdmissionRequest(req: AdmissionRequest): void {
+    const list = getStored<AdmissionRequest[]>(STORAGE_KEYS.ADMISSION_REQUESTS, initialAdmissionRequests);
+    const idx = list.findIndex((r) => r.id === req.id);
+    if (idx >= 0) {
+      list[idx] = req;
+    } else {
+      list.unshift(req);
+    }
+    setStored(STORAGE_KEYS.ADMISSION_REQUESTS, list);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
+  },
+
+  updateAdmissionRequestStatus(
+    id: string,
+    status: AdmissionRequestStatus,
+    admittedAdmissionId?: string
+  ): void {
+    const list = getStored<AdmissionRequest[]>(STORAGE_KEYS.ADMISSION_REQUESTS, initialAdmissionRequests);
+    const req = list.find((r) => r.id === id);
+    if (req) {
+      req.status = status;
+      if (admittedAdmissionId) req.admittedAdmissionId = admittedAdmissionId;
+      setStored(STORAGE_KEYS.ADMISSION_REQUESTS, list);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('pulse_storage_updated'));
       }
@@ -3897,6 +4141,37 @@ export const MockStorage = {
 
   getBeds(hospitalId?: string, wardId?: string): Bed[] {
     let list = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+    const admissions = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const activeAdmissions = admissions.filter((a) => a.status === 'Active' || (a.status as string) === 'Admitted');
+
+    let changed = false;
+    for (const b of list) {
+      if (!b.bedNumber) continue;
+      const normBed = b.bedNumber.trim().toLowerCase();
+      const adm = activeAdmissions.find(
+        (a) =>
+          a.bedNumber &&
+          a.bedNumber.trim().toLowerCase() === normBed &&
+          (!b.hospitalId || !a.hospitalId || this.matchHospitalId(b.hospitalId, a.hospitalId))
+      );
+
+      if (adm) {
+        if (b.status !== 'Occupied' || b.currentPatientId !== adm.patientId) {
+          b.status = 'Occupied';
+          b.currentPatientId = adm.patientId;
+          b.currentPatientName = adm.patientName;
+          changed = true;
+        }
+      } else if (b.status === 'Occupied' && !b.currentPatientId) {
+        b.status = 'Available';
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      setStored(STORAGE_KEYS.BEDS, list);
+    }
+
     if (hospitalId) {
       list = list.filter((b) => this.matchHospitalId(b.hospitalId, hospitalId));
     }
@@ -4070,13 +4345,33 @@ export const MockStorage = {
     }
     setStored(STORAGE_KEYS.ADMISSIONS, list);
 
-    const beds = this.getBeds(admission.hospitalId);
-    const bed = beds.find((b) => b.bedNumber === admission.bedNumber);
+    const allBeds = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+    const normBedNumber = (admission.bedNumber || '').trim().toLowerCase();
+    const bed =
+      allBeds.find(
+        (b) =>
+          b.bedNumber &&
+          b.bedNumber.trim().toLowerCase() === normBedNumber &&
+          (!admission.hospitalId || !b.hospitalId || this.matchHospitalId(b.hospitalId, admission.hospitalId))
+      ) || allBeds.find((b) => b.bedNumber && b.bedNumber.trim().toLowerCase() === normBedNumber);
+
     if (bed) {
       bed.status = 'Occupied';
       bed.currentPatientId = admission.patientId;
       bed.currentPatientName = admission.patientName;
-      setStored(STORAGE_KEYS.BEDS, beds);
+      setStored(STORAGE_KEYS.BEDS, allBeds);
+
+      try {
+        fetch(`${API_BASE_URL}/beds/${bed.id}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: 'Occupied',
+            current_patient_id: admission.patientId,
+            current_patient_name: admission.patientName,
+          }),
+        }).catch(() => {});
+      } catch (e) {}
     }
     this.logActivity('Admitted Patient to Ward', `${admission.patientName} in ${admission.bedNumber}`, 'patient', 'Staff', 'Hospital User', admission.hospitalId);
 
@@ -4109,13 +4404,33 @@ export const MockStorage = {
       adm.dischargeDate = new Date().toISOString().split('T')[0];
       setStored(STORAGE_KEYS.ADMISSIONS, list);
 
-      const beds = this.getBeds(adm.hospitalId);
-      const bed = beds.find((b) => b.bedNumber === adm.bedNumber);
+      const allBeds = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+      const normBedNumber = (adm.bedNumber || '').trim().toLowerCase();
+      const bed =
+        allBeds.find(
+          (b) =>
+            b.bedNumber &&
+            b.bedNumber.trim().toLowerCase() === normBedNumber &&
+            (!adm.hospitalId || !b.hospitalId || this.matchHospitalId(b.hospitalId, adm.hospitalId))
+        ) || allBeds.find((b) => b.bedNumber && b.bedNumber.trim().toLowerCase() === normBedNumber);
+
       if (bed) {
         bed.status = 'Available';
         bed.currentPatientId = undefined;
         bed.currentPatientName = undefined;
-        setStored(STORAGE_KEYS.BEDS, beds);
+        setStored(STORAGE_KEYS.BEDS, allBeds);
+
+        try {
+          fetch(`${API_BASE_URL}/beds/${bed.id}/`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              status: 'Available',
+              current_patient_id: null,
+              current_patient_name: null,
+            }),
+          }).catch(() => {});
+        } catch (e) {}
       }
       this.logActivity('Discharged Patient', `${adm.patientName} (${adm.id})`, 'patient', 'Staff', 'Hospital User', adm.hospitalId);
 
@@ -4130,6 +4445,304 @@ export const MockStorage = {
         }).catch(() => {});
       } catch (e) {}
     }
+  },
+
+  updateNurseMonitoring(
+    admissionId: string,
+    data: {
+      nurseNotes: string;
+      nurseCondition: NurseConditionStatus;
+      vitals: {
+        bloodPressure?: string;
+        heartRate?: number;
+        temperature?: number;
+        oxygenLevel?: number;
+      };
+      recordedBy?: string;
+    }
+  ): void {
+    const list = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const adm = list.find((a) => a.id === admissionId);
+    if (adm) {
+      adm.nurseNotes = data.nurseNotes;
+      adm.nurseCondition = data.nurseCondition;
+      adm.nurseUpdatedBy = data.recordedBy || 'Ward Staff Nurse';
+      adm.nurseVitals = {
+        ...data.vitals,
+        recordedAt: new Date().toISOString(),
+        recordedBy: data.recordedBy || 'Ward Staff Nurse',
+      };
+      adm.nurseUpdatedAt = new Date().toISOString();
+      setStored(STORAGE_KEYS.ADMISSIONS, list);
+
+      // Sync latest vitals to patient master record
+      const patients = this.getPatients(adm.hospitalId);
+      const pat = patients.find((p) => p.id === adm.patientId);
+      if (pat) {
+        pat.vitals = {
+          bloodPressure: data.vitals.bloodPressure || pat.vitals?.bloodPressure || '120/80',
+          heartRate: data.vitals.heartRate ?? pat.vitals?.heartRate ?? 75,
+          temperature: data.vitals.temperature ?? pat.vitals?.temperature ?? 98.6,
+          oxygenLevel: data.vitals.oxygenLevel ?? pat.vitals?.oxygenLevel ?? 98,
+          weightKg: pat.vitals?.weightKg || 65,
+          recordedAt: new Date().toISOString(),
+          recordedBy: data.recordedBy || 'Ward Staff Nurse',
+        };
+        this.savePatient(pat);
+      }
+
+      this.logActivity(
+        'Nurse Inpatient Update',
+        `Logged vitals & condition "${data.nurseCondition}" for ${adm.patientName} (${adm.bedNumber})`,
+        'patient',
+        'Staff',
+        data.recordedBy || 'Staff Nurse',
+        adm.hospitalId
+      );
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('pulse_storage_updated'));
+      }
+    }
+  },
+
+  initiateDoctorDischarge(
+    admissionId: string,
+    data: {
+      dischargeSummary: string;
+      dischargeAdvice?: string;
+      dischargePrescriptions?: string;
+      doctorId: string;
+      doctorName: string;
+    }
+  ): { success: boolean; invoiceId?: string; totalAmount?: number } {
+    const list = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const adm = list.find((a) => a.id === admissionId);
+    if (!adm) return { success: false };
+
+    adm.status = 'Discharge Initiated';
+    adm.dischargeInitiatedAt = new Date().toISOString();
+    adm.dischargeDoctorId = data.doctorId;
+    adm.dischargeDoctorName = data.doctorName;
+    adm.dischargeSummary = data.dischargeSummary;
+    adm.dischargeAdvice = data.dischargeAdvice;
+    adm.dischargePrescriptions = data.dischargePrescriptions;
+    adm.billingStatus = 'Pending';
+
+    // Calculate Inpatient Stay Cost and create Inpatient Billing Invoice
+    const bed = this.getBeds(adm.hospitalId).find((b) => b.bedNumber === adm.bedNumber);
+    const dailyRate = bed?.dailyRate || 1500;
+    const admissionDate = new Date(adm.admissionDate);
+    const today = new Date();
+    const diffTime = Math.abs(today.getTime() - admissionDate.getTime());
+    const daysStayed = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+
+    const bedChargeTotal = daysStayed * dailyRate;
+    const nursingChargeTotal = daysStayed * 250;
+    const doctorRoundingTotal = daysStayed * 500;
+    const subtotal = bedChargeTotal + nursingChargeTotal + doctorRoundingTotal;
+    const taxAmount = Math.round(subtotal * 0.05);
+    const totalAmount = subtotal + taxAmount;
+    const depositPaid = Number(adm.initialDeposit) || 0;
+    const balanceDue = Math.max(0, totalAmount - depositPaid);
+
+    const invId = `INV-IPD-${Date.now().toString().slice(-6)}`;
+    adm.invoiceId = invId;
+    adm.finalBilledAmount = totalAmount;
+    adm.finalPaidAmount = depositPaid;
+
+    const newInvoice: Invoice = {
+      id: invId,
+      hospitalId: adm.hospitalId,
+      patientId: adm.patientId,
+      patientName: adm.patientName,
+      patientPhone: '9876543210',
+      issueDate: new Date().toISOString().split('T')[0],
+      dueDate: new Date().toISOString().split('T')[0],
+      billingCategory: 'Hospital Service',
+      encounterType: 'IPD',
+      doctorId: data.doctorId,
+      doctorName: data.doctorName,
+      departmentName: adm.departmentName,
+      paymentType: 'Self Pay',
+      items: [
+        {
+          id: `ITEM-BED-${Date.now()}-1`,
+          description: `Inpatient Bed & Ward Charges (${daysStayed} Day${daysStayed > 1 ? 's' : ''} in ${adm.wardType} - ${adm.bedNumber})`,
+          category: 'Bed Charge',
+          quantity: daysStayed,
+          unitPrice: dailyRate,
+          total: bedChargeTotal,
+        },
+        {
+          id: `ITEM-NURSE-${Date.now()}-2`,
+          description: `24/7 Ward Nursing Care & Telemetry Monitoring (${daysStayed} Day${daysStayed > 1 ? 's' : ''})`,
+          category: 'Nursing',
+          quantity: daysStayed,
+          unitPrice: 250,
+          total: nursingChargeTotal,
+        },
+        {
+          id: `ITEM-DOC-${Date.now()}-3`,
+          description: `Attending Specialist Daily Inpatient Rounds (${daysStayed} Day${daysStayed > 1 ? 's' : ''})`,
+          category: 'Consultation',
+          quantity: daysStayed,
+          unitPrice: 500,
+          total: doctorRoundingTotal,
+        },
+      ],
+      subtotal,
+      taxRate: 5,
+      taxAmount,
+      discount: depositPaid > 0 ? depositPaid : 0,
+      discountReason: depositPaid > 0 ? `Admission Advance Deposit Adjusted (₹${depositPaid})` : undefined,
+      totalAmount: balanceDue,
+      amountPaid: 0,
+      status: balanceDue === 0 ? 'Paid' : 'Pending',
+      cashierDesk: 'IPD Discharge Billing Counter',
+      notes: `Final Inpatient Discharge Settlement for Bed ${adm.bedNumber}. Doctor: ${data.doctorName}. Initial deposit: ₹${depositPaid}. Balance due: ₹${balanceDue}.`,
+      createdAt: new Date().toISOString(),
+    };
+
+    if (balanceDue === 0) {
+      adm.billingStatus = 'Paid';
+    }
+
+    this.saveInvoice(newInvoice);
+    setStored(STORAGE_KEYS.ADMISSIONS, list);
+
+    this.logActivity(
+      'Doctor Initiated Discharge',
+      `Dr. ${data.doctorName} initiated medical discharge for ${adm.patientName} (${adm.bedNumber}). Inpatient Invoice ${invId} generated.`,
+      'patient',
+      'Doctor',
+      data.doctorName,
+      adm.hospitalId
+    );
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
+
+    return { success: true, invoiceId: invId, totalAmount: balanceDue };
+  },
+
+  settleInpatientBilling(admissionId: string, invoiceId?: string): void {
+    const list = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const adm = list.find((a) => a.id === admissionId);
+    if (adm) {
+      adm.billingStatus = 'Paid';
+      setStored(STORAGE_KEYS.ADMISSIONS, list);
+
+      const targetInvId = invoiceId || adm.invoiceId;
+      if (targetInvId) {
+        const invoices = this.getInvoices(adm.hospitalId);
+        const inv = invoices.find((i) => i.id === targetInvId);
+        if (inv) {
+          inv.status = 'Paid';
+          inv.amountPaid = inv.totalAmount;
+          inv.paymentMethod = 'UPI';
+          this.saveInvoice(inv);
+        }
+      }
+
+      this.logActivity(
+        'Inpatient Billing Settled',
+        `Final bill settled for ${adm.patientName} (${adm.bedNumber})`,
+        'billing',
+        'Staff',
+        'Cashier Desk',
+        adm.hospitalId
+      );
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('pulse_storage_updated'));
+      }
+    }
+  },
+
+  completeFinalDischarge(
+    admissionId: string,
+    dischargedBy?: string,
+    dischargedRole?: 'Nurse' | 'Receptionist' | 'Admin'
+  ): { success: boolean; error?: string } {
+    const list = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const adm = list.find((a) => a.id === admissionId);
+    if (!adm) return { success: false, error: 'Admission record not found' };
+
+    if (adm.status !== 'Discharge Initiated') {
+      return {
+        success: false,
+        error: 'Doctor has not yet initiated medical discharge. Attending specialist must evaluate health and create discharge summary first.',
+      };
+    }
+
+    if (adm.billingStatus === 'Pending') {
+      return {
+        success: false,
+        error: 'Inpatient billing settlement is pending. Final bill must be settled at Cashier Desk before bed release.',
+      };
+    }
+
+    adm.status = 'Discharged';
+    adm.dischargeDate = new Date().toISOString().split('T')[0];
+    adm.finalDischargedBy = dischargedBy || 'Hospital Staff';
+    adm.finalDischargedRole = dischargedRole || 'Receptionist';
+    setStored(STORAGE_KEYS.ADMISSIONS, list);
+
+    // Release the bed
+    const allBeds = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+    const normBedNumber = (adm.bedNumber || '').trim().toLowerCase();
+    const bed =
+      allBeds.find(
+        (b) =>
+          b.bedNumber &&
+          b.bedNumber.trim().toLowerCase() === normBedNumber &&
+          (!adm.hospitalId || !b.hospitalId || this.matchHospitalId(b.hospitalId, adm.hospitalId))
+      ) || allBeds.find((b) => b.bedNumber && b.bedNumber.trim().toLowerCase() === normBedNumber);
+
+    if (bed) {
+      bed.status = 'Available';
+      bed.currentPatientId = undefined;
+      bed.currentPatientName = undefined;
+      setStored(STORAGE_KEYS.BEDS, allBeds);
+
+      try {
+        fetch(`${API_BASE_URL}/beds/${bed.id}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: 'Available',
+            current_patient_id: null,
+            current_patient_name: null,
+          }),
+        }).catch(() => {});
+      } catch (e) {}
+    }
+
+    // Update patient status to Discharged
+    const patients = this.getPatients(adm.hospitalId);
+    const pat = patients.find((p) => p.id === adm.patientId);
+    if (pat) {
+      pat.status = 'Discharged';
+      pat.roomBedNumber = undefined;
+      this.savePatient(pat);
+    }
+
+    this.logActivity(
+      'Completed Final Discharge',
+      `${adm.patientName} released from Bed ${adm.bedNumber} by ${dischargedRole} (${dischargedBy || 'Staff'})`,
+      'patient',
+      'Staff',
+      dischargedBy || 'Staff',
+      adm.hospitalId
+    );
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
+
+    return { success: true };
   },
 
   // Billing & Invoices
@@ -4475,6 +5088,26 @@ export const MockStorage = {
       this.logActivity(
         'Quarantined Medicine Batch',
         `${med.name} (Batch: ${med.batchNumber}) quarantined: ${med.quarantineReason}`,
+        'clinical',
+        pharmacistName,
+        'Pharmacist',
+        hospitalId
+      );
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated'));
+    }
+  },
+
+  releaseFromQuarantine(medicineId: string, pharmacistName: string, hospitalId: string): void {
+    const allMeds = this.getMedicines(hospitalId);
+    const med = allMeds.find((m) => m.id === medicineId);
+    if (med) {
+      med.status = med.stockQuantity > med.minThreshold ? 'In Stock' : 'Low Stock';
+      med.quarantineReason = undefined;
+      med.quarantinedAt = undefined;
+      this.saveMedicine(med);
+      this.logActivity(
+        'Released Medicine From Quarantine',
+        `${med.name} (Batch: ${med.batchNumber}) returned to active clinical inventory`,
         'clinical',
         pharmacistName,
         'Pharmacist',

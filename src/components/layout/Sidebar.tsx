@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   UserPlus,
   BedDouble,
+  HeartPulse,
   Receipt,
   Pill,
   FlaskConical,
@@ -158,6 +159,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       roles: ['hospital_admin', 'doctor', 'nurse', 'receptionist'],
       badge: 'IPD',
       featureKeyword: 'admissions_beds',
+    },
+    {
+      label: 'Inpatients Under My Care',
+      path: '/hospital/doctor/inpatients',
+      icon: <BedDouble className="w-4 h-4 text-teal-400" />,
+      roles: ['hospital_admin', 'doctor', 'nurse'],
+      badge: 'Nurse Updates',
     },
     {
       label: 'Billing & Invoices',
@@ -334,6 +342,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       featureKeyword: 'admissions_beds',
     },
     {
+      label: 'Inpatients Under My Care',
+      path: '/hospital/doctor/inpatients',
+      icon: <BedDouble className="w-4 h-4 text-teal-400" />,
+      roles: ['doctor'],
+      badge: 'Nurse Updates',
+    },
+    {
       label: 'Laboratory Diagnostics',
       path: '/hospital/laboratory',
       icon: <FlaskConical className="w-4 h-4" />,
@@ -481,7 +496,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const pendingPrescriptionsCount = hospId
-    ? MockStorage.getPrescriptions(undefined, hospId).filter((p) => p.status === 'Active' || !p.dispensedAt).length
+    ? MockStorage.getPrescriptions(undefined, hospId).filter(
+        (p) => p.status !== 'Dispensed' && !p.dispensedAt && p.status !== 'Completed'
+      ).length
     : 0;
 
   const lowStockMedsCount = hospId
@@ -664,7 +681,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
 
           {filteredNavItems.map((item) => {
-            const isActive = location.pathname.startsWith(item.path);
+            const itemPathOnly = item.path.split('?')[0];
+            const itemQuery = item.path.includes('?') ? item.path.split('?')[1] : '';
+            const isActive = item.path.includes('?')
+              ? location.pathname === itemPathOnly && (location.search.includes(itemQuery) || (!location.search && itemQuery === 'tab=nurse_updates'))
+              : (location.pathname === item.path && !location.search) ||
+                (item.path !== '/hospital/dashboard' &&
+                  !item.path.includes('?') &&
+                  location.pathname.startsWith(item.path));
             const isFeatureDisabled =
               portalType === 'hospital' &&
               item.featureKeyword &&

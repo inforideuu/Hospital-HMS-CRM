@@ -666,14 +666,14 @@ export const BillingManagement: React.FC = () => {
         subtitle="Departmental revenue management split into Hospital Services (OPD/IPD/Diagnostics), Pharmacy Prescription Fulfillment, and Walk-in Retail POS Sales."
         breadcrumbs={[{ label: 'Hospital HMS', href: '/hospital/dashboard' }, { label: 'Billing & Invoices' }]}
         actions={
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
             {isAddonEnabled && (
               <Button
                 variant="primary"
                 size="sm"
                 onClick={() => setIsAddonModalOpen(true)}
-                leftIcon={<Zap className="w-3.5 h-3.5" />}
-                className="bg-purple-600 hover:bg-purple-700 text-white font-bold shadow-md"
+                leftIcon={<Zap className="w-4 h-4" />}
+                className="bg-purple-600 hover:bg-purple-700 border-purple-600 text-white font-medium shadow-xs whitespace-nowrap"
               >
                 + Add On Billing Software
               </Button>
@@ -682,24 +682,17 @@ export const BillingManagement: React.FC = () => {
               variant="outline"
               size="sm"
               onClick={() => MockStorage.exportToCSV('Invoices_Ledger', filtered)}
-              leftIcon={<Download className="w-3.5 h-3.5" />}
+              leftIcon={<Download className="w-4 h-4 text-slate-500" />}
+              className="whitespace-nowrap font-medium"
             >
               Export Ledger
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleOpenCreateModal('Walk-in Pharmacy')}
-              leftIcon={<ShoppingCart className="w-3.5 h-3.5 text-amber-600" />}
-              className="border-amber-300 text-amber-800 bg-amber-50/60 hover:bg-amber-100/80 font-semibold"
-            >
-              + Walk-in POS Bill
             </Button>
             <Button
               variant="primary"
               size="sm"
               onClick={() => handleOpenCreateModal()}
-              leftIcon={<Plus className="w-3.5 h-3.5" />}
+              leftIcon={<Plus className="w-4 h-4" />}
+              className="whitespace-nowrap font-medium shadow-xs"
             >
               Create Patient Invoice
             </Button>

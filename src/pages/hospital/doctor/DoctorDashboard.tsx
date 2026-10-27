@@ -21,12 +21,15 @@ import {
   BedDouble,
   FlaskConical,
   Ambulance,
+  HeartPulse,
+  AlertTriangle,
+  FileCheck,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { ApiService } from '../../../services/apiService';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
-import { Appointment, Consultation, Doctor, Patient } from '../../../types';
+import { Appointment, Consultation, Doctor, Patient, Admission, NurseConditionStatus } from '../../../types';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { StatCard } from '../../../components/ui/StatCard';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
@@ -45,6 +48,7 @@ export const DoctorDashboard: React.FC = () => {
   const [consultations, setConsultations] = useState<Consultation[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [admissions, setAdmissions] = useState<Admission[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const todayActual = useMemo(() => getHospitalTodayDate(hospId), [hospId]);
@@ -75,6 +79,8 @@ export const DoctorDashboard: React.FC = () => {
     setAppointments(allAppointments);
     const allConsultations = MockStorage.getConsultations(hospId);
     setConsultations(allConsultations);
+    const allAdmissions = MockStorage.getAdmissions(hospId);
+    setAdmissions(allAdmissions);
     setIsLoading(false);
   };
 
@@ -131,6 +137,54 @@ export const DoctorDashboard: React.FC = () => {
     );
   }, [myAppointments, todayActual]);
 
+  // Doctor's assigned inpatients & nurse monitoring updates
+  const myInpatients = useMemo(() => {
+    const docNameLower = doctorName.toLowerCase();
+    return admissions
+      .filter((a) => {
+        const matchDoc =
+          !doctorId ||
+          a.doctorId === doctorId ||
+          (doctorId && a.doctorId && a.doctorId.toLowerCase() === doctorId.toLowerCase()) ||
+          (a.doctorName && (
+            a.doctorName.toLowerCase() === docNameLower ||
+            a.doctorName.toLowerCase().includes(docNameLower.replace(/^dr\.\s*/i, '')) ||
+            docNameLower.includes(a.doctorName.toLowerCase().replace(/^dr\.\s*/i, ''))
+          ));
+        return matchDoc && (a.status === 'Active' || a.status === 'Discharge Initiated');
+      })
+      .map((adm) => {
+        const pat = patients.find((p) => p.id === adm.patientId);
+        const effectiveVitals = adm.nurseVitals || (pat?.vitals ? {
+          bloodPressure: pat.vitals.bloodPressure || '120/80',
+          heartRate: pat.vitals.heartRate || 74,
+          temperature: pat.vitals.temperature || 98.6,
+          oxygenLevel: pat.vitals.oxygenLevel || 99,
+          recordedAt: pat.vitals.recordedAt || adm.admissionDate,
+          recordedBy: pat.vitals.recordedBy || 'Ward Staff Nurse',
+        } : undefined);
+        const effectiveCondition: NurseConditionStatus = adm.nurseCondition || 'Stable & Improving';
+        const effectiveNotes = adm.nurseNotes || (effectiveVitals ? 'Patient vitals stable. No acute complaints reported.' : 'Awaiting bedside assessment');
+        return {
+          ...adm,
+          effectiveVitals,
+          effectiveCondition,
+          effectiveNotes,
+          effectiveUpdatedAt: adm.nurseUpdatedAt || effectiveVitals?.recordedAt || adm.admissionDate,
+        };
+      });
+  }, [admissions, doctorId, doctorName, patients]);
+
+  const readyForDischargeInpatients = useMemo(() => {
+    return myInpatients.filter(
+      (a) => a.effectiveCondition === 'Ready for Discharge Review' && a.status === 'Active'
+    );
+  }, [myInpatients]);
+
+  const criticalInpatients = useMemo(() => {
+    return myInpatients.filter((a) => a.effectiveCondition === 'Critical / High Attention');
+  }, [myInpatients]);
+
   const handleStartConsultation = async (apt: Appointment) => {
     try {
       const timestamp = new Date().toISOString();
@@ -175,6 +229,15 @@ export const DoctorDashboard: React.FC = () => {
               leftIcon={<Calendar className="w-3.5 h-3.5" />}
             >
               My Appointments
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/hospital/doctor/inpatients')}
+              leftIcon={<BedDouble className="w-3.5 h-3.5 text-teal-600" />}
+              className="border-teal-300 bg-teal-50/60 hover:bg-teal-100/80 text-teal-900 font-medium"
+            >
+              My Inpatients ({myInpatients.length})
             </Button>
             <Button
               variant="primary"
@@ -238,7 +301,7 @@ export const DoctorDashboard: React.FC = () => {
       </div>
 
       {/* Dynamic Metric Stat Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
         <StatCard
           title="Today's Appointments"
           value={todayAppointments.length}
@@ -273,6 +336,18 @@ export const DoctorDashboard: React.FC = () => {
           subtext="Future schedule"
           icon={<TrendingUp className="w-5 h-5 text-cyan-600" />}
           accentColor="cyan"
+        />
+        <StatCard
+          title="Admitted Inpatients"
+          value={myInpatients.length}
+          subtext={
+            readyForDischargeInpatients.length > 0
+              ? `${readyForDischargeInpatients.length} ready for discharge`
+              : 'Ward bed care'
+          }
+          icon={<BedDouble className="w-5 h-5 text-teal-600" />}
+          accentColor="emerald"
+          onClick={() => navigate('/hospital/doctor/inpatients')}
         />
       </div>
 

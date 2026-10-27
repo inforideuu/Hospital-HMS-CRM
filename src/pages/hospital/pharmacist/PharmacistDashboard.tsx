@@ -30,6 +30,7 @@ import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { StatCard } from '../../../components/ui/StatCard';
 import { Modal } from '../../../components/ui/Modal';
+import { MedicineFormModal } from '../../../components/common/MedicineFormModal';
 
 export const PharmacistDashboard: React.FC = () => {
   const { user, currentHospital } = useAuth();
@@ -45,24 +46,6 @@ export const PharmacistDashboard: React.FC = () => {
 
   // Add Medicine Form State
   const [isAddMedicineModalOpen, setIsAddMedicineModalOpen] = useState(false);
-  const [newMedForm, setNewMedForm] = useState({
-    name: '',
-    genericName: '',
-    sku: '',
-    batchNumber: '',
-    category: 'Analgesics',
-    stockQuantity: 100,
-    minThreshold: 20,
-    unitPrice: 25.0,
-    expiryDate: (() => {
-      const d = new Date();
-      d.setFullYear(d.getFullYear() + 2);
-      return d.toISOString().split('T')[0];
-    })(),
-    manufacturer: '',
-    locationRack: 'Aisle 1 - Shelf A',
-    requiresPrescription: true,
-  });
 
   // Sync and listener
   const refreshAllData = () => {
@@ -86,15 +69,22 @@ export const PharmacistDashboard: React.FC = () => {
   // Derived Analytics & Counts
   const todayStr = new Date().toISOString().split('T')[0];
 
+  const isRxDispensed = (rx: Prescription) => rx.status === 'Dispensed' || Boolean(rx.dispensedAt);
+
   const pendingPrescriptions = useMemo(
-    () => prescriptions.filter((rx) => rx.status === 'Active' || !rx.dispensedAt),
+    () =>
+      prescriptions.filter(
+        (rx) => !isRxDispensed(rx) && rx.status !== 'Completed'
+      ),
     [prescriptions]
   );
 
   const dispensedTodayPrescriptions = useMemo(
     () =>
       prescriptions.filter(
-        (rx) => rx.status === 'Dispensed' && (rx.dispensedAt?.startsWith(todayStr) || rx.date === todayStr)
+        (rx) =>
+          isRxDispensed(rx) &&
+          (rx.dispensedAt?.startsWith(todayStr) || rx.date === todayStr)
       ),
     [prescriptions, todayStr]
   );
@@ -150,70 +140,7 @@ export const PharmacistDashboard: React.FC = () => {
 
   // Add Medicine Form Handlers
   const handleOpenAddMedicine = () => {
-    const timestamp = Date.now().toString().slice(-4);
-    setNewMedForm({
-      name: '',
-      genericName: '',
-      sku: `SKU-${timestamp}`,
-      batchNumber: `BAT-${new Date().getFullYear()}-${timestamp}`,
-      category: 'Analgesics',
-      stockQuantity: 100,
-      minThreshold: 20,
-      unitPrice: 25.0,
-      expiryDate: (() => {
-        const d = new Date();
-        d.setFullYear(d.getFullYear() + 2);
-        return d.toISOString().split('T')[0];
-      })(),
-      manufacturer: '',
-      locationRack: 'Aisle 1 - Shelf A',
-      requiresPrescription: true,
-    });
     setIsAddMedicineModalOpen(true);
-  };
-
-  const handleSaveNewMedicine = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMedForm.name.trim()) {
-      showToast('Name Required', 'Please provide a valid medicine brand name.', 'error');
-      return;
-    }
-
-    const newMed: Medicine = {
-      id: `MED-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-      hospitalId: hospId,
-      name: newMedForm.name.trim(),
-      genericName: newMedForm.genericName.trim() || newMedForm.name.trim(),
-      sku: newMedForm.sku || `SKU-${Date.now()}`,
-      batchNumber: newMedForm.batchNumber || `BAT-${new Date().getFullYear()}-01`,
-      category: newMedForm.category,
-      stockQuantity: Number(newMedForm.stockQuantity) || 0,
-      minThreshold: Number(newMedForm.minThreshold) || 15,
-      unitPrice: Number(newMedForm.unitPrice) || 10,
-      expiryDate: newMedForm.expiryDate,
-      manufacturer: newMedForm.manufacturer.trim() || 'Central Pharmaceuticals',
-      locationRack: newMedForm.locationRack.trim() || 'Main Dispensary Shelf',
-      requiresPrescription: newMedForm.requiresPrescription,
-      status: 'In Stock',
-    };
-
-    MockStorage.saveMedicine(newMed);
-
-    try {
-      fetch('/api/v1/hospital/pharmacy/medicines/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newMed),
-      }).catch(() => {});
-    } catch (_) {}
-
-    showToast(
-      'Medicine Added',
-      `${newMed.name} (${newMed.sku}) added to hospital inventory.`,
-      'success'
-    );
-    setIsAddMedicineModalOpen(false);
-    refreshAllData();
   };
 
   return (
@@ -637,149 +564,13 @@ export const PharmacistDashboard: React.FC = () => {
         </Card>
       </div>
 
-      {/* Add Medicine Modal (Standardized & Synchronized) */}
-      {isAddMedicineModalOpen && (
-        <Modal
-          isOpen={isAddMedicineModalOpen}
-          onClose={() => setIsAddMedicineModalOpen(false)}
-          title="Add Medicine to Pharmacy"
-        >
-          <form onSubmit={handleSaveNewMedicine} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">
-                  Medicine / Brand Name <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Paracetamol 500mg"
-                  value={newMedForm.name}
-                  onChange={(e) => setNewMedForm({ ...newMedForm, name: e.target.value })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 bg-white font-medium"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Generic / Molecule Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Acetaminophen"
-                  value={newMedForm.genericName}
-                  onChange={(e) => setNewMedForm({ ...newMedForm, genericName: e.target.value })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 bg-white font-medium"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">SKU / Item Code</label>
-                <input
-                  type="text"
-                  value={newMedForm.sku}
-                  onChange={(e) => setNewMedForm({ ...newMedForm, sku: e.target.value })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 bg-white font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Batch Number</label>
-                <input
-                  type="text"
-                  value={newMedForm.batchNumber}
-                  onChange={(e) => setNewMedForm({ ...newMedForm, batchNumber: e.target.value })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 bg-white font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Category</label>
-                <select
-                  value={newMedForm.category}
-                  onChange={(e) => setNewMedForm({ ...newMedForm, category: e.target.value })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 bg-white font-medium"
-                >
-                  <option value="Analgesics">Analgesics</option>
-                  <option value="Antibiotics">Antibiotics</option>
-                  <option value="Cardiovascular">Cardiovascular</option>
-                  <option value="Antidiabetic">Antidiabetic</option>
-                  <option value="Respiratory">Respiratory</option>
-                  <option value="Emergency Drugs">Emergency Drugs</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Initial Stock Units</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={newMedForm.stockQuantity}
-                  onChange={(e) => setNewMedForm({ ...newMedForm, stockQuantity: parseInt(e.target.value) || 0 })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 bg-white font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Minimum Alert Threshold</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={newMedForm.minThreshold}
-                  onChange={(e) => setNewMedForm({ ...newMedForm, minThreshold: parseInt(e.target.value) || 10 })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Unit Price (₹)</label>
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0"
-                  value={newMedForm.unitPrice}
-                  onChange={(e) => setNewMedForm({ ...newMedForm, unitPrice: parseFloat(e.target.value) || 0 })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 bg-white font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Expiry Date</label>
-                <input
-                  type="date"
-                  value={newMedForm.expiryDate}
-                  onChange={(e) => setNewMedForm({ ...newMedForm, expiryDate: e.target.value })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 bg-white font-medium"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Storage Rack / Shelf</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Aisle 2 - Shelf B"
-                  value={newMedForm.locationRack}
-                  onChange={(e) => setNewMedForm({ ...newMedForm, locationRack: e.target.value })}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 bg-white font-medium"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-              <Button variant="outline" size="sm" type="button" onClick={() => setIsAddMedicineModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                variant="primary"
-                size="sm"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-              >
-                <Plus className="w-4 h-4 mr-1.5" />
-                Save Medicine
-              </Button>
-            </div>
-          </form>
-        </Modal>
-      )}
+      {/* Standardized Shared Add Medicine Modal */}
+      <MedicineFormModal
+        isOpen={isAddMedicineModalOpen}
+        onClose={() => setIsAddMedicineModalOpen(false)}
+        hospitalId={hospId}
+        onSaved={() => refreshAllData()}
+      />
     </div>
   );
 };

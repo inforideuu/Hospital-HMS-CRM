@@ -265,7 +265,7 @@ export const PatientDetail: React.FC = () => {
                         {apt.notes && <p className="text-[11px] text-slate-500 mt-1 italic">Notes: {apt.notes}</p>}
                         <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-400">
                           <span>{apt.appointmentDate} at {apt.appointmentTime}</span>
-                          <span>Fee: ${apt.fee} ({apt.paymentStatus})</span>
+                          <span>Fee: ₹{apt.fee} ({apt.paymentStatus})</span>
                         </div>
                       </div>
                     ))

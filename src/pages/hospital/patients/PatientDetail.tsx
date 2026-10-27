@@ -20,7 +20,9 @@ import {
   CheckCircle2,
   Download,
   Plus,
+  Printer,
 } from 'lucide-react';
+import { printPrescription } from '../../../utils/prescriptionPrint';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
@@ -400,7 +402,7 @@ export const PatientDetail: React.FC = () => {
                         <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-400">
                           <span>{apt.appointmentDate} at {apt.appointmentTime}</span>
                           <div className="flex items-center gap-2">
-                            <span>Fee: ${apt.fee} ({apt.paymentStatus})</span>
+                            <span>Fee: ₹{apt.fee} ({apt.paymentStatus})</span>
                             {apt.status === 'Checked In' && (
                               <button
                                 onClick={() => navigate(`/hospital/consultation/${apt.id}`)}
@@ -503,9 +505,26 @@ export const PatientDetail: React.FC = () => {
                             <span className="font-bold text-slate-900">Prescription {p.id}</span>
                             <span className="text-slate-500 ml-2">by Dr. {p.doctorName}</span>
                           </div>
-                          <Badge variant={p.status === 'Active' ? 'success' : 'neutral'} size="sm">
-                            {p.status}
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={p.status === 'Active' ? 'success' : 'neutral'} size="sm">
+                              {p.status}
+                            </Badge>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              leftIcon={<Printer className="w-3.5 h-3.5" />}
+                              onClick={() =>
+                                printPrescription(p, {
+                                  hospitalName: currentHospital?.name,
+                                  patientAge: patient.age,
+                                  patientGender: patient.gender,
+                                  patientPhone: patient.phone,
+                                })
+                              }
+                            >
+                              Print
+                            </Button>
+                          </div>
                         </div>
                         <div className="font-medium text-slate-700">Diagnosis: {p.diagnosis}</div>
                         <div className="space-y-1.5">
@@ -533,21 +552,77 @@ export const PatientDetail: React.FC = () => {
                     <p className="text-xs text-slate-400 py-6 text-center">No inpatient admissions on record.</p>
                   ) : (
                     admissions.map((adm) => (
-                      <div key={adm.id} className="p-3.5 rounded-xl border border-slate-200 bg-white text-xs space-y-2">
+                      <div key={adm.id} className="p-4 rounded-xl border border-slate-200 bg-white text-xs space-y-3 shadow-xs">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-slate-900">{adm.wardType} — {adm.bedNumber}</span>
-                            <Badge variant={adm.status === 'Active' ? 'purple' : 'neutral'} size="sm">
+                            <Badge
+                              variant={
+                                adm.status === 'Active' ? 'purple' :
+                                adm.status === 'Discharge Initiated' ? 'amber' :
+                                adm.status === 'Discharged' ? 'success' : 'neutral'
+                              }
+                              size="sm"
+                            >
                               {adm.status}
                             </Badge>
+                            {adm.billingStatus && (
+                              <Badge variant={adm.billingStatus === 'Paid' ? 'success' : 'warning'} size="sm">
+                                Bill: {adm.billingStatus}
+                              </Badge>
+                            )}
                           </div>
                           <span className="font-mono text-[11px] text-slate-400">{adm.id}</span>
                         </div>
                         <p className="text-slate-600">Attending Specialist: <span className="font-semibold text-slate-800">{adm.doctorName}</span></p>
-                        <p className="text-slate-500">{adm.reason}</p>
+                        <p className="text-slate-500"><span className="font-medium text-slate-700">Diagnosis / Reason:</span> {adm.reason}</p>
+
+                        {/* Nurse Observation & Vitals */}
+                        {adm.nurseCondition && (
+                          <div className="p-2.5 rounded-lg bg-teal-50/70 border border-teal-100 text-[11px] space-y-1">
+                            <div className="flex items-center justify-between flex-wrap gap-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-semibold text-teal-900">🩺 Nurse Monitoring Update</span>
+                                {(adm.nurseUpdatedBy || adm.nurseVitals?.recordedBy) && (
+                                  <span className="text-[10px] bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded font-medium border border-teal-200">
+                                    👩‍⚕️ Nurse: {adm.nurseUpdatedBy || adm.nurseVitals?.recordedBy}
+                                  </span>
+                                )}
+                              </div>
+                              <Badge variant={adm.nurseCondition === 'Ready for Discharge Review' ? 'success' : 'cyan'} size="sm">
+                                {adm.nurseCondition}
+                              </Badge>
+                            </div>
+                            {adm.nurseVitals && (
+                              <div className="flex flex-wrap gap-2 text-[10px] text-teal-800 font-mono">
+                                {adm.nurseVitals.bloodPressure && <span>BP: {adm.nurseVitals.bloodPressure}</span>}
+                                {adm.nurseVitals.heartRate && <span>Pulse: {adm.nurseVitals.heartRate} bpm</span>}
+                                {adm.nurseVitals.temperature && <span>Temp: {adm.nurseVitals.temperature}°F</span>}
+                                {adm.nurseVitals.oxygenLevel && <span>SpO2: {adm.nurseVitals.oxygenLevel}%</span>}
+                              </div>
+                            )}
+                            {adm.nurseNotes && <p className="text-teal-950 italic">"{adm.nurseNotes}"</p>}
+                          </div>
+                        )}
+
+                        {/* Doctor Discharge Note */}
+                        {adm.dischargeSummary && (
+                          <div className="p-2.5 rounded-lg bg-indigo-50/70 border border-indigo-100 text-[11px] space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-indigo-900">👨‍⚕️ Specialist Discharge Summary</span>
+                              <span className="text-[10px] text-indigo-600">By {adm.dischargeDoctorName}</span>
+                            </div>
+                            <p className="text-indigo-950">{adm.dischargeSummary}</p>
+                            {adm.dischargeAdvice && (
+                              <p className="text-[10px] text-indigo-800 font-medium">Advice: {adm.dischargeAdvice}</p>
+                            )}
+                          </div>
+                        )}
+
                         <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[10px] text-slate-400">
                           <span>Admitted: {adm.admissionDate}</span>
-                          <span>Initial Deposit: ${adm.initialDeposit}</span>
+                          {adm.dischargeDate && <span>Discharged: {adm.dischargeDate}</span>}
+                          <span>Deposit: ₹{adm.initialDeposit?.toLocaleString()}</span>
                         </div>
                       </div>
                     ))
@@ -573,8 +648,8 @@ export const PatientDetail: React.FC = () => {
                           </Badge>
                         </div>
                         <div className="flex justify-between font-semibold text-slate-800">
-                          <span>Total Amount: ${inv.totalAmount.toLocaleString()}</span>
-                          <span className="text-emerald-600">Paid: ${inv.amountPaid.toLocaleString()}</span>
+                          <span>Total Amount: ₹{inv.totalAmount.toLocaleString()}</span>
+                          <span className="text-emerald-600">Paid: ₹{inv.amountPaid.toLocaleString()}</span>
                         </div>
                       </div>
                     ))
