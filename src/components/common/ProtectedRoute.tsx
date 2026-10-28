@@ -27,8 +27,14 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   }
 
   if (requiredPortal && user.portal !== requiredPortal) {
-    // If a platform user enters /hospital routes or vice versa, redirect them to unauthorized or their portal
-    return <Navigate to="/unauthorized" replace />;
+    // Allow ambulance drivers/managers with hospital portal to access driver console routes
+    const isAmbulancePermitted =
+      requiredPortal === 'ambulance_driver' &&
+      (user.role === 'ambulance_driver' || user.role === 'ambulance_manager');
+
+    if (!isAmbulancePermitted) {
+      return <Navigate to="/unauthorized" replace />;
+    }
   }
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {

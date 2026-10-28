@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import {
   HeartPulse,
   Calendar,
@@ -9,6 +9,7 @@ import {
   Truck,
   AlertTriangle,
   ArrowRight,
+  HelpCircle,
   Clock,
   CheckCircle2,
   Phone,
@@ -81,6 +82,11 @@ export const HospitalDashboard: React.FC = () => {
     return <PharmacistDashboard />;
   }
 
+  // If authenticated user is an ambulance manager or driver, redirect directly to Ambulance & Emergency Management
+  if (user?.role === 'ambulance_manager' || user?.role === 'ambulance_driver') {
+    return <Navigate to="/hospital/ambulance" replace />;
+  }
+
   const hospId = currentHospital?.id || 'hosp-1';
 
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -137,6 +143,13 @@ export const HospitalDashboard: React.FC = () => {
     (acc, i) => (i.status !== 'Paid' ? acc + ((i.totalAmount || 0) - (i.amountPaid || 0)) : acc),
     0
   );
+
+  // Inpatients medically cleared by specialist and paid at Cashier - Ready for Receptionist to release bed
+  const readyForReleaseAdmissions = useMemo(() => {
+    return admissions.filter(
+      (a) => a.status === 'Discharge Initiated' && (a.billingStatus === 'Paid' || a.billingStatus === 'Cleared')
+    );
+  }, [admissions]);
 
   // Pharmacy Revenue Split: Hospital Patients (Doctor Rx) vs Walk-in Patients (OTC)
   const pharmacyInvoices = useMemo(() => {
@@ -229,6 +242,14 @@ export const HospitalDashboard: React.FC = () => {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => navigate('/hospital/support')}
+              leftIcon={<HelpCircle className="w-3.5 h-3.5 text-sky-600" />}
+            >
+              Help & Support
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => navigate('/hospital/appointments')}
               leftIcon={<Calendar className="w-3.5 h-3.5" />}
             >
@@ -264,6 +285,37 @@ export const HospitalDashboard: React.FC = () => {
           </div>
         }
       />
+
+      {/* Receptionist / Admin Inpatient Bed Release Alert */}
+      {readyForReleaseAdmissions.length > 0 && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-indigo-50 border border-emerald-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <CheckCircle2 className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-950">
+                  {readyForReleaseAdmissions.length} Inpatient{readyForReleaseAdmissions.length > 1 ? 's' : ''} Paid & Medically Cleared — Ready for Bed Release
+                </h3>
+                <Badge variant="success" size="sm">Exit Clearance Ready</Badge>
+              </div>
+              <p className="text-xs text-emerald-800 mt-0.5">
+                Doctor discharge complete and invoices settled. Receptionist can confirm discharge, issue exit gate pass, and return bed(s) to Available inventory for new patients.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => navigate('/hospital/admissions?tab=ready_release')}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold shrink-0 shadow-xs"
+            rightIcon={<ArrowRight className="w-4 h-4" />}
+          >
+            Release Bed & Discharge ({readyForReleaseAdmissions.length})
+          </Button>
+        </div>
+      )}
 
       {/* Subscription Status Banner */}
       {(!subscription || subscription.status === 'trialing' || subscription.paymentStatus === 'pending_approval' || subscription.paymentStatus === 'rejected') && (

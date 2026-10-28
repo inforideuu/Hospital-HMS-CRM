@@ -3,13 +3,24 @@ import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
 import { MockStorage } from '../../../services/mockStorage';
 import {
+  User,
   Ambulance,
   AmbulanceDriver,
   EmergencyRequest,
   AmbulanceMaintenance,
-  EmergencyPriority,
   AmbulanceType,
-  AmbulanceStatus
+  AmbulanceStatus,
+  AmbulanceOwnershipType,
+  AmbulanceFuelType,
+  AmbulanceStaffRole,
+  AmbulanceEmploymentType,
+  AmbulanceDutyStatus,
+  AmbulanceShiftType,
+  AmbulanceAvailabilityStatus,
+  MaintenanceCategory,
+  MaintenanceStatus,
+  VehicleAvailabilityDuringMaintenance,
+  SafetyInspectionResult
 } from '../../../types';
 import { Card } from '../../../components/ui/Card';
 import { Badge } from '../../../components/ui/Badge';
@@ -21,7 +32,6 @@ import { StatCard } from '../../../components/ui/StatCard';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import {
   Ambulance as AmbulanceIcon,
-  PhoneCall,
   MapPin,
   Clock,
   Radio,
@@ -32,20 +42,48 @@ import {
   CheckCircle2,
   Wrench,
   UserCheck,
-  ShieldAlert,
   Fuel,
-  Activity,
-  AlertTriangle,
   Send,
   Navigation,
   Check,
-  X
+  X,
+  FileText,
+  IndianRupee,
+  ShieldCheck,
+  AlertTriangle,
+  Eye,
+  Calendar,
+  Layers,
+  Heart,
+  Upload,
+  User as UserIcon,
+  Phone,
+  Mail,
+  Truck,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 
+const STANDARD_EQUIPMENT_CHECKLIST = [
+  'Oxygen Cylinder & Flowmeter',
+  'Foldable Stretcher & Trolley',
+  'Automated External Defibrillator (AED)',
+  'Multi-Para Cardiac Monitor',
+  'Suction Unit (Electric & Manual)',
+  'Spine Board & Head Immobilizer',
+  'Cervical Collars Kit',
+  'Portable Ventilator',
+  'IV Infusion Stand & Syringe Pump',
+  'First Aid Trauma Dressing Bag',
+  'Nebulizer Kit',
+  'Emergency Resuscitation Drugs Box'
+];
+
 export const AmbulanceManagement: React.FC = () => {
-  const { user } = useAuth();
+  const { user, currentHospital } = useAuth();
   const { showToast } = useNotification();
   const hospitalId = user?.hospitalId || 'HOSP-001';
+  const hospitalName = currentHospital?.name || 'Apex Medical Center';
 
   const [activeTab, setActiveTab] = useState('dispatch');
   const [ambulances, setAmbulances] = useState<Ambulance[]>([]);
@@ -55,40 +93,159 @@ export const AmbulanceManagement: React.FC = () => {
 
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Modals
+  // Modals for Actions
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
   const [selectedRequestForDispatch, setSelectedRequestForDispatch] = useState<EmergencyRequest | null>(null);
   const [selectedAmbulanceId, setSelectedAmbulanceId] = useState('');
   const [selectedDriverId, setSelectedDriverId] = useState('');
 
+  // Modals for Detailed Views
+  const [selectedAmbulanceDetails, setSelectedAmbulanceDetails] = useState<Ambulance | null>(null);
+  const [selectedDriverDetails, setSelectedDriverDetails] = useState<AmbulanceDriver | null>(null);
+  const [selectedMaintenanceDetails, setSelectedMaintenanceDetails] = useState<AmbulanceMaintenance | null>(null);
+
+  // 1. ADD AMBULANCE FORM STATE
   const [isAddAmbulanceModalOpen, setIsAddAmbulanceModalOpen] = useState(false);
   const [newAmbulance, setNewAmbulance] = useState({
+    // Identification & registration
     regNumber: '',
-    type: 'Advanced Life Support (ALS)' as AmbulanceType,
+    registrationDate: new Date().toISOString().split('T')[0],
+    registrationExpiryDate: new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0],
+    chassisNumber: '',
+    engineNumber: '',
+    ownershipType: 'Owned' as AmbulanceOwnershipType,
+
+    // Specifications
     model: '',
-    equipmentCategory: 'Class A (Critical Telemetry)' as Ambulance['equipmentCategory'],
-    currentLocation: 'Base Station Alpha',
+    type: 'Advanced Life Support (ALS)' as AmbulanceType,
+    manufacturingYear: new Date().getFullYear(),
+    seatingCapacity: 4,
+    patientCapacity: 1,
+    odometerReading: 15000,
+    mileageKm: 15000,
+    fuelType: 'Diesel' as AmbulanceFuelType,
     fuelLevel: 100,
-    mileageKm: 12000,
+
+    // Operational details
+    status: 'Available' as AmbulanceStatus,
+    assignedDriverId: '',
+    assignedDriverName: '',
+    driverPhone: '',
+    assignedParamedic: '',
+    homeBranch: 'Apex Main Hospital',
+    currentLocation: 'Base Station Alpha',
+
+    // Compliance & documents
+    insurancePolicyNumber: '',
+    insuranceExpiryDate: new Date(Date.now() + 300 * 86400000).toISOString().split('T')[0],
+    fitnessCertExpiryDate: new Date(Date.now() + 240 * 86400000).toISOString().split('T')[0],
+    permitExpiryDate: new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0],
+    pucExpiryDate: new Date(Date.now() + 180 * 86400000).toISOString().split('T')[0],
+
+    // Equipment & readiness
+    equipmentCategory: 'Class A (Critical Telemetry)' as Ambulance['equipmentCategory'],
+    oxygenCylinderAvailable: 'Yes' as 'Yes' | 'No',
+    stretcherAvailable: 'Yes' as 'Yes' | 'No',
+    defibrillatorAvailable: 'Yes' as 'Yes' | 'No' | 'Not Applicable',
+    equipmentChecklist: ['Oxygen Cylinder & Flowmeter', 'Foldable Stretcher & Trolley', 'Multi-Para Cardiac Monitor', 'First Aid Trauma Dressing Bag'],
+    lastSafetyInspectionDate: new Date().toISOString().split('T')[0],
+    lastMaintenanceDate: new Date().toISOString().split('T')[0],
+    nextMaintenanceDate: new Date(Date.now() + 90 * 86400000).toISOString().split('T')[0],
+
+    // Additional details
+    vehiclePhotoUrl: '',
+    notes: '',
   });
 
+  // 2. ADD DRIVER / PARAMEDIC FORM STATE
   const [isAddDriverModalOpen, setIsAddDriverModalOpen] = useState(false);
   const [newDriver, setNewDriver] = useState({
+    // Staff identification
+    employeeId: '',
     name: '',
+    role: 'Ambulance Driver' as AmbulanceStaffRole,
+    avatarUrl: '',
+
+    // Personal & contact details
     email: '',
     phone: '',
+    alternativePhone: '',
+    address: '',
+    emergencyContactName: '',
+    emergencyContactRelationship: 'Spouse',
+
+    // Licence and certification
     licenseNumber: '',
-    licenseExpiry: '2028-12-31',
+    licenseType: 'Commercial Heavy / EVOC',
+    licenseIssueDate: new Date(Date.now() - 365 * 86400000 * 3).toISOString().split('T')[0],
+    licenseExpiry: new Date(Date.now() + 365 * 86400000 * 2).toISOString().split('T')[0],
+    evocCertExpiry: new Date(Date.now() + 365 * 86400000 * 2).toISOString().split('T')[0],
+    cprCertExpiry: new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0],
+    medicalClearanceExpiry: new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0],
+
+    // Employment details
+    dateOfJoining: new Date().toISOString().split('T')[0],
+    employmentType: 'Full-Time' as AmbulanceEmploymentType,
+    dutyStatus: 'Active' as AmbulanceDutyStatus,
+    status: 'active',
+    assignedBranch: 'Apex Main Hospital',
+
+    // Duty and shift management
+    shiftType: 'Morning' as AmbulanceShiftType,
+    shiftStartTime: '08:00',
+    shiftEndTime: '16:00',
+    availabilityStatus: 'On Duty & Available' as AmbulanceAvailabilityStatus,
+    assignedAmbulanceId: '',
+    assignedAmbulanceReg: '',
+
+    // Qualifications & experience
     emergencyExperienceYears: 5,
+    qualificationDetails: 'Emergency Medical Vehicle Operations (EVOC) Certified',
+    paramedicRegistrationNumber: '',
+    certificationExpiryDate: new Date(Date.now() + 365 * 86400000 * 2).toISOString().split('T')[0],
+
+    // Additional details
+    documentUrl: '',
+    notes: '',
   });
 
+  // 3. ADD MAINTENANCE FORM STATE
   const [isAddMaintenanceModalOpen, setIsAddMaintenanceModalOpen] = useState(false);
   const [newMaintenance, setNewMaintenance] = useState({
+    // Record details
     ambulanceId: '',
-    serviceType: 'Routine Inspection' as AmbulanceMaintenance['serviceType'],
-    description: '',
-    cost: 450,
-    servicedBy: 'Metro Fleet Services Inc.',
+    serviceDate: new Date().toISOString().split('T')[0],
+    category: 'Preventive' as MaintenanceCategory,
+    maintenanceStatus: 'Completed' as MaintenanceStatus,
+
+    // Service & inspection details
+    serviceType: 'Routine Inspection',
+    servicedBy: 'Metro Fleet Service Center',
+    odometerAtService: 15400,
+    reportedIssue: '',
+    partsReplaced: '',
+    technicianName: '',
+    nextServiceDate: new Date(Date.now() + 90 * 86400000).toISOString().split('T')[0],
+    nextServiceOdometerKm: 20000,
+
+    // Cost & payment details
+    partsCost: 3500,
+    labourCost: 1500,
+    otherCharges: 250,
+    cost: 5250, // total
+    invoiceNumber: '',
+    invoiceAttachmentUrl: '',
+
+    // Vehicle availability & safety
+    vehicleAvailability: 'Available' as VehicleAvailabilityDuringMaintenance,
+    safetyInspectionResult: 'Passed' as SafetyInspectionResult,
+    returnToServiceDate: new Date().toISOString().split('T')[0],
+    verifiedBy: 'Fleet Officer / Dr. Patel',
+
+    // Additional details
+    description: 'Scheduled preventive 15,000 km general service and equipment test.',
+    notes: '',
+    supportingDocsUrl: '',
   });
 
   const loadData = () => {
@@ -108,12 +265,12 @@ export const AmbulanceManagement: React.FC = () => {
   const totalFleet = ambulances.length;
   const availableAmbulances = ambulances.filter((a) => a.status === 'Available').length;
   const activeTrips = emergencyRequests.filter((r) => r.status !== 'Completed' && r.status !== 'Cancelled').length;
-  const onDutyDrivers = drivers.filter((d) => d.availabilityStatus === 'On Duty & Available').length;
+  const onDutyDrivers = drivers.filter((d) => d.availabilityStatus === 'On Duty & Available' || d.availabilityStatus === 'Available' || d.availabilityStatus === 'On Duty').length;
 
   const handleOpenDispatch = (request: EmergencyRequest) => {
     setSelectedRequestForDispatch(request);
     const firstAvailAmb = ambulances.find((a) => a.status === 'Available');
-    const firstAvailDrv = drivers.find((d) => d.availabilityStatus === 'On Duty & Available');
+    const firstAvailDrv = drivers.find((d) => d.availabilityStatus === 'On Duty & Available' || d.availabilityStatus === 'Available');
     setSelectedAmbulanceId(firstAvailAmb ? firstAvailAmb.id : '');
     setSelectedDriverId(firstAvailDrv ? firstAvailDrv.id : '');
     setIsDispatchModalOpen(true);
@@ -133,94 +290,212 @@ export const AmbulanceManagement: React.FC = () => {
     showToast('Trip Status Updated', `Emergency request ${requestId} updated to ${status}.`, 'info');
   };
 
+  // Handle Add Ambulance
   const handleAddAmbulance = (e: React.FormEvent) => {
     e.preventDefault();
+    const autoGenId = `AMB-${Date.now().toString().slice(-4)}`;
     const amb: Ambulance = {
-      id: `AMB-${Date.now().toString().slice(-3)}`,
+      id: autoGenId,
       hospitalId,
-      hospitalName: 'Apex Medical Center',
-      regNumber: newAmbulance.regNumber,
+      hospitalName,
+      regNumber: newAmbulance.regNumber.toUpperCase().trim(),
+      registrationDate: newAmbulance.registrationDate,
+      registrationExpiryDate: newAmbulance.registrationExpiryDate,
+      chassisNumber: newAmbulance.chassisNumber,
+      engineNumber: newAmbulance.engineNumber,
+      ownershipType: newAmbulance.ownershipType,
       type: newAmbulance.type,
       model: newAmbulance.model,
-      equipmentCategory: newAmbulance.equipmentCategory,
-      status: 'Available',
+      manufacturingYear: Number(newAmbulance.manufacturingYear) || new Date().getFullYear(),
+      seatingCapacity: Number(newAmbulance.seatingCapacity) || 4,
+      patientCapacity: Number(newAmbulance.patientCapacity) || 1,
+      odometerReading: Number(newAmbulance.odometerReading) || 0,
+      mileageKm: Number(newAmbulance.odometerReading) || Number(newAmbulance.mileageKm) || 0,
+      fuelType: newAmbulance.fuelType,
+      fuelLevel: Number(newAmbulance.fuelLevel) || 100,
+      status: newAmbulance.status,
+      assignedDriverId: newAmbulance.assignedDriverId || undefined,
+      assignedDriverName: newAmbulance.assignedDriverName || undefined,
+      driverPhone: newAmbulance.driverPhone || undefined,
+      assignedParamedic: newAmbulance.assignedParamedic || undefined,
+      homeBranch: newAmbulance.homeBranch || hospitalName,
       currentLocation: newAmbulance.currentLocation,
-      lastMaintenanceDate: new Date().toISOString().split('T')[0],
-      nextMaintenanceDate: new Date(Date.now() + 90 * 86400000).toISOString().split('T')[0],
-      fuelLevel: newAmbulance.fuelLevel,
-      mileageKm: newAmbulance.mileageKm,
+      insurancePolicyNumber: newAmbulance.insurancePolicyNumber || undefined,
+      insuranceExpiryDate: newAmbulance.insuranceExpiryDate || undefined,
+      fitnessCertExpiryDate: newAmbulance.fitnessCertExpiryDate || undefined,
+      permitExpiryDate: newAmbulance.permitExpiryDate || undefined,
+      pucExpiryDate: newAmbulance.pucExpiryDate || undefined,
+      equipmentCategory: newAmbulance.equipmentCategory,
+      oxygenCylinderAvailable: newAmbulance.oxygenCylinderAvailable,
+      stretcherAvailable: newAmbulance.stretcherAvailable,
+      defibrillatorAvailable: newAmbulance.defibrillatorAvailable,
+      equipmentChecklist: newAmbulance.equipmentChecklist,
+      lastSafetyInspectionDate: newAmbulance.lastSafetyInspectionDate,
+      lastMaintenanceDate: newAmbulance.lastMaintenanceDate,
+      nextMaintenanceDate: newAmbulance.nextMaintenanceDate,
+      vehiclePhotoUrl: newAmbulance.vehiclePhotoUrl || undefined,
+      notes: newAmbulance.notes || undefined,
     };
 
     MockStorage.saveAmbulance(amb);
-    showToast('Ambulance Registered', `Unit ${amb.regNumber} has been added to the fleet.`, 'success');
+    showToast('Ambulance Registered', `Unit ${amb.regNumber} (${amb.id}) enrolled with full specifications & compliance.`, 'success');
     setIsAddAmbulanceModalOpen(false);
-    setNewAmbulance({
-      regNumber: '',
-      type: 'Advanced Life Support (ALS)',
-      model: '',
-      equipmentCategory: 'Class A (Critical Telemetry)',
-      currentLocation: 'Base Station Alpha',
-      fuelLevel: 100,
-      mileageKm: 12000,
-    });
   };
 
+  // Handle Add Driver / Paramedic
   const handleAddDriver = (e: React.FormEvent) => {
     e.preventDefault();
+    const autoGenStaffId = `STF-DRV-${Date.now().toString().slice(-4)}`;
     const drv: AmbulanceDriver = {
-      id: `DRV-${Date.now().toString().slice(-3)}`,
+      id: autoGenStaffId,
+      employeeId: newDriver.employeeId || autoGenStaffId,
       hospitalId,
-      hospitalName: 'Apex Medical Center',
+      hospitalName,
       name: newDriver.name,
       email: newDriver.email,
       phone: newDriver.phone,
+      alternativePhone: newDriver.alternativePhone || undefined,
+      address: newDriver.address || undefined,
+      emergencyContactName: newDriver.emergencyContactName || undefined,
+      emergencyContactRelationship: newDriver.emergencyContactRelationship || undefined,
+      role: newDriver.role,
+      avatarUrl: newDriver.avatarUrl || undefined,
       licenseNumber: newDriver.licenseNumber,
+      licenseType: newDriver.licenseType,
+      licenseIssueDate: newDriver.licenseIssueDate,
       licenseExpiry: newDriver.licenseExpiry,
-      availabilityStatus: 'On Duty & Available',
-      status: 'active',
+      evocCertExpiry: newDriver.evocCertExpiry || undefined,
+      cprCertExpiry: newDriver.cprCertExpiry || undefined,
+      medicalClearanceExpiry: newDriver.medicalClearanceExpiry || undefined,
+      dateOfJoining: newDriver.dateOfJoining,
+      employmentType: newDriver.employmentType,
+      dutyStatus: newDriver.dutyStatus,
+      status: newDriver.status,
+      assignedBranch: newDriver.assignedBranch || hospitalName,
+      shiftType: newDriver.shiftType,
+      shiftStartTime: newDriver.shiftStartTime,
+      shiftEndTime: newDriver.shiftEndTime,
+      availabilityStatus: newDriver.availabilityStatus,
+      assignedAmbulanceId: newDriver.assignedAmbulanceId || undefined,
+      assignedAmbulanceReg: newDriver.assignedAmbulanceReg || undefined,
       completedTrips: 0,
-      emergencyExperienceYears: newDriver.emergencyExperienceYears,
+      emergencyExperienceYears: Number(newDriver.emergencyExperienceYears) || 0,
+      qualificationDetails: newDriver.qualificationDetails,
+      paramedicRegistrationNumber: newDriver.paramedicRegistrationNumber || undefined,
+      certificationExpiryDate: newDriver.certificationExpiryDate || undefined,
+      documentUrl: newDriver.documentUrl || undefined,
+      notes: newDriver.notes || undefined,
     };
 
     MockStorage.saveAmbulanceDriver(drv);
-    showToast('Paramedic Driver Onboarded', `${drv.name} has been added to the emergency team roster.`, 'success');
+
+    // Provision User login credentials so staff can log in like other hospital staff
+    if (drv.email && drv.email.trim()) {
+      const emailTrimmed = drv.email.trim();
+      const existingUser = MockStorage.getUsers().find(
+        (u) => (u.email || '').toLowerCase() === emailTrimmed.toLowerCase()
+      );
+      const userToSave: User = {
+        id: existingUser?.id || `USR-DRV-${drv.id}`,
+        name: drv.name,
+        email: emailTrimmed,
+        password: existingUser?.password || 'Staff@1234',
+        role: 'ambulance_driver',
+        portal: 'hospital',
+        hospitalId,
+        hospitalName: currentHospital?.name || drv.hospitalName || 'Hospital',
+        department: 'Emergency Fleet / Ambulance Unit',
+        phone: drv.phone,
+        status: 'active',
+        driverId: drv.id,
+        createdAt: existingUser?.createdAt || new Date().toISOString(),
+      };
+      MockStorage.saveUser(userToSave);
+    }
+
+    showToast('Staff Onboarded & Login Created', `${drv.name} (${drv.role}) has been added with Staff ID ${drv.id}.`, 'success');
     setIsAddDriverModalOpen(false);
-    setNewDriver({
-      name: '',
-      email: '',
-      phone: '',
-      licenseNumber: '',
-      licenseExpiry: '2028-12-31',
-      emergencyExperienceYears: 5,
-    });
   };
 
+  // Handle Add Maintenance
   const handleAddMaintenance = (e: React.FormEvent) => {
     e.preventDefault();
     const amb = ambulances.find((a) => a.id === newMaintenance.ambulanceId);
-    if (!amb) return;
+    if (!amb) {
+      showToast('Error', 'Please select an ambulance unit.', 'error');
+      return;
+    }
+
+    const calculatedTotal = (Number(newMaintenance.partsCost) || 0) + (Number(newMaintenance.labourCost) || 0) + (Number(newMaintenance.otherCharges) || 0);
+    const finalTotal = newMaintenance.cost > 0 ? newMaintenance.cost : calculatedTotal;
+    const autoGenMntId = `MNT-LOG-${Date.now().toString().slice(-4)}`;
 
     const mnt: AmbulanceMaintenance = {
-      id: `MNT-${Date.now().toString().slice(-3)}`,
+      id: autoGenMntId,
       hospitalId,
       ambulanceId: amb.id,
       ambulanceReg: amb.regNumber,
-      serviceDate: new Date().toISOString().split('T')[0],
-      nextServiceDate: new Date(Date.now() + 90 * 86400000).toISOString().split('T')[0],
+      serviceDate: newMaintenance.serviceDate,
+      category: newMaintenance.category,
+      maintenanceStatus: newMaintenance.maintenanceStatus,
       serviceType: newMaintenance.serviceType,
-      description: newMaintenance.description,
-      cost: newMaintenance.cost,
       servicedBy: newMaintenance.servicedBy,
+      odometerAtService: Number(newMaintenance.odometerAtService) || amb.odometerReading || amb.mileageKm,
+      reportedIssue: newMaintenance.reportedIssue || undefined,
+      partsReplaced: newMaintenance.partsReplaced || undefined,
+      technicianName: newMaintenance.technicianName || undefined,
+      nextServiceDate: newMaintenance.nextServiceDate,
+      nextServiceOdometerKm: Number(newMaintenance.nextServiceOdometerKm) || undefined,
+      partsCost: Number(newMaintenance.partsCost) || 0,
+      labourCost: Number(newMaintenance.labourCost) || 0,
+      otherCharges: Number(newMaintenance.otherCharges) || 0,
+      cost: finalTotal,
+      invoiceNumber: newMaintenance.invoiceNumber || undefined,
+      invoiceAttachmentUrl: newMaintenance.invoiceAttachmentUrl || undefined,
+      vehicleAvailability: newMaintenance.vehicleAvailability,
+      safetyInspectionResult: newMaintenance.safetyInspectionResult,
+      returnToServiceDate: newMaintenance.returnToServiceDate || undefined,
+      verifiedBy: newMaintenance.verifiedBy || undefined,
+      description: newMaintenance.description,
+      notes: newMaintenance.notes || undefined,
+      supportingDocsUrl: newMaintenance.supportingDocsUrl || undefined,
     };
 
     MockStorage.saveAmbulanceMaintenance(mnt);
-    showToast('Maintenance Logged', `Service record logged for unit ${amb.regNumber}.`, 'success');
+
+    // Synchronize vehicle status & maintenance dates on ambulance
+    const updatedAmb: Ambulance = {
+      ...amb,
+      lastMaintenanceDate: mnt.serviceDate,
+      nextMaintenanceDate: mnt.nextServiceDate,
+      status: mnt.vehicleAvailability === 'Available' ? 'Available' : 'Maintenance',
+      odometerReading: mnt.odometerAtService || amb.odometerReading,
+      mileageKm: mnt.odometerAtService || amb.mileageKm,
+    };
+    MockStorage.saveAmbulance(updatedAmb);
+
+    showToast('Maintenance Logged', `Service log ${mnt.id} registered with total cost ₹${finalTotal.toLocaleString()}.`, 'success');
     setIsAddMaintenanceModalOpen(false);
   };
 
   const handleExportCSV = () => {
     MockStorage.exportToCSV('Ambulance_Fleet_Export', ambulances);
     showToast('CSV Exported', 'Ambulance fleet records downloaded successfully.', 'success');
+  };
+
+  // Helper for file upload preview (image/docs)
+  const handleFileUpload = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    setter: (val: string) => void
+  ) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setter(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const tabs = [
@@ -237,7 +512,7 @@ export const AmbulanceManagement: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Ambulance & Emergency Response Management</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Dispatch 911 emergency response units, monitor active telemetry, manage paramedic roster, and maintain fleet.
+            End-to-end emergency fleet inventory, driver & paramedic roster, 911 dispatch triage, and preventive maintenance.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -262,14 +537,14 @@ export const AmbulanceManagement: React.FC = () => {
           value={totalFleet}
           icon={<AmbulanceIcon className="w-5 h-5" />}
           accentColor="indigo"
-          subtext="Registered emergency vehicles"
+          subtext="Registered emergency units"
         />
         <StatCard
           title="Available Units"
           value={availableAmbulances}
           icon={<CheckCircle2 className="w-5 h-5" />}
           accentColor="emerald"
-          subtext="Ready for instant dispatch"
+          subtext="Ready for immediate dispatch"
         />
         <StatCard
           title="Active Emergency Trips"
@@ -279,15 +554,15 @@ export const AmbulanceManagement: React.FC = () => {
           subtext="In transit / on site"
         />
         <StatCard
-          title="On-Duty Paramedics"
+          title="On-Duty Paramedics & Drivers"
           value={onDutyDrivers}
           icon={<UserCheck className="w-5 h-5" />}
           accentColor="purple"
-          subtext="Available drivers"
+          subtext="Available emergency crew"
         />
       </div>
 
-      {/* Tabs */}
+      {/* Navigation Tabs */}
       <div className="border-b border-slate-200">
         <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
       </div>
@@ -319,23 +594,26 @@ export const AmbulanceManagement: React.FC = () => {
                   <Card
                     key={req.id}
                     className={`p-5 border-l-4 transition-all ${
-                      req.priority === 'Critical / Code Blue'
+                      req.priority === 'Critical / Code Blue' || req.priority === 'CRITICAL / CODE BLUE'
                         ? 'border-l-rose-600 shadow-md'
                         : isOngoing
                         ? 'border-l-amber-500'
-                        : 'border-l-slate-300'
+                        : 'border-l-slate-300 opacity-75'
                     }`}
                   >
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                       <div className="space-y-2">
-                        <div className="flex items-center gap-2.5 flex-wrap">
-                          <span className="font-mono text-xs font-bold text-slate-400">{req.id}</span>
-                          <span className="font-bold text-slate-900 text-base">{req.emergencyType}</span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-xs font-bold px-2 py-0.5 bg-slate-100 text-slate-700 rounded">
+                            {req.id}
+                          </span>
                           <Badge
                             variant={
-                              req.priority === 'Critical / Code Blue' || req.priority === 'High'
+                              req.priority === 'Critical / Code Blue' || req.priority === 'CRITICAL / CODE BLUE'
                                 ? 'error'
-                                : 'warning'
+                                : req.priority === 'High'
+                                ? 'warning'
+                                : 'neutral'
                             }
                             size="sm"
                           >
@@ -343,33 +621,37 @@ export const AmbulanceManagement: React.FC = () => {
                           </Badge>
                           <Badge
                             variant={
-                              req.status === 'Completed'
-                                ? 'success'
+                              req.status === 'Requested'
+                                ? 'error'
                                 : req.status === 'Dispatched' || req.status === 'Patient Picked Up'
                                 ? 'info'
-                                : req.status === 'Cancelled'
-                                ? 'neutral'
-                                : 'warning'
+                                : req.status === 'Completed'
+                                ? 'success'
+                                : 'neutral'
                             }
                             size="sm"
                           >
                             {req.status}
                           </Badge>
+                          <span className="text-xs text-slate-400 flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5" /> {req.requestDate} {req.requestTime}
+                          </span>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-600 pt-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-slate-800">Patient:</span>
-                            <span>{req.patientName} ({req.patientPhone})</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-700 pt-1">
+                          <p>
+                            <strong>Patient:</strong> {req.patientName} ({req.patientPhone})
+                          </p>
+                          <p className="flex items-center gap-1 text-slate-600">
                             <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                            <span className="truncate">{req.pickupLocation}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span>Requested at: {req.requestTime}</span>
-                          </div>
+                            <strong>Pickup:</strong> {req.pickupLocation}
+                          </p>
+                          <p>
+                            <strong>Emergency Type:</strong> {req.emergencyType}
+                          </p>
+                          <p>
+                            <strong>Destination:</strong> {req.destinationHospital || req.destination || hospitalName}
+                          </p>
                         </div>
 
                         {req.chiefComplaint && (
@@ -448,7 +730,7 @@ export const AmbulanceManagement: React.FC = () => {
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <Input
-              placeholder="Search registration, vehicle model..."
+              placeholder="Search registration, vehicle model, VIN/chassis..."
               value={searchTerm}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
               leftIcon={<Search className="w-4 h-4 text-slate-400" />}
@@ -460,7 +742,7 @@ export const AmbulanceManagement: React.FC = () => {
               leftIcon={<Plus className="w-4 h-4" />}
               onClick={() => setIsAddAmbulanceModalOpen(true)}
             >
-              Add New Unit
+              Add New Ambulance
             </Button>
           </div>
 
@@ -469,66 +751,105 @@ export const AmbulanceManagement: React.FC = () => {
               .filter(
                 (a) =>
                   a.regNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                  a.model.toLowerCase().includes(searchTerm.toLowerCase())
+                  a.model.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                  (a.chassisNumber && a.chassisNumber.toLowerCase().includes(searchTerm.toLowerCase()))
               )
               .map((amb) => (
-                <Card key={amb.id} className="p-5 border-slate-200 hover:border-brand-300 hover:shadow-md transition-all">
-                  <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center">
-                        <AmbulanceIcon className="w-5 h-5" />
+                <Card key={amb.id} className="p-5 border-slate-200 hover:border-brand-400 hover:shadow-md transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center font-bold shrink-0">
+                          {amb.vehiclePhotoUrl ? (
+                            <img src={amb.vehiclePhotoUrl} alt={amb.regNumber} className="w-full h-full object-cover rounded-xl" />
+                          ) : (
+                            <AmbulanceIcon className="w-5 h-5" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="font-bold text-slate-900 text-sm tracking-tight">{amb.regNumber}</h4>
+                            <span className="text-[10px] font-mono font-medium px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded">
+                              {amb.id}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 truncate max-w-[180px]">{amb.model}</p>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-bold text-slate-900 text-sm">{amb.regNumber}</h4>
-                        <p className="text-xs text-slate-500">{amb.model}</p>
-                      </div>
+                      <Badge
+                        variant={
+                          amb.status === 'Available'
+                            ? 'success'
+                            : amb.status === 'Dispatched' || amb.status === 'On Trip'
+                            ? 'info'
+                            : 'warning'
+                        }
+                        size="sm"
+                      >
+                        {amb.status}
+                      </Badge>
                     </div>
-                    <Badge
-                      variant={
-                        amb.status === 'Available'
-                          ? 'success'
-                          : amb.status === 'Dispatched' || amb.status === 'On Trip'
-                          ? 'info'
-                          : 'warning'
-                      }
-                      size="sm"
-                    >
-                      {amb.status}
-                    </Badge>
-                  </div>
 
-                  <div className="py-3 space-y-2 text-xs text-slate-600">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Class:</span>
-                      <span className="font-semibold text-slate-800">{amb.type}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Equipment:</span>
-                      <span className="font-medium text-slate-700">{amb.equipmentCategory}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Base Station:</span>
-                      <span className="font-medium text-slate-700">{amb.currentLocation}</span>
-                    </div>
-                    <div className="flex justify-between items-center pt-1">
-                      <span className="text-slate-400 flex items-center gap-1">
-                        <Fuel className="w-3.5 h-3.5 text-amber-500" /> Fuel Level:
-                      </span>
-                      <span className="font-bold text-slate-900">{amb.fuelLevel}%</span>
-                    </div>
-                    <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${
-                          amb.fuelLevel > 50 ? 'bg-emerald-500' : amb.fuelLevel > 20 ? 'bg-amber-500' : 'bg-rose-500'
-                        }`}
-                        style={{ width: `${amb.fuelLevel}%` }}
-                      ></div>
+                    <div className="py-3 space-y-2 text-xs text-slate-600">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">Class & Type:</span>
+                        <span className="font-semibold text-slate-800 text-right">{amb.type}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">Ownership:</span>
+                        <span className="px-2 py-0.5 rounded font-medium text-[11px] bg-slate-100 text-slate-800">
+                          {amb.ownershipType || 'Owned'} {amb.manufacturingYear ? `(${amb.manufacturingYear})` : ''}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">Base / Branch:</span>
+                        <span className="font-medium text-slate-700 truncate max-w-[160px]">{amb.homeBranch || amb.currentLocation}</span>
+                      </div>
+
+                      {/* Equipment chips */}
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 ${amb.oxygenCylinderAvailable === 'Yes' || amb.oxygenCylinderAvailable === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'}`}>
+                          <Heart className="w-3 h-3" /> O2 Cyl: {amb.oxygenCylinderAvailable === 'Yes' || amb.oxygenCylinderAvailable === true ? 'Yes' : 'No'}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 ${amb.stretcherAvailable === 'Yes' || amb.stretcherAvailable === true ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'}`}>
+                          <Check className="w-3 h-3" /> Stretcher: {amb.stretcherAvailable === 'Yes' || amb.stretcherAvailable === true ? 'Yes' : 'No'}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 ${amb.defibrillatorAvailable === 'Yes' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-slate-100 text-slate-500'}`}>
+                          AED: {amb.defibrillatorAvailable || 'Yes'}
+                        </span>
+                      </div>
+
+                      {/* Fuel and Odometer */}
+                      <div className="flex justify-between items-center pt-1.5">
+                        <span className="text-slate-400 flex items-center gap-1">
+                          <Fuel className="w-3.5 h-3.5 text-amber-500" /> {amb.fuelType || 'Diesel'}:
+                        </span>
+                        <span className="font-bold text-slate-900">{amb.fuelLevel}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${
+                            amb.fuelLevel > 50 ? 'bg-emerald-500' : amb.fuelLevel > 20 ? 'bg-amber-500' : 'bg-rose-500'
+                          }`}
+                          style={{ width: `${amb.fuelLevel}%` }}
+                        ></div>
+                      </div>
                     </div>
                   </div>
 
                   <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                    <span>Odometer: {amb.mileageKm.toLocaleString()} km</span>
-                    <span>Next Service: {amb.nextMaintenanceDate}</span>
+                    <div>
+                      <p className="font-medium text-slate-700">Odometer: {(amb.odometerReading || amb.mileageKm).toLocaleString()} km</p>
+                      <p className="text-[11px] text-slate-400">Next Service: {amb.nextMaintenanceDate}</p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      leftIcon={<Eye className="w-3.5 h-3.5" />}
+                      onClick={() => setSelectedAmbulanceDetails(amb)}
+                    >
+                      View Specs
+                    </Button>
                   </div>
                 </Card>
               ))}
@@ -541,7 +862,7 @@ export const AmbulanceManagement: React.FC = () => {
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <Input
-              placeholder="Search paramedic name, license..."
+              placeholder="Search staff name, role, license, staff ID..."
               value={searchTerm}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
               leftIcon={<Search className="w-4 h-4 text-slate-400" />}
@@ -553,58 +874,108 @@ export const AmbulanceManagement: React.FC = () => {
               leftIcon={<Plus className="w-4 h-4" />}
               onClick={() => setIsAddDriverModalOpen(true)}
             >
-              Add Paramedic Driver
+              Onboard Staff / Driver
             </Button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {drivers
-              .filter((d) => d.name.toLowerCase().includes(searchTerm.toLowerCase()))
+              .filter(
+                (d) =>
+                  d.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                  d.licenseNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                  (d.role && d.role.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                  d.id.toLowerCase().includes(searchTerm.toLowerCase())
+              )
               .map((drv) => (
-                <Card key={drv.id} className="p-5 border-slate-200 hover:border-brand-300 transition-all">
-                  <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-700">
-                        {drv.name.charAt(0)}
+                <Card key={drv.id} className="p-5 border-slate-200 hover:border-brand-400 transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-700 shrink-0 overflow-hidden">
+                          {drv.avatarUrl ? (
+                            <img src={drv.avatarUrl} alt={drv.name} className="w-full h-full object-cover" />
+                          ) : (
+                            drv.name.charAt(0)
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="font-bold text-slate-900 text-sm">{drv.name}</h4>
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded">
+                              {drv.id}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <Badge variant="neutral" size="sm">
+                              {drv.role || 'Ambulance Driver'}
+                            </Badge>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-bold text-slate-900 text-sm">{drv.name}</h4>
-                        <p className="text-xs text-slate-500">{drv.phone}</p>
-                      </div>
+                      <Badge
+                        variant={
+                          drv.availabilityStatus === 'On Duty & Available' || drv.availabilityStatus === 'Available'
+                            ? 'success'
+                            : drv.availabilityStatus === 'On Active Trip' || drv.availabilityStatus === 'On Trip'
+                            ? 'info'
+                            : 'neutral'
+                        }
+                        size="sm"
+                      >
+                        {drv.availabilityStatus}
+                      </Badge>
                     </div>
-                    <Badge
-                      variant={
-                        drv.availabilityStatus === 'On Duty & Available'
-                          ? 'success'
-                          : drv.availabilityStatus === 'On Active Trip'
-                          ? 'info'
-                          : 'neutral'
-                      }
-                      size="sm"
-                    >
-                      {drv.availabilityStatus}
-                    </Badge>
+
+                    <div className="py-3 space-y-2 text-xs text-slate-600">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">Mobile Phone:</span>
+                        <span className="font-medium text-slate-800">{drv.phone}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">Licence / Class:</span>
+                        <span className="font-mono font-medium text-slate-800 truncate max-w-[170px]">
+                          {drv.licenseNumber} ({drv.licenseType || 'EVOC'})
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">Shift & Timings:</span>
+                        <span className="font-medium text-slate-800">
+                          {drv.shiftType || 'Morning'} ({drv.shiftStartTime || '08:00'} - {drv.shiftEndTime || '16:00'})
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">Emergency Exp:</span>
+                        <span className="font-semibold text-slate-800">{drv.emergencyExperienceYears} Years</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">Completed 911 Trips:</span>
+                        <span className="font-extrabold text-brand-600">{drv.completedTrips} Trips</span>
+                      </div>
+
+                      {drv.emergencyContactName && (
+                        <div className="flex justify-between items-center pt-1 border-t border-slate-50 text-[11px]">
+                          <span className="text-slate-400">Emergency Contact:</span>
+                          <span className="text-slate-700 font-medium">
+                            {drv.emergencyContactName} ({drv.emergencyContactRelationship || 'Relative'})
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="py-3 space-y-2 text-xs text-slate-600">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">License No:</span>
-                      <span className="font-mono font-medium text-slate-800">{drv.licenseNumber}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Emergency Experience:</span>
-                      <span className="font-semibold text-slate-800">{drv.emergencyExperienceYears} Years</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Completed 911 Trips:</span>
-                      <span className="font-extrabold text-brand-600">{drv.completedTrips} Trips</span>
-                    </div>
-                    {drv.assignedAmbulanceReg && (
-                      <div className="flex justify-between pt-1">
-                        <span className="text-slate-400">Assigned Vehicle:</span>
-                        <span className="font-bold text-slate-900">{drv.assignedAmbulanceReg}</span>
-                      </div>
-                    )}
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                    <span className="truncate max-w-[150px]">
+                      {drv.assignedAmbulanceReg ? `Unit: ${drv.assignedAmbulanceReg}` : 'Unassigned to Unit'}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      leftIcon={<Eye className="w-3.5 h-3.5" />}
+                      onClick={() => setSelectedDriverDetails(drv)}
+                    >
+                      View Profile
+                    </Button>
                   </div>
                 </Card>
               ))}
@@ -615,7 +986,7 @@ export const AmbulanceManagement: React.FC = () => {
       {/* TAB 4: FLEET MAINTENANCE */}
       {activeTab === 'maintenance' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <h3 className="text-lg font-bold text-slate-900">Fleet Maintenance & Calibration Logs</h3>
             <Button
               variant="primary"
@@ -623,7 +994,11 @@ export const AmbulanceManagement: React.FC = () => {
               leftIcon={<Plus className="w-4 h-4" />}
               onClick={() => {
                 if (ambulances.length > 0) {
-                  setNewMaintenance((prev) => ({ ...prev, ambulanceId: ambulances[0].id }));
+                  setNewMaintenance((prev) => ({
+                    ...prev,
+                    ambulanceId: ambulances[0].id,
+                    odometerAtService: ambulances[0].odometerReading || ambulances[0].mileageKm || 15000
+                  }));
                 }
                 setIsAddMaintenanceModalOpen(true);
               }}
@@ -633,35 +1008,112 @@ export const AmbulanceManagement: React.FC = () => {
           </div>
 
           <Card className="overflow-hidden border-slate-200">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
-                <tr>
-                  <th className="py-3 px-4">Ambulance Unit</th>
-                  <th className="py-3 px-4">Service Type</th>
-                  <th className="py-3 px-4">Description</th>
-                  <th className="py-3 px-4">Serviced By</th>
-                  <th className="py-3 px-4">Service Date</th>
-                  <th className="py-3 px-4 text-right">Cost</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {maintenanceRecords.map((rec) => (
-                  <tr key={rec.id} className="hover:bg-slate-50">
-                    <td className="py-3 px-4 font-bold text-slate-900">{rec.ambulanceReg}</td>
-                    <td className="py-3 px-4 font-semibold text-brand-600">{rec.serviceType}</td>
-                    <td className="py-3 px-4 text-slate-600">{rec.description}</td>
-                    <td className="py-3 px-4 text-slate-700">{rec.servicedBy}</td>
-                    <td className="py-3 px-4 text-slate-500">{rec.serviceDate}</td>
-                    <td className="py-3 px-4 text-right font-bold text-slate-900">${rec.cost}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                  <tr>
+                    <th className="py-3 px-4">Log ID & Unit</th>
+                    <th className="py-3 px-4">Category & Status</th>
+                    <th className="py-3 px-4">Service Details</th>
+                    <th className="py-3 px-4">Service Provider & Tech</th>
+                    <th className="py-3 px-4">Safety Inspection</th>
+                    <th className="py-3 px-4">Odometer</th>
+                    <th className="py-3 px-4 text-right">Cost (₹)</th>
+                    <th className="py-3 px-4 text-center">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {maintenanceRecords.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-slate-400">
+                        No maintenance records logged yet. Click "Log Service Record" to record maintenance.
+                      </td>
+                    </tr>
+                  ) : (
+                    maintenanceRecords.map((rec) => (
+                      <tr key={rec.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-slate-900">{rec.ambulanceReg}</div>
+                          <div className="text-[10px] font-mono text-slate-400">{rec.id}</div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex flex-col gap-1">
+                            <Badge
+                              variant={
+                                rec.category === 'Breakdown'
+                                  ? 'error'
+                                  : rec.category === 'Corrective'
+                                  ? 'warning'
+                                  : 'info'
+                              }
+                              size="sm"
+                            >
+                              {rec.category || 'Preventive'}
+                            </Badge>
+                            <span className="text-[10px] font-semibold text-slate-500">
+                              {rec.maintenanceStatus || 'Completed'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-brand-700">{rec.serviceType}</div>
+                          <div className="text-slate-500 truncate max-w-[180px]">{rec.description}</div>
+                          <div className="text-[10px] text-slate-400">Date: {rec.serviceDate}</div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-medium text-slate-800">{rec.servicedBy}</div>
+                          {rec.technicianName && (
+                            <div className="text-[10px] text-slate-500">Tech: {rec.technicianName}</div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
+                          <Badge
+                            variant={
+                              rec.safetyInspectionResult === 'Passed'
+                                ? 'success'
+                                : rec.safetyInspectionResult === 'Failed'
+                                ? 'error'
+                                : 'warning'
+                            }
+                            size="sm"
+                          >
+                            {rec.safetyInspectionResult || 'Passed'}
+                          </Badge>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="font-medium text-slate-700">
+                            {rec.odometerAtService ? `${rec.odometerAtService.toLocaleString()} km` : '—'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="font-bold text-slate-900">₹{(rec.cost || 0).toLocaleString()}</div>
+                          {rec.partsCost !== undefined && (
+                            <div className="text-[10px] text-slate-400">
+                              Parts: ₹{(rec.partsCost || 0).toLocaleString()}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSelectedMaintenanceDetails(rec)}
+                            leftIcon={<Eye className="w-3.5 h-3.5" />}
+                          >
+                            Details
+                          </Button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </Card>
         </div>
       )}
 
-      {/* Dispatch Modal */}
+      {/* DISPATCH MODAL */}
       {selectedRequestForDispatch && (
         <Modal
           isOpen={isDispatchModalOpen}
@@ -701,10 +1153,10 @@ export const AmbulanceManagement: React.FC = () => {
                 className="w-full text-xs rounded-lg border-slate-300 focus:border-brand-500 focus:ring-brand-500 p-2.5 border bg-white"
               >
                 {drivers
-                  .filter((d) => d.availabilityStatus === 'On Duty & Available')
+                  .filter((d) => d.availabilityStatus === 'On Duty & Available' || d.availabilityStatus === 'Available')
                   .map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.name} ({d.phone}) — {d.completedTrips} Trips
+                      {d.name} ({d.role || 'Driver'}) — {d.phone}
                     </option>
                   ))}
               </select>
@@ -727,212 +1179,1952 @@ export const AmbulanceManagement: React.FC = () => {
         </Modal>
       )}
 
-      {/* Add Ambulance Modal */}
+      {/* ========================================================================= */}
+      {/* 1. ADD AMBULANCE MODAL (ALL 6 REQUESTED SECTIONS)                          */}
+      {/* ========================================================================= */}
       <Modal
         isOpen={isAddAmbulanceModalOpen}
         onClose={() => setIsAddAmbulanceModalOpen(false)}
-        title="Register New Ambulance to Fleet"
-        maxWidth="md"
+        title="Enroll New Ambulance Unit (Fleet Inventory)"
+        maxWidth="4xl"
       >
-        <form onSubmit={handleAddAmbulance} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Registration Number</label>
-            <Input
-              required
-              placeholder="e.g. NY-EMRG-991"
-              value={newAmbulance.regNumber}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewAmbulance({ ...newAmbulance, regNumber: e.target.value })}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Ambulance Type</label>
-              <select
-                value={newAmbulance.type}
-                onChange={(e) => setNewAmbulance({ ...newAmbulance, type: e.target.value as any })}
-                className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
-              >
-                <option value="Advanced Life Support (ALS)">Advanced Life Support (ALS)</option>
-                <option value="Basic Life Support (BLS)">Basic Life Support (BLS)</option>
-                <option value="Patient Transport Ambulance">Patient Transport Ambulance</option>
-                <option value="Neonatal Ambulance">Neonatal Ambulance</option>
-              </select>
+        <form onSubmit={handleAddAmbulance} className="space-y-6 max-h-[75vh] overflow-y-auto px-1">
+          {/* Section 1: Vehicle Identification and Registration */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">1</span>
+              Vehicle Identification and Registration
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Vehicle ID / Ambulance ID</label>
+                <div className="px-3 py-2 bg-slate-200/80 border border-slate-300 rounded-lg text-xs font-mono text-slate-600">
+                  (Auto-generated upon save)
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Registration Number *</label>
+                <Input
+                  required
+                  placeholder="e.g. MH-12-AB-1234 or NY-EMRG-889"
+                  value={newAmbulance.regNumber}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, regNumber: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Vehicle Ownership Type *</label>
+                <select
+                  value={newAmbulance.ownershipType}
+                  onChange={(e) =>
+                    setNewAmbulance({ ...newAmbulance, ownershipType: e.target.value as AmbulanceOwnershipType })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Owned">Owned</option>
+                  <option value="Leased">Leased</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Registration Date</label>
+                <Input
+                  type="date"
+                  value={newAmbulance.registrationDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, registrationDate: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Registration Expiry Date</label>
+                <Input
+                  type="date"
+                  value={newAmbulance.registrationExpiryDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, registrationExpiryDate: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Chassis Number (Optional)</label>
+                <Input
+                  placeholder="e.g. MA3EFA23S..."
+                  value={newAmbulance.chassisNumber}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, chassisNumber: e.target.value })
+                  }
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Engine Number (Optional)</label>
+                <Input
+                  placeholder="e.g. ENG-9988123-D"
+                  value={newAmbulance.engineNumber}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, engineNumber: e.target.value })
+                  }
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Equipment Level</label>
-              <select
-                value={newAmbulance.equipmentCategory}
-                onChange={(e) => setNewAmbulance({ ...newAmbulance, equipmentCategory: e.target.value as any })}
-                className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
-              >
-                <option value="Class A (Critical Telemetry)">Class A (Critical Telemetry)</option>
-                <option value="Class B (Defibrillator + O2)">Class B (Defibrillator + O2)</option>
-                <option value="Class C (Standard Transport)">Class C (Standard Transport)</option>
-              </select>
+          </div>
+
+          {/* Section 2: Vehicle Specifications */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">2</span>
+              Vehicle Specifications
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Vehicle Make & Model *</label>
+                <Input
+                  required
+                  placeholder="e.g. Force Traveller 3350 Mobile ICU / Mercedes Sprinter"
+                  value={newAmbulance.model}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, model: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Ambulance Type *</label>
+                <select
+                  value={newAmbulance.type}
+                  onChange={(e) => setNewAmbulance({ ...newAmbulance, type: e.target.value as AmbulanceType })}
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Advanced Life Support (ALS)">Advanced Life Support (ALS)</option>
+                  <option value="Basic Life Support (BLS)">Basic Life Support (BLS)</option>
+                  <option value="Patient Transport Ambulance">Patient Transport Ambulance</option>
+                  <option value="Neonatal Ambulance">Neonatal Ambulance</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Manufacturing Year</label>
+                <Input
+                  type="number"
+                  placeholder="2024"
+                  value={newAmbulance.manufacturingYear}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, manufacturingYear: Number(e.target.value) })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Seating Capacity (Pax)</label>
+                <Input
+                  type="number"
+                  value={newAmbulance.seatingCapacity}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, seatingCapacity: Number(e.target.value) })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Patient Carrying Capacity</label>
+                <Input
+                  type="number"
+                  value={newAmbulance.patientCapacity}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, patientCapacity: Number(e.target.value) })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Odometer Reading (km) *</label>
+                <Input
+                  type="number"
+                  value={newAmbulance.odometerReading}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({
+                      ...newAmbulance,
+                      odometerReading: Number(e.target.value),
+                      mileageKm: Number(e.target.value)
+                    })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Fuel Type *</label>
+                <select
+                  value={newAmbulance.fuelType}
+                  onChange={(e) =>
+                    setNewAmbulance({ ...newAmbulance, fuelType: e.target.value as AmbulanceFuelType })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Diesel">Diesel</option>
+                  <option value="Petrol">Petrol</option>
+                  <option value="CNG">CNG</option>
+                  <option value="Electric">Electric</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Initial Fuel Level (%)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={newAmbulance.fuelLevel}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, fuelLevel: Number(e.target.value) })
+                  }
+                />
+              </div>
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Vehicle Model & Make</label>
-            <Input
-              required
-              placeholder="e.g. Mercedes Sprinter 3500 Mobile ICU"
-              value={newAmbulance.model}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewAmbulance({ ...newAmbulance, model: e.target.value })}
-            />
+          {/* Section 3: Operational Details */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">3</span>
+              Operational Details
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Vehicle Status</label>
+                <select
+                  value={newAmbulance.status}
+                  onChange={(e) =>
+                    setNewAmbulance({ ...newAmbulance, status: e.target.value as AmbulanceStatus })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Available">Available</option>
+                  <option value="On Trip">On Trip</option>
+                  <option value="Under Maintenance">Under Maintenance</option>
+                  <option value="Out of Service">Out of Service</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Driver (Optional)</label>
+                <select
+                  value={newAmbulance.assignedDriverId}
+                  onChange={(e) => {
+                    const selId = e.target.value;
+                    const d = drivers.find((x) => x.id === selId);
+                    setNewAmbulance({
+                      ...newAmbulance,
+                      assignedDriverId: selId,
+                      assignedDriverName: d ? d.name : '',
+                      driverPhone: d ? d.phone : '',
+                    });
+                  }}
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="">-- No driver assigned --</option>
+                  {drivers.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({d.role || 'Driver'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Paramedic / Crew (Optional)</label>
+                <Input
+                  placeholder="e.g. Paramedic EMT R. Sharma"
+                  value={newAmbulance.assignedParamedic}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, assignedParamedic: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Home Hospital / Branch</label>
+                <Input
+                  placeholder="e.g. Apex Hospital - Main Branch"
+                  value={newAmbulance.homeBranch}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, homeBranch: e.target.value })
+                  }
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Current Location (Optional)</label>
+                <Input
+                  placeholder="e.g. Base Station Alpha / Emergency Bay 3"
+                  value={newAmbulance.currentLocation}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, currentLocation: e.target.value })
+                  }
+                />
+              </div>
+            </div>
           </div>
 
-          <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+          {/* Section 4: Compliance and Documents */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">4</span>
+              Compliance and Documents
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Insurance Policy Number</label>
+                <Input
+                  placeholder="e.g. POL-BAJAJ-77189"
+                  value={newAmbulance.insurancePolicyNumber}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, insurancePolicyNumber: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Insurance Expiry Date</label>
+                <Input
+                  type="date"
+                  value={newAmbulance.insuranceExpiryDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, insuranceExpiryDate: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Fitness Certificate Expiry Date</label>
+                <Input
+                  type="date"
+                  value={newAmbulance.fitnessCertExpiryDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, fitnessCertExpiryDate: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Permit Expiry Date (Optional)</label>
+                <Input
+                  type="date"
+                  value={newAmbulance.permitExpiryDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, permitExpiryDate: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Pollution Under Control (PUC) Expiry</label>
+                <Input
+                  type="date"
+                  value={newAmbulance.pucExpiryDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, pucExpiryDate: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 5: Equipment and Readiness */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">5</span>
+              Equipment and Readiness
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Oxygen Cylinder Available *</label>
+                <select
+                  value={newAmbulance.oxygenCylinderAvailable}
+                  onChange={(e) =>
+                    setNewAmbulance({ ...newAmbulance, oxygenCylinderAvailable: e.target.value as 'Yes' | 'No' })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Stretcher Available *</label>
+                <select
+                  value={newAmbulance.stretcherAvailable}
+                  onChange={(e) =>
+                    setNewAmbulance({ ...newAmbulance, stretcherAvailable: e.target.value as 'Yes' | 'No' })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Defibrillator Available *</label>
+                <select
+                  value={newAmbulance.defibrillatorAvailable}
+                  onChange={(e) =>
+                    setNewAmbulance({
+                      ...newAmbulance,
+                      defibrillatorAvailable: e.target.value as 'Yes' | 'No' | 'Not Applicable'
+                    })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                  <option value="Not Applicable">Not Applicable</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Equipment Category</label>
+                <select
+                  value={newAmbulance.equipmentCategory}
+                  onChange={(e) =>
+                    setNewAmbulance({
+                      ...newAmbulance,
+                      equipmentCategory: e.target.value as Ambulance['equipmentCategory']
+                    })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Class A (Critical Telemetry)">Class A (Critical Telemetry)</option>
+                  <option value="Class B (Defibrillator + O2)">Class B (Defibrillator + O2)</option>
+                  <option value="Class C (Standard Transport)">Class C (Standard Transport)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Last Safety Inspection Date</label>
+                <Input
+                  type="date"
+                  value={newAmbulance.lastSafetyInspectionDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, lastSafetyInspectionDate: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Next Maintenance Due Date</label>
+                <Input
+                  type="date"
+                  value={newAmbulance.nextMaintenanceDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewAmbulance({ ...newAmbulance, nextMaintenanceDate: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+
+            {/* Checklist Chips */}
+            <div className="pt-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">Essential Equipment Checklist</label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {STANDARD_EQUIPMENT_CHECKLIST.map((item) => {
+                  const isChecked = newAmbulance.equipmentChecklist.includes(item);
+                  return (
+                    <button
+                      type="button"
+                      key={item}
+                      onClick={() => {
+                        if (isChecked) {
+                          setNewAmbulance({
+                            ...newAmbulance,
+                            equipmentChecklist: newAmbulance.equipmentChecklist.filter((x) => x !== item)
+                          });
+                        } else {
+                          setNewAmbulance({
+                            ...newAmbulance,
+                            equipmentChecklist: [...newAmbulance.equipmentChecklist, item]
+                          });
+                        }
+                      }}
+                      className={`text-left p-2 rounded-lg text-xs font-medium flex items-center gap-2 border transition-colors ${
+                        isChecked
+                          ? 'bg-brand-50 border-brand-300 text-brand-800'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {isChecked ? (
+                        <CheckSquare className="w-4 h-4 text-brand-600 shrink-0" />
+                      ) : (
+                        <Square className="w-4 h-4 text-slate-400 shrink-0" />
+                      )}
+                      <span className="truncate">{item}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Section 6: Additional Details */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">6</span>
+              Additional Details
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Vehicle Photo (Optional)</label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Image URL or upload file"
+                    value={newAmbulance.vehiclePhotoUrl}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setNewAmbulance({ ...newAmbulance, vehiclePhotoUrl: e.target.value })
+                    }
+                  />
+                  <label className="cursor-pointer bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 p-2.5 rounded-lg flex items-center justify-center shrink-0">
+                    <Upload className="w-4 h-4" />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, (url) => setNewAmbulance({ ...newAmbulance, vehiclePhotoUrl: url }))}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Notes / Remarks</label>
+                <textarea
+                  rows={2}
+                  placeholder="Special instructions, warranty details, bay assignment..."
+                  value={newAmbulance.notes}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                    setNewAmbulance({ ...newAmbulance, notes: e.target.value })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2 border bg-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
             <Button variant="outline" type="button" onClick={() => setIsAddAmbulanceModalOpen(false)}>
               Cancel
             </Button>
             <Button variant="primary" type="submit">
-              Save Vehicle
+              Save Vehicle to Fleet
             </Button>
           </div>
         </form>
       </Modal>
 
-      {/* Add Driver Modal */}
+      {/* ========================================================================= */}
+      {/* 2. ADD DRIVER & PARAMEDIC MODAL (ALL 7 REQUESTED SECTIONS)                 */}
+      {/* ========================================================================= */}
       <Modal
         isOpen={isAddDriverModalOpen}
         onClose={() => setIsAddDriverModalOpen(false)}
-        title="Onboard Paramedic Driver"
-        maxWidth="md"
+        title="Onboard Driver & Paramedic Crew"
+        maxWidth="4xl"
       >
-        <form onSubmit={handleAddDriver} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Driver Full Name</label>
-            <Input
-              required
-              placeholder="e.g. John Doe"
-              value={newDriver.name}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewDriver({ ...newDriver, name: e.target.value })}
-            />
+        <form onSubmit={handleAddDriver} className="space-y-6 max-h-[75vh] overflow-y-auto px-1">
+          {/* Section 1: Staff Identification */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">1</span>
+              Staff Identification
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Staff ID</label>
+                <div className="px-3 py-2 bg-slate-200/80 border border-slate-300 rounded-lg text-xs font-mono text-slate-600">
+                  (Auto-generated upon save)
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Staff Full Name *</label>
+                <Input
+                  required
+                  placeholder="e.g. Ramesh Kumar"
+                  value={newDriver.name}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, name: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Staff Role *</label>
+                <select
+                  value={newDriver.role}
+                  onChange={(e) =>
+                    setNewDriver({ ...newDriver, role: e.target.value as AmbulanceStaffRole })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Ambulance Driver">Ambulance Driver</option>
+                  <option value="Paramedic">Paramedic</option>
+                  <option value="Emergency Medical Technician (EMT)">Emergency Medical Technician (EMT)</option>
+                </select>
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Profile Photo (Optional)</label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Avatar image URL or upload photo"
+                    value={newDriver.avatarUrl}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setNewDriver({ ...newDriver, avatarUrl: e.target.value })
+                    }
+                  />
+                  <label className="cursor-pointer bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 p-2.5 rounded-lg flex items-center justify-center shrink-0">
+                    <Upload className="w-4 h-4" />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, (url) => setNewDriver({ ...newDriver, avatarUrl: url }))}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Email</label>
-              <Input
-                required
-                type="email"
-                placeholder="driver@example.com"
-                value={newDriver.email}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewDriver({ ...newDriver, email: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Emergency Phone</label>
-              <Input
-                required
-                placeholder="+1 (555) 000-0000"
-                value={newDriver.phone}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewDriver({ ...newDriver, phone: e.target.value })}
-              />
+          {/* Section 2: Personal and Contact Details */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">2</span>
+              Personal and Contact Details
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Mobile Number *</label>
+                <Input
+                  required
+                  placeholder="+91 98765 43210"
+                  value={newDriver.phone}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, phone: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Alternative Contact Number</label>
+                <Input
+                  placeholder="+91 98111 22334"
+                  value={newDriver.alternativePhone}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, alternativePhone: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Email (For System Login) *</label>
+                <Input
+                  required
+                  type="email"
+                  placeholder="staff@hospital.com"
+                  value={newDriver.email}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, email: e.target.value })
+                  }
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Residential Address (Optional)</label>
+                <Input
+                  placeholder="Street, City, Pincode"
+                  value={newDriver.address}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, address: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Emergency Contact Person</label>
+                <Input
+                  placeholder="e.g. Priya Kumar"
+                  value={newDriver.emergencyContactName}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, emergencyContactName: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Emergency Contact Relationship</label>
+                <Input
+                  placeholder="e.g. Spouse / Brother / Parent"
+                  value={newDriver.emergencyContactRelationship}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, emergencyContactRelationship: e.target.value })
+                  }
+                />
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Commercial / EVOC License</label>
-              <Input
-                required
-                placeholder="EVOC-998822"
-                value={newDriver.licenseNumber}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewDriver({ ...newDriver, licenseNumber: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Experience (Years)</label>
-              <Input
-                type="number"
-                value={newDriver.emergencyExperienceYears}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewDriver({ ...newDriver, emergencyExperienceYears: Number(e.target.value) })}
-              />
+          {/* Section 3: Licence and Certification */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">3</span>
+              Licence and Certification
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Licence Number *</label>
+                <Input
+                  required
+                  placeholder="e.g. DL-MH-12-2019-0098"
+                  value={newDriver.licenseNumber}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, licenseNumber: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Licence Type / Class *</label>
+                <Input
+                  required
+                  placeholder="Commercial Heavy / EVOC"
+                  value={newDriver.licenseType}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, licenseType: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Licence Issue Date</label>
+                <Input
+                  type="date"
+                  value={newDriver.licenseIssueDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, licenseIssueDate: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Licence Expiry Date *</label>
+                <Input
+                  type="date"
+                  required
+                  value={newDriver.licenseExpiry}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, licenseExpiry: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">EVOC Certification Expiry</label>
+                <Input
+                  type="date"
+                  value={newDriver.evocCertExpiry}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, evocCertExpiry: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">First Aid / CPR Certification Expiry</label>
+                <Input
+                  type="date"
+                  value={newDriver.cprCertExpiry}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, cprCertExpiry: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Medical Clearance Expiry</label>
+                <Input
+                  type="date"
+                  value={newDriver.medicalClearanceExpiry}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, medicalClearanceExpiry: e.target.value })
+                  }
+                />
+              </div>
             </div>
           </div>
 
-          <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+          {/* Section 4: Employment Details */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">4</span>
+              Employment Details
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Employee ID (If different)</label>
+                <Input
+                  placeholder="e.g. EMP-9902"
+                  value={newDriver.employeeId}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, employeeId: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Date of Joining</label>
+                <Input
+                  type="date"
+                  value={newDriver.dateOfJoining}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, dateOfJoining: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Employment Type *</label>
+                <select
+                  value={newDriver.employmentType}
+                  onChange={(e) =>
+                    setNewDriver({ ...newDriver, employmentType: e.target.value as AmbulanceEmploymentType })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Full-Time">Full-Time</option>
+                  <option value="Part-Time">Part-Time</option>
+                  <option value="Contract">Contract</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Duty Status *</label>
+                <select
+                  value={newDriver.dutyStatus}
+                  onChange={(e) =>
+                    setNewDriver({ ...newDriver, dutyStatus: e.target.value as AmbulanceDutyStatus })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                  <option value="On Leave">On Leave</option>
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Hospital / Branch</label>
+                <Input
+                  placeholder="e.g. Apex Hospital - Main Trauma Center"
+                  value={newDriver.assignedBranch}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, assignedBranch: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 5: Duty and Shift Management */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">5</span>
+              Duty and Shift Management
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Shift Type *</label>
+                <select
+                  value={newDriver.shiftType}
+                  onChange={(e) =>
+                    setNewDriver({ ...newDriver, shiftType: e.target.value as AmbulanceShiftType })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Morning">Morning</option>
+                  <option value="Evening">Evening</option>
+                  <option value="Night">Night</option>
+                  <option value="Rotational">Rotational</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Shift Start Time</label>
+                <Input
+                  type="time"
+                  value={newDriver.shiftStartTime}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, shiftStartTime: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Shift End Time</label>
+                <Input
+                  type="time"
+                  value={newDriver.shiftEndTime}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, shiftEndTime: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Current Availability *</label>
+                <select
+                  value={newDriver.availabilityStatus}
+                  onChange={(e) =>
+                    setNewDriver({ ...newDriver, availabilityStatus: e.target.value as AmbulanceAvailabilityStatus })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="On Duty & Available">Available / On Duty</option>
+                  <option value="On Active Trip">On Active Trip</option>
+                  <option value="Off Duty">Off Duty</option>
+                  <option value="On Break">On Break</option>
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Assigned Ambulance (Optional)</label>
+                <select
+                  value={newDriver.assignedAmbulanceId}
+                  onChange={(e) => {
+                    const ambId = e.target.value;
+                    const amb = ambulances.find((x) => x.id === ambId);
+                    setNewDriver({
+                      ...newDriver,
+                      assignedAmbulanceId: ambId,
+                      assignedAmbulanceReg: amb ? amb.regNumber : ''
+                    });
+                  }}
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="">-- No vehicle assigned (Manage during dispatch) --</option>
+                  {ambulances.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.regNumber} — {a.model} ({a.type})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 6: Qualifications and Experience */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">6</span>
+              Qualifications and Experience
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Emergency Experience (Years)</label>
+                <Input
+                  type="number"
+                  value={newDriver.emergencyExperienceYears}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, emergencyExperienceYears: Number(e.target.value) })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Paramedic Registration / Cert No.</label>
+                <Input
+                  placeholder="e.g. PMC-CERT-88421"
+                  value={newDriver.paramedicRegistrationNumber}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, paramedicRegistrationNumber: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Certification Expiry Date</label>
+                <Input
+                  type="date"
+                  value={newDriver.certificationExpiryDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewDriver({ ...newDriver, certificationExpiryDate: e.target.value })
+                  }
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Qualification & Training Details</label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Diploma in Emergency Medical Services, ACLS & BLS Certified by AHA..."
+                  value={newDriver.qualificationDetails}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                    setNewDriver({ ...newDriver, qualificationDetails: e.target.value })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2 border bg-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 7: Additional Details */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">7</span>
+              Additional Details
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Documents / Licence Upload (Optional)</label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Document URL or upload attachment"
+                    value={newDriver.documentUrl}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setNewDriver({ ...newDriver, documentUrl: e.target.value })
+                    }
+                  />
+                  <label className="cursor-pointer bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 p-2.5 rounded-lg flex items-center justify-center shrink-0">
+                    <Upload className="w-4 h-4" />
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, (url) => setNewDriver({ ...newDriver, documentUrl: url }))}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Notes / Remarks</label>
+                <textarea
+                  rows={2}
+                  placeholder="Background verification details, blood group, additional notes..."
+                  value={newDriver.notes}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                    setNewDriver({ ...newDriver, notes: e.target.value })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2 border bg-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
             <Button variant="outline" type="button" onClick={() => setIsAddDriverModalOpen(false)}>
               Cancel
             </Button>
             <Button variant="primary" type="submit">
-              Add Driver
+              Save Staff Profile & Create Login
             </Button>
           </div>
         </form>
       </Modal>
 
-      {/* Add Maintenance Modal */}
+      {/* ========================================================================= */}
+      {/* 3. ADD MAINTENANCE MODAL (ALL 5 REQUESTED SECTIONS & AUTO COST)            */}
+      {/* ========================================================================= */}
       <Modal
         isOpen={isAddMaintenanceModalOpen}
         onClose={() => setIsAddMaintenanceModalOpen(false)}
-        title="Log Vehicle Maintenance"
-        maxWidth="md"
+        title="Log Vehicle Maintenance & Calibration"
+        maxWidth="4xl"
       >
-        <form onSubmit={handleAddMaintenance} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Select Ambulance</label>
-            <select
-              value={newMaintenance.ambulanceId}
-              onChange={(e) => setNewMaintenance({ ...newMaintenance, ambulanceId: e.target.value })}
-              className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
-            >
-              {ambulances.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.regNumber} ({a.model})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Service Type</label>
-              <select
-                value={newMaintenance.serviceType}
-                onChange={(e) => setNewMaintenance({ ...newMaintenance, serviceType: e.target.value as any })}
-                className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
-              >
-                <option value="Routine Inspection">Routine Inspection</option>
-                <option value="O2 & Telemetry Calibration">O2 & Telemetry Calibration</option>
-                <option value="Brakes & Tires">Brakes & Tires</option>
-                <option value="Engine Overhaul">Engine Overhaul</option>
-              </select>
+        <form onSubmit={handleAddMaintenance} className="space-y-6 max-h-[75vh] overflow-y-auto px-1">
+          {/* Section 1: Maintenance Record Details */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">1</span>
+              Maintenance Record Details
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Maintenance Log ID</label>
+                <div className="px-3 py-2 bg-slate-200/80 border border-slate-300 rounded-lg text-xs font-mono text-slate-600">
+                  (Auto-generated upon save)
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Select Ambulance Unit *</label>
+                <select
+                  required
+                  value={newMaintenance.ambulanceId}
+                  onChange={(e) => {
+                    const ambId = e.target.value;
+                    const amb = ambulances.find((a) => a.id === ambId);
+                    setNewMaintenance({
+                      ...newMaintenance,
+                      ambulanceId: ambId,
+                      odometerAtService: amb ? amb.odometerReading || amb.mileageKm : newMaintenance.odometerAtService
+                    });
+                  }}
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  {ambulances.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.regNumber} ({a.model})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Maintenance Date *</label>
+                <Input
+                  type="date"
+                  required
+                  value={newMaintenance.serviceDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, serviceDate: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Maintenance Category *</label>
+                <select
+                  value={newMaintenance.category}
+                  onChange={(e) =>
+                    setNewMaintenance({ ...newMaintenance, category: e.target.value as MaintenanceCategory })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Preventive">Preventive</option>
+                  <option value="Corrective">Corrective</option>
+                  <option value="Breakdown">Breakdown</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Cost (₹)</label>
-              <Input
-                type="number"
-                value={newMaintenance.cost}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewMaintenance({ ...newMaintenance, cost: Number(e.target.value) })}
-              />
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Maintenance Status *</label>
+                <select
+                  value={newMaintenance.maintenanceStatus}
+                  onChange={(e) =>
+                    setNewMaintenance({ ...newMaintenance, maintenanceStatus: e.target.value as MaintenanceStatus })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Scheduled">Scheduled</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Cancelled">Cancelled</option>
+                </select>
+              </div>
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Service Description</label>
-            <textarea
-              required
-              rows={3}
-              value={newMaintenance.description}
-              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setNewMaintenance({ ...newMaintenance, description: e.target.value })}
-              className="w-full text-xs rounded-lg border-slate-300 p-2.5 border"
-            />
+          {/* Section 2: Service and Inspection Details */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">2</span>
+              Service and Inspection Details
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Service Provider / Workshop *</label>
+                <Input
+                  required
+                  placeholder="e.g. Metro Fleet Center / Authorized Workshop"
+                  value={newMaintenance.servicedBy}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, servicedBy: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Service Type *</label>
+                <select
+                  value={newMaintenance.serviceType}
+                  onChange={(e) =>
+                    setNewMaintenance({ ...newMaintenance, serviceType: e.target.value })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Routine Inspection">Routine Inspection</option>
+                  <option value="O2 & Telemetry Calibration">O2 & Telemetry Calibration</option>
+                  <option value="Brakes & Tires">Brakes & Tires</option>
+                  <option value="Engine Overhaul">Engine Overhaul</option>
+                  <option value="Suspension & Steering">Suspension & Steering</option>
+                  <option value="Electrical & Siren Repair">Electrical & Siren Repair</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Odometer Reading at Service (km) *</label>
+                <Input
+                  type="number"
+                  required
+                  value={newMaintenance.odometerAtService}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, odometerAtService: Number(e.target.value) })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Technician / Mechanic Name (Optional)</label>
+                <Input
+                  placeholder="e.g. Suresh Varma (Lead Tech)"
+                  value={newMaintenance.technicianName}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, technicianName: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Next Service Due Date *</label>
+                <Input
+                  type="date"
+                  required
+                  value={newMaintenance.nextServiceDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, nextServiceDate: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Next Service Due Odometer (km)</label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 25000"
+                  value={newMaintenance.nextServiceOdometerKm}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, nextServiceOdometerKm: Number(e.target.value) })
+                  }
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Reported Issue / Fault (Optional)</label>
+                <Input
+                  placeholder="e.g. Unusual brake shudder and oxygen regulator pressure drop"
+                  value={newMaintenance.reportedIssue}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, reportedIssue: e.target.value })
+                  }
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Parts Replaced / Repairs Performed</label>
+                <Input
+                  placeholder="e.g. Replaced front ceramic brake pads, calibrated O2 pressure valve, oil filter replacement"
+                  value={newMaintenance.partsReplaced}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, partsReplaced: e.target.value })
+                  }
+                />
+              </div>
+            </div>
           </div>
 
-          <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+          {/* Section 3: Cost and Payment Details */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">3</span>
+              Cost and Payment Details
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Parts Cost (₹)</label>
+                <Input
+                  type="number"
+                  value={newMaintenance.partsCost}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    const p = Number(e.target.value);
+                    const total = p + (Number(newMaintenance.labourCost) || 0) + (Number(newMaintenance.otherCharges) || 0);
+                    setNewMaintenance({ ...newMaintenance, partsCost: p, cost: total });
+                  }}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Labour Cost (₹)</label>
+                <Input
+                  type="number"
+                  value={newMaintenance.labourCost}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    const l = Number(e.target.value);
+                    const total = (Number(newMaintenance.partsCost) || 0) + l + (Number(newMaintenance.otherCharges) || 0);
+                    setNewMaintenance({ ...newMaintenance, labourCost: l, cost: total });
+                  }}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Other Charges (₹)</label>
+                <Input
+                  type="number"
+                  value={newMaintenance.otherCharges}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    const o = Number(e.target.value);
+                    const total = (Number(newMaintenance.partsCost) || 0) + (Number(newMaintenance.labourCost) || 0) + o;
+                    setNewMaintenance({ ...newMaintenance, otherCharges: o, cost: total });
+                  }}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-emerald-800 mb-1">Total Cost (₹) — Auto-calculated</label>
+                <div className="px-3 py-2 bg-emerald-50 border border-emerald-300 rounded-lg text-xs font-bold text-emerald-800 flex items-center gap-1">
+                  <IndianRupee className="w-3.5 h-3.5" />
+                  {((newMaintenance.partsCost || 0) + (newMaintenance.labourCost || 0) + (newMaintenance.otherCharges || 0)).toLocaleString()}
+                </div>
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Invoice / Receipt Number (Optional)</label>
+                <Input
+                  placeholder="e.g. INV-MF-88991"
+                  value={newMaintenance.invoiceNumber}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, invoiceNumber: e.target.value })
+                  }
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Invoice Attachment (Optional)</label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="URL or upload receipt"
+                    value={newMaintenance.invoiceAttachmentUrl}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setNewMaintenance({ ...newMaintenance, invoiceAttachmentUrl: e.target.value })
+                    }
+                  />
+                  <label className="cursor-pointer bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 p-2.5 rounded-lg flex items-center justify-center shrink-0">
+                    <Upload className="w-4 h-4" />
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, (url) => setNewMaintenance({ ...newMaintenance, invoiceAttachmentUrl: url }))}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 4: Vehicle Availability and Safety */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">4</span>
+              Vehicle Availability and Safety
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Vehicle Availability</label>
+                <select
+                  value={newMaintenance.vehicleAvailability}
+                  onChange={(e) =>
+                    setNewMaintenance({
+                      ...newMaintenance,
+                      vehicleAvailability: e.target.value as VehicleAvailabilityDuringMaintenance
+                    })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Available">Available (Ready for Dispatch)</option>
+                  <option value="Under Maintenance">Under Maintenance</option>
+                  <option value="Out of Service">Out of Service</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Safety Inspection Result</label>
+                <select
+                  value={newMaintenance.safetyInspectionResult}
+                  onChange={(e) =>
+                    setNewMaintenance({
+                      ...newMaintenance,
+                      safetyInspectionResult: e.target.value as SafetyInspectionResult
+                    })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
+                >
+                  <option value="Passed">Passed</option>
+                  <option value="Failed">Failed</option>
+                  <option value="Pending">Pending</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Return-to-Service Date</label>
+                <Input
+                  type="date"
+                  value={newMaintenance.returnToServiceDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, returnToServiceDate: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Verified By (Authorized Staff)</label>
+                <Input
+                  placeholder="e.g. Fleet Mgr. Dr. Patel"
+                  value={newMaintenance.verifiedBy}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewMaintenance({ ...newMaintenance, verifiedBy: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 5: Additional Details */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-brand-700 flex items-center gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[10px]">5</span>
+              Additional Details & Follow-up Notes
+            </h4>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Remarks / Description *</label>
+                <textarea
+                  required
+                  rows={2}
+                  placeholder="Summary of service completed, observations, post-calibration tests..."
+                  value={newMaintenance.description}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                    setNewMaintenance({ ...newMaintenance, description: e.target.value })
+                  }
+                  className="w-full text-xs rounded-lg border-slate-300 p-2 border bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Supporting Documents / Photos (Optional)</label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="URL or upload inspection sheet"
+                    value={newMaintenance.supportingDocsUrl}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setNewMaintenance({ ...newMaintenance, supportingDocsUrl: e.target.value })
+                    }
+                  />
+                  <label className="cursor-pointer bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 p-2.5 rounded-lg flex items-center justify-center shrink-0">
+                    <Upload className="w-4 h-4" />
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, (url) => setNewMaintenance({ ...newMaintenance, supportingDocsUrl: url }))}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
             <Button variant="outline" type="button" onClick={() => setIsAddMaintenanceModalOpen(false)}>
               Cancel
             </Button>
             <Button variant="primary" type="submit">
-              Save Record
+              Save Maintenance Log
             </Button>
           </div>
         </form>
       </Modal>
+
+      {/* ========================================================================= */}
+      {/* VIEW MODAL: AMBULANCE FULL SPECIFICATIONS & COMPLIANCE SHEET              */}
+      {/* ========================================================================= */}
+      {selectedAmbulanceDetails && (
+        <Modal
+          isOpen={!!selectedAmbulanceDetails}
+          onClose={() => setSelectedAmbulanceDetails(null)}
+          title={`Ambulance Unit: ${selectedAmbulanceDetails.regNumber} (${selectedAmbulanceDetails.id})`}
+          maxWidth="4xl"
+        >
+          <div className="space-y-5 max-h-[75vh] overflow-y-auto px-1">
+            {/* Header banner */}
+            <div className="p-4 bg-teal-50 border border-teal-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-teal-600 text-white flex items-center justify-center font-bold shrink-0">
+                  <AmbulanceIcon className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">{selectedAmbulanceDetails.model}</h3>
+                  <p className="text-xs text-slate-600">
+                    {selectedAmbulanceDetails.type} • {selectedAmbulanceDetails.ownershipType || 'Owned'} • Base: {selectedAmbulanceDetails.homeBranch || selectedAmbulanceDetails.currentLocation}
+                  </p>
+                </div>
+              </div>
+              <Badge
+                variant={
+                  selectedAmbulanceDetails.status === 'Available'
+                    ? 'success'
+                    : selectedAmbulanceDetails.status === 'Dispatched' || selectedAmbulanceDetails.status === 'On Trip'
+                    ? 'info'
+                    : 'warning'
+                }
+                size="md"
+              >
+                {selectedAmbulanceDetails.status}
+              </Badge>
+            </div>
+
+            {/* 1. Vehicle Identification */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-1.5">
+                <Truck className="w-4 h-4 text-brand-600" />
+                1. Vehicle Identification and Registration
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 block">Ambulance ID:</span>
+                  <span className="font-mono font-bold text-slate-800">{selectedAmbulanceDetails.id}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Registration Number:</span>
+                  <span className="font-bold text-slate-900">{selectedAmbulanceDetails.regNumber}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Ownership Type:</span>
+                  <span className="font-medium text-slate-800">{selectedAmbulanceDetails.ownershipType || 'Owned'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Registration Date:</span>
+                  <span className="font-medium text-slate-700">{selectedAmbulanceDetails.registrationDate || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Registration Expiry Date:</span>
+                  <span className="font-medium text-slate-700">{selectedAmbulanceDetails.registrationExpiryDate || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Chassis Number:</span>
+                  <span className="font-mono text-slate-700">{selectedAmbulanceDetails.chassisNumber || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Engine Number:</span>
+                  <span className="font-mono text-slate-700">{selectedAmbulanceDetails.engineNumber || '—'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Vehicle Specifications */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-brand-600" />
+                2. Vehicle Specifications
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 block">Manufacturing Year:</span>
+                  <span className="font-semibold text-slate-800">{selectedAmbulanceDetails.manufacturingYear || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Seating Capacity:</span>
+                  <span className="font-semibold text-slate-800">{selectedAmbulanceDetails.seatingCapacity || 4} Persons</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Patient Carrying Capacity:</span>
+                  <span className="font-semibold text-slate-800">{selectedAmbulanceDetails.patientCapacity || 1} Stretcher</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Odometer Reading:</span>
+                  <span className="font-bold text-slate-900">{(selectedAmbulanceDetails.odometerReading || selectedAmbulanceDetails.mileageKm).toLocaleString()} km</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Fuel Type:</span>
+                  <span className="font-semibold text-slate-800">{selectedAmbulanceDetails.fuelType || 'Diesel'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Fuel Level:</span>
+                  <span className="font-bold text-slate-900">{selectedAmbulanceDetails.fuelLevel}%</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Operational Details */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-1.5">
+                <Navigation className="w-4 h-4 text-brand-600" />
+                3. Operational Details
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 block">Current Status:</span>
+                  <span className="font-bold text-slate-800">{selectedAmbulanceDetails.status}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Assigned Driver:</span>
+                  <span className="font-semibold text-slate-800">
+                    {selectedAmbulanceDetails.assignedDriverName || 'Not assigned'}
+                    {selectedAmbulanceDetails.driverPhone ? ` (${selectedAmbulanceDetails.driverPhone})` : ''}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Assigned Paramedic / Crew:</span>
+                  <span className="font-semibold text-slate-800">{selectedAmbulanceDetails.assignedParamedic || 'Standard EMT Crew'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Home Hospital / Branch:</span>
+                  <span className="font-medium text-slate-800">{selectedAmbulanceDetails.homeBranch || selectedAmbulanceDetails.hospitalName}</span>
+                </div>
+                <div className="sm:col-span-2">
+                  <span className="text-slate-400 block">Current Location:</span>
+                  <span className="font-medium text-slate-800 flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-rose-500" /> {selectedAmbulanceDetails.currentLocation}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* 4. Compliance and Documents */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                4. Compliance and Documents
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 block">Insurance Policy Number:</span>
+                  <span className="font-mono text-slate-800">{selectedAmbulanceDetails.insurancePolicyNumber || 'POL-99281'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Insurance Expiry Date:</span>
+                  <span className="font-medium text-slate-800">{selectedAmbulanceDetails.insuranceExpiryDate || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Fitness Certificate Expiry:</span>
+                  <span className="font-medium text-slate-800">{selectedAmbulanceDetails.fitnessCertExpiryDate || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Permit Expiry Date:</span>
+                  <span className="font-medium text-slate-800">{selectedAmbulanceDetails.permitExpiryDate || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">PUC Expiry Date:</span>
+                  <span className="font-medium text-slate-800">{selectedAmbulanceDetails.pucExpiryDate || '—'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 5. Equipment and Readiness */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-1.5">
+                <Heart className="w-4 h-4 text-rose-600" />
+                5. Equipment and Readiness
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs pb-3 border-b border-slate-200">
+                <div>
+                  <span className="text-slate-400 block">Oxygen Cylinder Available:</span>
+                  <Badge variant={selectedAmbulanceDetails.oxygenCylinderAvailable === 'Yes' || selectedAmbulanceDetails.oxygenCylinderAvailable === true ? 'success' : 'neutral'} size="sm">
+                    {selectedAmbulanceDetails.oxygenCylinderAvailable === 'Yes' || selectedAmbulanceDetails.oxygenCylinderAvailable === true ? 'Yes' : 'No'}
+                  </Badge>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Stretcher Available:</span>
+                  <Badge variant={selectedAmbulanceDetails.stretcherAvailable === 'Yes' || selectedAmbulanceDetails.stretcherAvailable === true ? 'success' : 'neutral'} size="sm">
+                    {selectedAmbulanceDetails.stretcherAvailable === 'Yes' || selectedAmbulanceDetails.stretcherAvailable === true ? 'Yes' : 'No'}
+                  </Badge>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Defibrillator Available:</span>
+                  <Badge variant={selectedAmbulanceDetails.defibrillatorAvailable === 'Yes' ? 'success' : 'neutral'} size="sm">
+                    {selectedAmbulanceDetails.defibrillatorAvailable || 'Yes'}
+                  </Badge>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Equipment Level:</span>
+                  <span className="font-semibold text-slate-800">{selectedAmbulanceDetails.equipmentCategory}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Last Safety Inspection:</span>
+                  <span className="font-medium text-slate-700">{selectedAmbulanceDetails.lastSafetyInspectionDate || selectedAmbulanceDetails.lastMaintenanceDate}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Next Maintenance Due:</span>
+                  <span className="font-medium text-slate-700">{selectedAmbulanceDetails.nextMaintenanceDate}</span>
+                </div>
+              </div>
+
+              {selectedAmbulanceDetails.equipmentChecklist && selectedAmbulanceDetails.equipmentChecklist.length > 0 && (
+                <div className="pt-3">
+                  <span className="text-xs font-semibold text-slate-600 block mb-2">Verified Onboard Equipment:</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedAmbulanceDetails.equipmentChecklist.map((item, i) => (
+                      <span key={i} className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-[11px] text-slate-700 font-medium flex items-center gap-1.5">
+                        <Check className="w-3.5 h-3.5 text-emerald-600" /> {item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 6. Additional Details */}
+            {selectedAmbulanceDetails.notes && (
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700">
+                <span className="text-slate-400 block font-bold uppercase mb-1">6. Notes / Remarks:</span>
+                <p>{selectedAmbulanceDetails.notes}</p>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2">
+              <Button variant="outline" onClick={() => setSelectedAmbulanceDetails(null)}>
+                Close Specifications
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ========================================================================= */}
+      {/* VIEW MODAL: DRIVER & PARAMEDIC FULL PROFILE & CREDENTIALS                  */}
+      {/* ========================================================================= */}
+      {selectedDriverDetails && (
+        <Modal
+          isOpen={!!selectedDriverDetails}
+          onClose={() => setSelectedDriverDetails(null)}
+          title={`Staff Profile: ${selectedDriverDetails.name} (${selectedDriverDetails.id})`}
+          maxWidth="4xl"
+        >
+          <div className="space-y-5 max-h-[75vh] overflow-y-auto px-1">
+            <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold shrink-0 text-base overflow-hidden">
+                  {selectedDriverDetails.avatarUrl ? (
+                    <img src={selectedDriverDetails.avatarUrl} alt={selectedDriverDetails.name} className="w-full h-full object-cover" />
+                  ) : (
+                    selectedDriverDetails.name.charAt(0)
+                  )}
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">{selectedDriverDetails.name}</h3>
+                  <p className="text-xs text-slate-600">
+                    {selectedDriverDetails.role || 'Ambulance Driver'} • {selectedDriverDetails.employmentType || 'Full-Time'} • {selectedDriverDetails.emergencyExperienceYears} Years Experience
+                  </p>
+                </div>
+              </div>
+              <Badge
+                variant={
+                  selectedDriverDetails.availabilityStatus === 'On Duty & Available' || selectedDriverDetails.availabilityStatus === 'Available'
+                    ? 'success'
+                    : selectedDriverDetails.availabilityStatus === 'On Active Trip' || selectedDriverDetails.availabilityStatus === 'On Trip'
+                    ? 'info'
+                    : 'neutral'
+                }
+                size="md"
+              >
+                {selectedDriverDetails.availabilityStatus}
+              </Badge>
+            </div>
+
+            {/* 1. Identification & Contact */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-1.5">
+                <UserIcon className="w-4 h-4 text-brand-600" />
+                1 & 2. Identification and Contact Details
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 block">Staff ID:</span>
+                  <span className="font-mono font-bold text-slate-800">{selectedDriverDetails.id}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Employee ID:</span>
+                  <span className="font-mono text-slate-800">{selectedDriverDetails.employeeId || selectedDriverDetails.id}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Mobile Number:</span>
+                  <span className="font-bold text-slate-900">{selectedDriverDetails.phone}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Email Address:</span>
+                  <span className="font-medium text-slate-800">{selectedDriverDetails.email}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Alternative Phone:</span>
+                  <span className="font-medium text-slate-700">{selectedDriverDetails.alternativePhone || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Emergency Contact:</span>
+                  <span className="font-medium text-slate-800">
+                    {selectedDriverDetails.emergencyContactName
+                      ? `${selectedDriverDetails.emergencyContactName} (${selectedDriverDetails.emergencyContactRelationship || 'Relative'})`
+                      : '—'}
+                  </span>
+                </div>
+                {selectedDriverDetails.address && (
+                  <div className="sm:col-span-3">
+                    <span className="text-slate-400 block">Address:</span>
+                    <span className="text-slate-700">{selectedDriverDetails.address}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 3. Licence and Certification */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                3. Licence and Certifications
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 block">Licence Number:</span>
+                  <span className="font-mono font-bold text-slate-900">{selectedDriverDetails.licenseNumber}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Licence Type / Class:</span>
+                  <span className="font-medium text-slate-800">{selectedDriverDetails.licenseType || 'Commercial EVOC'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Licence Expiry:</span>
+                  <span className="font-semibold text-slate-800">{selectedDriverDetails.licenseExpiry}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">EVOC Cert Expiry:</span>
+                  <span className="font-medium text-slate-700">{selectedDriverDetails.evocCertExpiry || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">CPR / First Aid Cert Expiry:</span>
+                  <span className="font-medium text-slate-700">{selectedDriverDetails.cprCertExpiry || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Medical Clearance Expiry:</span>
+                  <span className="font-medium text-slate-700">{selectedDriverDetails.medicalClearanceExpiry || '—'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 4 & 5. Duty, Shift & Employment */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-brand-600" />
+                4 & 5. Duty, Shift and Employment Details
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 block">Employment Type:</span>
+                  <span className="font-semibold text-slate-800">{selectedDriverDetails.employmentType || 'Full-Time'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Duty Status:</span>
+                  <span className="font-semibold text-slate-800">{selectedDriverDetails.dutyStatus || 'Active'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Assigned Branch:</span>
+                  <span className="font-medium text-slate-800">{selectedDriverDetails.assignedBranch || selectedDriverDetails.hospitalName}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Shift Type:</span>
+                  <span className="font-semibold text-slate-800">{selectedDriverDetails.shiftType || 'Morning'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Shift Timings:</span>
+                  <span className="font-medium text-slate-800">
+                    {selectedDriverDetails.shiftStartTime || '08:00'} - {selectedDriverDetails.shiftEndTime || '16:00'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Assigned Ambulance:</span>
+                  <span className="font-bold text-teal-700">{selectedDriverDetails.assignedAmbulanceReg || 'Unassigned'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 6 & 7. Qualifications & Additional */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2 flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-brand-600" />
+                6 & 7. Qualifications and Additional Details
+              </h4>
+              <p>
+                <strong>Qualifications / Training:</strong> {selectedDriverDetails.qualificationDetails || 'Standard EMS Driving Protocol'}
+              </p>
+              {selectedDriverDetails.paramedicRegistrationNumber && (
+                <p>
+                  <strong>Paramedic Reg No:</strong> {selectedDriverDetails.paramedicRegistrationNumber} (Exp: {selectedDriverDetails.certificationExpiryDate || '—'})
+                </p>
+              )}
+              {selectedDriverDetails.notes && (
+                <p>
+                  <strong>Notes / Remarks:</strong> {selectedDriverDetails.notes}
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button variant="outline" onClick={() => setSelectedDriverDetails(null)}>
+                Close Profile
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ========================================================================= */}
+      {/* VIEW MODAL: MAINTENANCE RECORD FULL REPORT                                */}
+      {/* ========================================================================= */}
+      {selectedMaintenanceDetails && (
+        <Modal
+          isOpen={!!selectedMaintenanceDetails}
+          onClose={() => setSelectedMaintenanceDetails(null)}
+          title={`Maintenance Log: ${selectedMaintenanceDetails.id} (${selectedMaintenanceDetails.ambulanceReg})`}
+          maxWidth="2xl"
+        >
+          <div className="space-y-4 max-h-[75vh] overflow-y-auto px-1">
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">{selectedMaintenanceDetails.serviceType}</h3>
+                <p className="text-xs text-slate-600">
+                  Vehicle: {selectedMaintenanceDetails.ambulanceReg} • Date: {selectedMaintenanceDetails.serviceDate}
+                </p>
+              </div>
+              <Badge
+                variant={
+                  selectedMaintenanceDetails.category === 'Breakdown'
+                    ? 'error'
+                    : selectedMaintenanceDetails.category === 'Corrective'
+                    ? 'warning'
+                    : 'info'
+                }
+                size="md"
+              >
+                {selectedMaintenanceDetails.category || 'Preventive'}
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <div>
+                <span className="text-slate-400 block">Service Provider:</span>
+                <span className="font-bold text-slate-800">{selectedMaintenanceDetails.servicedBy}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block">Technician Name:</span>
+                <span className="font-medium text-slate-800">{selectedMaintenanceDetails.technicianName || '—'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block">Odometer at Service:</span>
+                <span className="font-semibold text-slate-800">
+                  {selectedMaintenanceDetails.odometerAtService ? `${selectedMaintenanceDetails.odometerAtService.toLocaleString()} km` : '—'}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block">Next Service Due:</span>
+                <span className="font-semibold text-slate-800">
+                  {selectedMaintenanceDetails.nextServiceDate}
+                  {selectedMaintenanceDetails.nextServiceOdometerKm ? ` (${selectedMaintenanceDetails.nextServiceOdometerKm.toLocaleString()} km)` : ''}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block">Safety Inspection:</span>
+                <Badge variant={selectedMaintenanceDetails.safetyInspectionResult === 'Passed' ? 'success' : 'error'} size="sm">
+                  {selectedMaintenanceDetails.safetyInspectionResult || 'Passed'}
+                </Badge>
+              </div>
+              <div>
+                <span className="text-slate-400 block">Vehicle Status:</span>
+                <span className="font-medium text-slate-800">{selectedMaintenanceDetails.vehicleAvailability || 'Available'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block">Verified By:</span>
+                <span className="font-medium text-slate-800">{selectedMaintenanceDetails.verifiedBy || 'Authorized Officer'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block">Invoice / Receipt:</span>
+                <span className="font-mono text-slate-800">{selectedMaintenanceDetails.invoiceNumber || '—'}</span>
+              </div>
+            </div>
+
+            {/* Cost Breakdown */}
+            <div className="bg-emerald-50/60 p-4 rounded-xl border border-emerald-200 text-xs space-y-1.5">
+              <h5 className="font-bold text-emerald-900 uppercase text-[11px] mb-1">Cost & Payment Breakdown</h5>
+              <div className="flex justify-between text-slate-700">
+                <span>Parts Cost:</span>
+                <span>₹{(selectedMaintenanceDetails.partsCost || 0).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-slate-700">
+                <span>Labour Cost:</span>
+                <span>₹{(selectedMaintenanceDetails.labourCost || 0).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-slate-700">
+                <span>Other Charges:</span>
+                <span>₹{(selectedMaintenanceDetails.otherCharges || 0).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between font-bold text-slate-900 border-t border-emerald-200 pt-1.5 text-sm">
+                <span>Total Maintenance Cost:</span>
+                <span className="text-emerald-800">₹{(selectedMaintenanceDetails.cost || 0).toLocaleString()}</span>
+              </div>
+            </div>
+
+            {selectedMaintenanceDetails.reportedIssue && (
+              <div className="text-xs p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <strong>Reported Issue:</strong> {selectedMaintenanceDetails.reportedIssue}
+              </div>
+            )}
+
+            {selectedMaintenanceDetails.partsReplaced && (
+              <div className="text-xs p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <strong>Parts Replaced / Work Done:</strong> {selectedMaintenanceDetails.partsReplaced}
+              </div>
+            )}
+
+            <div className="text-xs p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <strong>Service Summary:</strong> {selectedMaintenanceDetails.description}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button variant="outline" onClick={() => setSelectedMaintenanceDetails(null)}>
+                Close Report
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

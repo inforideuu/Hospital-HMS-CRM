@@ -128,7 +128,7 @@ export const StaffManagement: React.FC = () => {
 
   const handleOpenEdit = (staff: Staff) => {
     setSelectedStaff(staff);
-    const isDriver = staff.role === 'Ambulance Driver';
+    const isAmbulance = staff.role === 'Ambulance Manager' || staff.role === 'Ambulance Driver';
     setFormData({
       name: staff.name,
       email: staff.email,
@@ -136,7 +136,7 @@ export const StaffManagement: React.FC = () => {
       phone: staff.phone,
       role: staff.role,
       systemRole: staff.systemRole,
-      department: isDriver ? 'Emergency Fleet / Ambulance Unit' : staff.department,
+      department: isAmbulance ? 'Emergency Fleet / Ambulance Unit' : staff.department,
       shift: staff.shift,
       avatarUrl: staff.avatarUrl || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=120&auto=format&fit=crop&q=80',
     });
@@ -163,8 +163,8 @@ export const StaffManagement: React.FC = () => {
       setIsUpgradeModalOpen(true);
       return;
     }
-    if (formData.role === 'Ambulance Driver' && !isAmbulanceAllowed) {
-      showToast('Role Locked on Current Plan', 'Ambulance Driver onboarding requires the Professional Hospital plan as Ambulance & Emergency is locked on your current plan.', 'error');
+    if ((formData.role === 'Ambulance Manager' || formData.role === 'Ambulance Driver') && !isAmbulanceAllowed) {
+      showToast('Role Locked on Current Plan', 'Ambulance Manager onboarding requires the Professional Hospital plan as Ambulance & Emergency is locked on your current plan.', 'error');
       setIsUpgradeModalOpen(true);
       return;
     }
@@ -329,8 +329,8 @@ export const StaffManagement: React.FC = () => {
             <option value="Lab Technician" disabled={!isLabAllowed}>
               Lab Technician {!isLabAllowed ? '🔒 (Locked)' : ''}
             </option>
-            <option value="Ambulance Driver" disabled={!isAmbulanceAllowed}>
-              Ambulance Driver {!isAmbulanceAllowed ? '🔒 (Locked)' : ''}
+            <option value="Ambulance Manager" disabled={!isAmbulanceAllowed}>
+              Ambulance Manager {!isAmbulanceAllowed ? '🔒 (Locked)' : ''}
             </option>
           </Select>
         </div>
@@ -507,8 +507,8 @@ export const StaffManagement: React.FC = () => {
                   setIsUpgradeModalOpen(true);
                   return;
                 }
-                if (role === 'Ambulance Driver' && !isAmbulanceAllowed) {
-                  showToast('Role Locked', 'Ambulance Driver requires Professional Hospital plan.', 'warning');
+                if ((role === 'Ambulance Manager' || role === 'Ambulance Driver') && !isAmbulanceAllowed) {
+                  showToast('Role Locked', 'Ambulance Manager requires Professional Hospital plan.', 'warning');
                   setIsUpgradeModalOpen(true);
                   return;
                 }
@@ -520,15 +520,16 @@ export const StaffManagement: React.FC = () => {
                   Pharmacist: 'pharmacist',
                   'Lab Technician': 'lab_technician',
                   'Medical Doctor': 'doctor',
+                  'Ambulance Manager': 'ambulance_manager',
                   'Ambulance Driver': 'ambulance_driver',
                   Admin: 'hospital_admin',
                 };
-                const isDriver = role === 'Ambulance Driver';
+                const isAmbulance = role === 'Ambulance Manager' || role === 'Ambulance Driver';
                 setFormData({
                   ...formData,
                   role,
                   systemRole: sysRoleMap[role] || 'nurse',
-                  department: isDriver ? 'Emergency Fleet / Ambulance Unit' : (formData.department === 'Emergency Fleet / Ambulance Unit' ? 'General Ward' : formData.department),
+                  department: isAmbulance ? 'Emergency Fleet / Ambulance Unit' : (formData.department === 'Emergency Fleet / Ambulance Unit' ? 'General Ward' : formData.department),
                 });
               }}
             >
@@ -541,8 +542,8 @@ export const StaffManagement: React.FC = () => {
               <option value="Lab Technician" disabled={!isLabAllowed}>
                 Lab Technician {!isLabAllowed ? '🔒 (Requires Professional Hospital)' : ''}
               </option>
-              <option value="Ambulance Driver" disabled={!isAmbulanceAllowed}>
-                Ambulance Driver {!isAmbulanceAllowed ? '🔒 (Requires Professional Hospital)' : ''}
+              <option value="Ambulance Manager" disabled={!isAmbulanceAllowed}>
+                Ambulance Manager {!isAmbulanceAllowed ? '🔒 (Requires Professional Hospital)' : ''}
               </option>
             </Select>
 
@@ -561,13 +562,13 @@ export const StaffManagement: React.FC = () => {
           <div>
             <Select
               label="Department Assignment *"
-              value={formData.role === 'Ambulance Driver' ? 'Emergency Fleet / Ambulance Unit' : formData.department}
+              value={(formData.role === 'Ambulance Manager' || formData.role === 'Ambulance Driver') ? 'Emergency Fleet / Ambulance Unit' : formData.department}
               onChange={(e) => setFormData({ ...formData, department: e.target.value })}
-              disabled={formData.role === 'Ambulance Driver'}
-              className={formData.role === 'Ambulance Driver' ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}
+              disabled={formData.role === 'Ambulance Manager' || formData.role === 'Ambulance Driver'}
+              className={(formData.role === 'Ambulance Manager' || formData.role === 'Ambulance Driver') ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}
               required
             >
-              {formData.role === 'Ambulance Driver' ? (
+              {(formData.role === 'Ambulance Manager' || formData.role === 'Ambulance Driver') ? (
                 <option value="Emergency Fleet / Ambulance Unit">Emergency Fleet / Ambulance Unit</option>
               ) : (
                 <>
@@ -580,9 +581,9 @@ export const StaffManagement: React.FC = () => {
                 </>
               )}
             </Select>
-            {formData.role === 'Ambulance Driver' && (
+            {(formData.role === 'Ambulance Manager' || formData.role === 'Ambulance Driver') && (
               <p className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 p-1.5 rounded-lg mt-1">
-                ⚠️ Department assignment is blocked for Ambulance Drivers (automatically assigned to Emergency Fleet & 911 Desk).
+                ⚠️ Department assignment is locked for Ambulance Managers (automatically assigned to Emergency Fleet & 911 Desk).
               </p>
             )}
           </div>

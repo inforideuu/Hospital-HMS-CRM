@@ -39,6 +39,7 @@ const KNOWN_ROLES: UserRole[] = [
   'lab_technician',
   'patient',
   'ambulance_driver',
+  'ambulance_manager',
 ];
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {

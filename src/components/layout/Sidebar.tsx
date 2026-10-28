@@ -38,6 +38,7 @@ import {
   Plus,
   ClipboardList,
   ShoppingCart,
+  FileCheck,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { MockStorage } from '../../services/mockStorage';
@@ -157,7 +158,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       path: '/hospital/admissions',
       icon: <BedDouble className="w-4 h-4" />,
       roles: ['hospital_admin', 'doctor', 'nurse', 'receptionist'],
-      badge: 'IPD',
+      badge: (() => {
+        const adms = hospId ? MockStorage.getAdmissions(hospId) : MockStorage.getAdmissions();
+        const readyCount = adms.filter((a) => a.status === 'Discharge Initiated' && (a.billingStatus === 'Paid' || a.billingStatus === 'Cleared')).length;
+        if (readyCount > 0) return `${readyCount} Release Bed`;
+        const reqs = hospId ? MockStorage.getAdmissionRequests(hospId) : [];
+        const pendingReqs = reqs.filter((r) => r.status === 'Pending').length;
+        if (pendingReqs > 0) return `${pendingReqs} Intake`;
+        return 'IPD';
+      })(),
       featureKeyword: 'admissions_beds',
     },
     {
@@ -173,6 +182,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <Receipt className="w-4 h-4" />,
       roles: ['hospital_admin', 'accountant'],
       featureKeyword: 'billing_invoices',
+    },
+    {
+      label: 'Discharge Invoicing',
+      path: '/hospital/billing/discharges',
+      icon: <FileCheck className="w-4 h-4 text-amber-400" />,
+      roles: ['hospital_admin', 'accountant'],
+      featureKeyword: 'billing_invoices',
+      badge: (() => {
+        const adms = hospId ? MockStorage.getAdmissions(hospId) : MockStorage.getAdmissions();
+        const pendingCount = adms.filter((a) => a.status === 'Discharge Initiated' && (!a.invoiceId || a.billingStatus !== 'Paid')).length;
+        return pendingCount > 0 ? `${pendingCount} Pending` : undefined;
+      })(),
     },
     {
       label: 'Pharmacy & Stock',
@@ -197,7 +218,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Ambulance & 911 Desk',
       path: '/hospital/ambulance',
       icon: <Ambulance className="w-4 h-4" />,
-      roles: ['hospital_admin', 'doctor', 'receptionist', 'nurse'],
+      roles: ['hospital_admin', 'doctor', 'receptionist', 'nurse', 'ambulance_manager', 'ambulance_driver'],
       badge: '911',
       featureKeyword: 'ambulance_emergency',
     },
@@ -221,6 +242,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
       path: '/hospital/settings',
       icon: <Settings className="w-4 h-4" />,
       roles: ['hospital_admin'],
+    },
+    {
+      label: 'Help & Support',
+      path: '/hospital/support',
+      icon: <HelpCircle className="w-4 h-4 text-sky-500" />,
+      roles: ['hospital_admin'],
+      badge: (() => {
+        const tix = hospId ? MockStorage.getSupportTickets(hospId) : [];
+        const openCount = tix.filter((t) => t.status === 'open' || t.status === 'in_progress').length;
+        return openCount > 0 ? String(openCount) : undefined;
+      })(),
     },
   ];
 
@@ -551,6 +583,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   ];
 
+  const ambulanceNavItems: NavItem[] = [
+    {
+      label: 'Ambulance & Emergency',
+      path: '/hospital/ambulance',
+      icon: <Ambulance className="w-4 h-4 text-rose-400" />,
+      badge: '911 LIVE',
+      roles: ['ambulance_manager', 'ambulance_driver'],
+      featureKeyword: 'ambulance_emergency',
+    },
+  ];
+
   const currentNavItems =
     portalType === 'platform'
       ? platformNavItems
@@ -568,6 +611,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ? nurseNavItems
       : user?.role === 'pharmacist'
       ? pharmacistNavItems
+      : user?.role === 'ambulance_manager' || user?.role === 'ambulance_driver'
+      ? ambulanceNavItems
       : isEnterpriseOrgUser
       ? hospitalNavItems.filter((item) => item.path !== '/hospital/enterprise')
       : hospitalNavItems;

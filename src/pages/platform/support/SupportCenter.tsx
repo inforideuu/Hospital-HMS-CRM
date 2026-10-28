@@ -22,6 +22,8 @@ import {
   Check,
   ChevronRight,
   Sparkles,
+  Image as ImageIcon,
+  Eye,
 } from 'lucide-react';
 const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
@@ -110,6 +112,7 @@ export const SupportCenter: React.FC = () => {
   const [replyText, setReplyText] = useState('');
   const [isSubmittingReply, setIsSubmittingReply] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -151,7 +154,13 @@ export const SupportCenter: React.FC = () => {
           localStorage.setItem('pulse_tickets', JSON.stringify([]));
           setTickets([]);
         } else {
-          const mapped: SupportTicket[] = backendTickets.map((t: any) => ({
+          const seen = new Set<string>();
+          const deduped = backendTickets.filter((t: any) => {
+            if (!t.id || seen.has(t.id)) return false;
+            seen.add(t.id);
+            return true;
+          });
+          const mapped: SupportTicket[] = deduped.map((t: any) => ({
             id: t.id,
             hospitalId: t.hospital || t.hospital_id || t.hospitalId || 'hosp-1',
             hospitalName: t.hospital_name || t.hospitalName || 'Healthcare Facility',
@@ -208,7 +217,12 @@ export const SupportCenter: React.FC = () => {
         t.category.toLowerCase().includes(q) ||
         t.description.toLowerCase().includes(q);
 
-      const matchesStatus = statusFilter === 'all' || t.status === statusFilter;
+      // By default ('all'), closed tickets are removed from Support Desk & Tenant Escalations
+      const matchesStatus =
+        statusFilter === 'all'
+          ? t.status !== 'closed'
+          : t.status === statusFilter;
+
       const matchesPriority = priorityFilter === 'all' || t.priority === priorityFilter;
       const matchesHospital = hospitalFilter === 'all' || t.hospitalId === hospitalFilter;
 
@@ -232,13 +246,15 @@ export const SupportCenter: React.FC = () => {
     return tickets.find((t) => t.id === selectedTicketId) || filteredTickets[0] || null;
   }, [tickets, selectedTicketId, filteredTickets]);
 
-  // Metrics computation
+  // Metrics computation (Total reflects active tickets awaiting or under resolution)
   const metrics = useMemo(() => {
+    const activeTickets = tickets.filter((t) => t.status !== 'closed');
     return {
-      total: tickets.length,
+      total: activeTickets.length,
       open: tickets.filter((t) => t.status === 'open').length,
       inProgress: tickets.filter((t) => t.status === 'in_progress').length,
-      resolved: tickets.filter((t) => t.status === 'resolved' || t.status === 'closed').length,
+      resolved: tickets.filter((t) => t.status === 'resolved').length,
+      closed: tickets.filter((t) => t.status === 'closed').length,
     };
   }, [tickets]);
 
@@ -282,7 +298,13 @@ export const SupportCenter: React.FC = () => {
 
     MockStorage.saveSupportTicket(updated);
     await SupportTicketApi.updateStatus(ticketId, newStatus);
-    showToast('Status Updated', `Ticket ${ticketId} status changed to ${newStatus.replace('_', ' ').toUpperCase()}`);
+
+    if (newStatus === 'closed') {
+      showToast('Ticket Closed', `Ticket #${ticketId} has been closed and removed from active escalations.`);
+    } else {
+      showToast('Status Updated', `Ticket ${ticketId} status changed to ${newStatus.replace('_', ' ').toUpperCase()}`);
+    }
+
     await refreshData();
   };
 
@@ -554,11 +576,11 @@ export const SupportCenter: React.FC = () => {
                   onChange={(e) => setStatusFilter(e.target.value)}
                   className="text-xs py-1"
                 >
-                  <option value="all">All Statuses</option>
+                  <option value="all">Active Escalations</option>
                   <option value="open">Open</option>
                   <option value="in_progress">In Progress</option>
                   <option value="resolved">Resolved</option>
-                  <option value="closed">Closed</option>
+                  <option value="closed">Closed Archive</option>
                 </Select>
 
                 <Select
@@ -577,7 +599,7 @@ export const SupportCenter: React.FC = () => {
               {hasActiveFilters && (
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-[11px] text-slate-500">
-                    Showing <strong className="text-slate-700">{filteredTickets.length}</strong> of {tickets.length} tickets
+                    Showing <strong className="text-slate-700">{filteredTickets.length}</strong> of {statusFilter === 'closed' ? metrics.closed : metrics.total} tickets
                   </span>
                   <button
                     onClick={clearFilters}
@@ -638,6 +660,11 @@ export const SupportCenter: React.FC = () => {
                         <span className="inline-flex items-center gap-1 font-medium text-slate-600">
                           <Tag className="w-2.5 h-2.5" /> {t.category}
                         </span>
+                        {t.screenshotUrl && (
+                          <span className="inline-flex items-center gap-1 text-indigo-600 font-semibold bg-indigo-50 px-1.5 py-0.5 rounded">
+                            <ImageIcon className="w-2.5 h-2.5" /> Screenshot
+                          </span>
+                        )}
                         <span>{t.updatedAt || t.createdAt}</span>
                       </div>
                     </button>
@@ -708,6 +735,39 @@ export const SupportCenter: React.FC = () => {
                         <FileText className="w-3.5 h-3.5 text-slate-400" /> Issue Details:
                       </p>
                       <p className="whitespace-pre-line leading-relaxed">{selectedTicket.description}</p>
+                    </div>
+                  )}
+
+                  {/* Attached Diagnostic Screenshot Evidence (if present) */}
+                  {selectedTicket.screenshotUrl && (
+                    <div className="mt-3 p-3 bg-indigo-50/70 rounded-lg border border-indigo-200/80 text-xs space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <p className="font-bold text-indigo-950 flex items-center gap-1.5 text-[11px] uppercase tracking-wider">
+                          <ImageIcon className="w-3.5 h-3.5 text-indigo-600" />
+                          Attached Diagnostic Screenshot:
+                        </p>
+                        <span className="text-[10px] text-indigo-700 font-mono">
+                          {selectedTicket.attachmentName || 'screenshot.png'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div
+                          onClick={() => setPreviewImageUrl(selectedTicket.screenshotUrl || null)}
+                          className="relative group cursor-pointer border border-indigo-200 rounded-lg overflow-hidden max-w-xs shadow-xs hover:border-indigo-400 transition-all"
+                        >
+                          <img
+                            src={selectedTicket.screenshotUrl}
+                            alt="Attached Diagnostic Evidence"
+                            className="max-h-36 w-auto object-cover"
+                          />
+                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-1">
+                            <Eye className="w-3.5 h-3.5" /> Click to view full image
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-slate-500 leading-normal">
+                          Hospital administrator uploaded this error screenshot to assist engineering troubleshooting.
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -928,6 +988,31 @@ export const SupportCenter: React.FC = () => {
           </div>
         </form>
       </Modal>
+
+      {/* Full-resolution Screenshot Preview Modal */}
+      {previewImageUrl && (
+        <Modal
+          isOpen={Boolean(previewImageUrl)}
+          onClose={() => setPreviewImageUrl(null)}
+          title="Attached Error Screenshot"
+          maxWidth="4xl"
+        >
+          <div className="space-y-3">
+            <div className="flex items-center justify-center bg-slate-900 rounded-xl p-2 max-h-[75vh] overflow-auto">
+              <img
+                src={previewImageUrl}
+                alt="Full resolution preview"
+                className="max-h-[70vh] w-auto object-contain rounded"
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" onClick={() => setPreviewImageUrl(null)}>
+                Close Preview
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

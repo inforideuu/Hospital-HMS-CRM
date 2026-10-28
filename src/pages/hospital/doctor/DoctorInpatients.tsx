@@ -30,7 +30,8 @@ import { printPrescription } from '../../../utils/prescriptionPrint';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
-import { Admission, Doctor, Patient, NurseConditionStatus, Prescription } from '../../../types';
+import { Admission, Bed, Doctor, Patient, NurseConditionStatus, Prescription } from '../../../types';
+import { calculateStayDays, formatStayDuration } from '../../../utils/admissionStay';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { StatCard } from '../../../components/ui/StatCard';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
@@ -49,6 +50,7 @@ export const DoctorInpatients: React.FC = () => {
   const [admissions, setAdmissions] = useState<Admission[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [beds, setBeds] = useState<Bed[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Filters & Search
@@ -63,6 +65,16 @@ export const DoctorInpatients: React.FC = () => {
   const [dischargeSummary, setDischargeSummary] = useState('');
   const [dischargeAdvice, setDischargeAdvice] = useState('');
   const [dischargePrescriptions, setDischargePrescriptions] = useState('');
+  const [dischargeDate, setDischargeDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [takeHomeRxItems, setTakeHomeRxItems] = useState<{
+    medicineName: string;
+    dosage: string;
+    frequency: string;
+    duration: string;
+    instructions: string;
+  }[]>([
+    { medicineName: '', dosage: '1 tablet', frequency: 'Twice daily (BD)', duration: '5 days', instructions: 'After food' },
+  ]);
 
   // Doctor Round Note Modal States
   const [isRoundNoteModalOpen, setIsRoundNoteModalOpen] = useState(false);
@@ -105,6 +117,7 @@ export const DoctorInpatients: React.FC = () => {
   const loadData = () => {
     setDoctors(MockStorage.getDoctors(hospId));
     setPatients(MockStorage.getPatients(hospId));
+    setBeds(MockStorage.getBeds(hospId));
     const allAdmissions = MockStorage.getAdmissions(hospId);
     setAdmissions(allAdmissions);
     setIsLoading(false);
@@ -222,14 +235,43 @@ export const DoctorInpatients: React.FC = () => {
   // Action: Open Discharge Modal
   const handleOpenDischargeModal = (adm: Admission) => {
     setSelectedAdmForDischarge(adm);
+    setDischargeDate(new Date().toISOString().split('T')[0]);
     setDischargeSummary(
       adm.reason
         ? `Patient admitted for ${adm.reason}. Inpatient ward course completed successfully with vitals stabilization.`
         : 'Inpatient course completed. Vitals stabilized and afebrile.'
     );
     setDischargeAdvice('Rest for 3-5 days. Complete take-home medications. Follow up in Outpatient Clinic in 7 days or SOS if vitals change.');
-    setDischargePrescriptions('1. Tab Paracetamol 650mg TDS x 3 days\n2. Tab Pantoprazole 40mg OD AC x 5 days\n3. Tab Multivitamin OD x 15 days');
+    setTakeHomeRxItems([
+      { medicineName: '', dosage: '1 tablet', frequency: 'Twice daily (BD)', duration: '5 days', instructions: 'After food' },
+    ]);
     setIsDischargeModalOpen(true);
+  };
+
+  const handleAddTakeHomeMed = () => {
+    setTakeHomeRxItems([
+      ...takeHomeRxItems,
+      { medicineName: '', dosage: '1 tablet', frequency: 'Twice daily (BD)', duration: '5 days', instructions: 'After food' },
+    ]);
+  };
+
+  const handleRemoveTakeHomeMed = (index: number) => {
+    if (takeHomeRxItems.length <= 1) return;
+    setTakeHomeRxItems(takeHomeRxItems.filter((_, i) => i !== index));
+  };
+
+  const handleTakeHomeMedChange = (index: number, field: string, val: string) => {
+    const updated = [...takeHomeRxItems];
+    (updated[index] as any)[field] = val;
+    setTakeHomeRxItems(updated);
+  };
+
+  const handleQuickAddTakeHomeMed = (name: string, dose: string, freq: string, inst: string, dur: string = '5 days') => {
+    const filtered = takeHomeRxItems.filter((m) => m.medicineName.trim().length > 0);
+    setTakeHomeRxItems([
+      ...filtered,
+      { medicineName: name, dosage: dose, frequency: freq, duration: dur, instructions: inst },
+    ]);
   };
 
   // Action: Confirm Doctor Discharge
@@ -239,17 +281,48 @@ export const DoctorInpatients: React.FC = () => {
       showToast('Missing Summary', 'Please provide a clinical discharge summary.', 'error');
       return;
     }
+
+    const validTakeHome = takeHomeRxItems.filter((i) => i.medicineName.trim().length > 0);
+    const formattedPrescriptions = validTakeHome.length > 0
+      ? validTakeHome.map(
+          (i, idx) =>
+            `${idx + 1}. ${i.medicineName} — ${i.dosage}, ${i.frequency} x ${i.duration} (${i.instructions || 'As advised'})`
+        ).join('\n')
+      : 'No take-home medications prescribed.';
+
     const res = MockStorage.initiateDoctorDischarge(selectedAdmForDischarge.id, {
       dischargeSummary,
       dischargeAdvice,
-      dischargePrescriptions,
+      dischargePrescriptions: formattedPrescriptions,
+      dischargeDate,
       doctorId,
       doctorName,
     });
+
     if (res.success) {
+      if (validTakeHome.length > 0) {
+        const rxId = `RX-DISCHARGE-${Date.now().toString().slice(-6)}`;
+        MockStorage.savePrescription({
+          id: rxId,
+          hospitalId: selectedAdmForDischarge.hospitalId || hospId,
+          patientId: selectedAdmForDischarge.patientId,
+          patientName: selectedAdmForDischarge.patientName,
+          doctorId: selectedAdmForDischarge.doctorId || doctorId || 'DOC-101',
+          doctorName: selectedAdmForDischarge.doctorName || doctorName || 'Dr. Specialist',
+          doctorSpecialization: (user as any)?.specialization || 'Attending Specialist',
+          date: dischargeDate || new Date().toISOString().split('T')[0],
+          diagnosis: `Discharge Pharmacotherapy - ${selectedAdmForDischarge.reason || 'Post-admission recovery'}`,
+          medications: validTakeHome,
+          status: 'Active',
+          notes: `[Take-Home Discharge Rx - Bed ${selectedAdmForDischarge.bedNumber}] ${dischargeAdvice.trim()}`,
+        });
+      }
+
       showToast(
         'Medical Discharge Initiated',
-        `Discharge initiated for ${selectedAdmForDischarge.patientName}. Invoice #${res.invoiceId} generated for cashier settlement.`
+        `Discharge order recorded for ${selectedAdmForDischarge.patientName} (Discharge Date: ${dischargeDate}). Patient info is now available in Billing for accountant to create invoice.${
+          validTakeHome.length > 0 ? ` Take-Home Prescription with ${validTakeHome.length} medication(s) transmitted to Pharmacist Dispensary.` : ''
+        }`
       );
       setIsDischargeModalOpen(false);
       setSelectedAdmForDischarge(null);
@@ -624,45 +697,66 @@ export const DoctorInpatients: React.FC = () => {
           ) : (
             /* Inpatients Under My Care & Nurse Updates Table */
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="w-full min-w-[960px] text-left border-collapse text-xs">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="px-4 py-3">Patient & UHID</th>
-                    <th className="px-4 py-3">Bed & Ward</th>
-                    <th className="px-4 py-3">Nurse Monitoring & Vitals</th>
-                    <th className="px-4 py-3">Status / Billing Stage</th>
-                    <th className="px-4 py-3 text-right">Specialist Actions</th>
+                  <tr className="border-b border-slate-200 bg-slate-50/80 text-slate-500 text-[11px] font-semibold uppercase tracking-wider">
+                    <th className="px-5 py-3.5 w-[22%] min-w-[200px]">Patient & UHID</th>
+                    <th className="px-4 py-3.5 w-[13%] min-w-[120px]">Bed & Ward</th>
+                    <th className="px-4 py-3.5 w-[33%] min-w-[280px]">Nurse Monitoring & Vitals</th>
+                    <th className="px-4 py-3.5 w-[14%] min-w-[130px]">Status & Billing</th>
+                    <th className="px-5 py-3.5 text-right w-[18%] min-w-[230px] whitespace-nowrap">Specialist Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredInpatients.map((adm) => (
-                    <tr
-                      key={adm.id}
-                      className={`hover:bg-slate-50/80 transition-colors ${
-                        adm.effectiveCondition === 'Ready for Discharge Review'
-                          ? 'bg-emerald-50/40'
-                          : adm.effectiveCondition === 'Critical / High Attention'
-                          ? 'bg-rose-50/40'
-                          : ''
-                      }`}
-                    >
-                      <td className="px-4 py-3.5">
-                        <p className="font-bold text-slate-900 leading-tight">{adm.patientName}</p>
-                        <p className="text-[11px] text-slate-500 mt-0.5">
-                          <span className="font-mono text-indigo-600 font-semibold">{adm.patientId}</span> • Adm: {adm.admissionDate}
-                        </p>
-                        <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[200px]">
-                          Diagnosis: {adm.reason}
-                        </p>
-                      </td>
+                  {filteredInpatients.map((adm) => {
+                    const bedObj = beds.find((b) => b.bedNumber === adm.bedNumber);
+                    const dailyRate = bedObj?.dailyRate || 1500;
+                    const stayDays = calculateStayDays(adm.admissionDate, adm.dischargeDate);
+                    const accruedBedCharges = stayDays * dailyRate;
 
-                      <td className="px-4 py-3.5">
-                        <span className="font-bold text-slate-800 font-mono text-[12px]">{adm.bedNumber}</span>
-                        <p className="text-[11px] text-slate-500">{adm.wardType}</p>
-                      </td>
+                    return (
+                      <tr
+                        key={adm.id}
+                        className={`hover:bg-slate-50/80 transition-colors ${
+                          adm.effectiveCondition === 'Ready for Discharge Review'
+                            ? 'bg-emerald-50/40'
+                            : adm.effectiveCondition === 'Critical / High Attention'
+                            ? 'bg-rose-50/40'
+                            : ''
+                        }`}
+                      >
+                        <td className="px-5 py-4 align-top">
+                          <p className="font-bold text-slate-900 leading-tight text-sm">{adm.patientName}</p>
+                          <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono text-indigo-600 font-semibold">{adm.patientId}</span>
+                            <span>•</span>
+                            <span>Adm: {adm.admissionDate}</span>
+                            <span className="font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-1.5 py-0.2 rounded text-[10px]">
+                              {formatStayDuration(stayDays)} Stay
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-1 line-clamp-2 leading-snug" title={adm.reason}>
+                            <span className="text-slate-400">Diagnosis:</span> {adm.reason}
+                          </p>
+                        </td>
 
-                      <td className="px-4 py-3.5">
-                        <div className="space-y-1.5 max-w-[340px]">
+                        <td className="px-4 py-4 align-top">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="inline-block font-bold text-slate-800 font-mono text-[12px] bg-slate-100 border border-slate-200/80 px-2 py-0.5 rounded">
+                              {adm.bedNumber}
+                            </span>
+                            <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded">
+                              ₹{dailyRate.toLocaleString('en-IN')}/day
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 font-medium mt-1">{adm.wardType}</p>
+                          <p className="text-[10px] text-slate-600 mt-1 font-mono">
+                            Bed Total: <strong className="text-emerald-700">₹{accruedBedCharges.toLocaleString('en-IN')}</strong>
+                          </p>
+                        </td>
+
+                      <td className="px-4 py-4 align-top">
+                        <div className="space-y-2">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <Badge
                               variant={
@@ -694,22 +788,22 @@ export const DoctorInpatients: React.FC = () => {
                           {adm.effectiveVitals && (
                             <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
                               {adm.effectiveVitals.bloodPressure && (
-                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200/60">
                                   BP: <strong>{adm.effectiveVitals.bloodPressure}</strong>
                                 </span>
                               )}
                               {adm.effectiveVitals.heartRate && (
-                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200/60">
                                   HR: <strong>{adm.effectiveVitals.heartRate} bpm</strong>
                                 </span>
                               )}
                               {adm.effectiveVitals.temperature && (
-                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200/60">
                                   Temp: <strong>{adm.effectiveVitals.temperature}°F</strong>
                                 </span>
                               )}
                               {adm.effectiveVitals.oxygenLevel && (
-                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200/60">
                                   SpO2: <strong>{adm.effectiveVitals.oxygenLevel}%</strong>
                                 </span>
                               )}
@@ -717,15 +811,15 @@ export const DoctorInpatients: React.FC = () => {
                           )}
 
                           {adm.effectiveNotes && (
-                            <p className="text-[11px] text-slate-600 italic bg-white/80 p-1.5 rounded border border-slate-100">
+                            <p className="text-[11px] text-slate-600 italic bg-white/90 p-2 rounded-md border border-slate-200/80 leading-relaxed shadow-2xs">
                               "{adm.effectiveNotes}"
                             </p>
                           )}
                         </div>
                       </td>
 
-                      <td className="px-4 py-3.5">
-                        <div className="space-y-1">
+                      <td className="px-4 py-4 align-top">
+                        <div className="space-y-1.5">
                           <Badge
                             variant={
                               adm.status === 'Active'
@@ -739,9 +833,9 @@ export const DoctorInpatients: React.FC = () => {
                             {adm.status === 'Active' ? 'Inpatient Care' : adm.status}
                           </Badge>
                           {adm.billingStatus && (
-                            <p className="text-[10px]">
+                            <p className="text-[11px] text-slate-500">
                               Billing:{' '}
-                              <strong className={adm.billingStatus === 'Paid' ? 'text-emerald-600' : 'text-amber-600'}>
+                              <strong className={adm.billingStatus === 'Paid' ? 'text-emerald-600 font-semibold' : 'text-amber-600 font-semibold'}>
                                 {adm.billingStatus}
                               </strong>
                             </p>
@@ -749,8 +843,8 @@ export const DoctorInpatients: React.FC = () => {
                         </div>
                       </td>
 
-                      <td className="px-4 py-3.5 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                      <td className="px-5 py-4 align-top text-right">
+                        <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
                           {adm.status === 'Active' ? (
                             <Button
                               variant="primary"
@@ -760,7 +854,7 @@ export const DoctorInpatients: React.FC = () => {
                               className={
                                 adm.effectiveCondition === 'Ready for Discharge Review'
                                   ? 'bg-emerald-600 hover:bg-emerald-700 text-white font-bold'
-                                  : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                                  : 'bg-indigo-600 hover:bg-indigo-700 text-white font-medium'
                               }
                             >
                               {adm.effectiveCondition === 'Ready for Discharge Review' ? 'Review & Discharge' : 'Initiate Discharge'}
@@ -782,32 +876,16 @@ export const DoctorInpatients: React.FC = () => {
                           <Button
                             variant="outline"
                             size="xs"
-                            onClick={() => handlePrintLatestRx(adm)}
-                            leftIcon={<Printer className="w-3 h-3 text-teal-600" />}
-                            className="hover:border-teal-500 hover:text-teal-700 font-medium"
-                            title="Print medical prescription"
-                          >
-                            Print Rx
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            onClick={() => handleOpenRoundNoteModal(adm)}
-                            leftIcon={<Plus className="w-3 h-3" />}
-                          >
-                            Round Note
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="xs"
                             onClick={() => navigate(`/hospital/patients/${adm.patientId}`)}
+                            className="font-medium hover:border-slate-400"
                           >
                             EHR
                           </Button>
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  );
+                })}
                 </tbody>
               </table>
             </div>
@@ -823,7 +901,7 @@ export const DoctorInpatients: React.FC = () => {
           setSelectedAdmForDischarge(null);
         }}
         title="Specialist Medical Discharge Order"
-        maxWidth="lg"
+        maxWidth="2xl"
       >
         {selectedAdmForDischarge && (
           <div className="space-y-4 text-xs">
@@ -834,6 +912,66 @@ export const DoctorInpatients: React.FC = () => {
                 <span className="font-mono text-slate-500 font-semibold">{selectedAdmForDischarge.bedNumber} ({selectedAdmForDischarge.wardType})</span>
               </div>
               <p className="text-slate-600"><span className="font-medium text-slate-700">Admission Diagnosis:</span> {selectedAdmForDischarge.reason}</p>
+
+              {/* Dynamic Bed Occupancy & Accrued Stay Charges */}
+              {(() => {
+                const bedRec = beds.find((b) => b.bedNumber === selectedAdmForDischarge.bedNumber);
+                const rate = bedRec?.dailyRate || 1500;
+                const days = calculateStayDays(selectedAdmForDischarge.admissionDate, dischargeDate);
+                const bedTotal = days * rate;
+
+                return (
+                  <div className="p-2.5 rounded-lg bg-indigo-50/80 border border-indigo-200/80 space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className="font-bold text-indigo-900 flex items-center gap-1.5 text-xs">
+                        <BedDouble className="w-3.5 h-3.5 text-indigo-600" />
+                        Bed Stay Calculation: {dischargeDate} − {selectedAdmForDischarge.admissionDate}
+                      </span>
+                      <span className="text-[11px] font-bold font-mono text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
+                        Total Bed Amount: ₹{bedTotal.toLocaleString('en-IN')}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                      <div className="bg-white p-2 rounded border border-indigo-100">
+                        <p className="text-slate-500 text-[10px]">Admission Date</p>
+                        <p className="font-bold text-slate-900">{selectedAdmForDischarge.admissionDate}</p>
+                      </div>
+                      <div className="bg-white p-2 rounded border border-indigo-100">
+                        <p className="text-slate-500 text-[10px]">Discharge Date</p>
+                        <p className="font-bold text-indigo-700 font-mono">{dischargeDate}</p>
+                      </div>
+                      <div className="bg-white p-2 rounded border border-indigo-100">
+                        <p className="text-slate-500 text-[10px]">Days on Bed</p>
+                        <p className="font-bold font-mono text-indigo-700">{formatStayDuration(days)}</p>
+                      </div>
+                      <div className="bg-white p-2 rounded border border-indigo-100">
+                        <p className="text-slate-500 text-[10px]">Bed Charges</p>
+                        <p className="font-bold font-mono text-emerald-700">₹{bedTotal.toLocaleString('en-IN')}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Admission and Specialist Discharge Date Inputs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <Input
+                  label="Admission Date (Recorded by Reception)"
+                  type="date"
+                  value={selectedAdmForDischarge.admissionDate}
+                  disabled
+                  className="bg-slate-100 text-slate-700 font-mono text-xs"
+                />
+                <Input
+                  label="Specialist Discharge Date *"
+                  type="date"
+                  value={dischargeDate}
+                  onChange={(e) => setDischargeDate(e.target.value)}
+                  required
+                  className="font-mono text-xs border-indigo-300 focus:ring-indigo-500"
+                />
+              </div>
 
               {selectedAdmForDischarge.nurseCondition && (
                 <div className="p-2.5 rounded-lg bg-teal-50 border border-teal-200 space-y-1">
@@ -871,13 +1009,117 @@ export const DoctorInpatients: React.FC = () => {
               placeholder="Summary of inpatient stay, diagnostics, and recovery status..."
             />
 
-            <Textarea
-              label="Take-Home Prescription & Dosages"
-              value={dischargePrescriptions}
-              onChange={(e) => setDischargePrescriptions(e.target.value)}
-              rows={3}
-              placeholder="Medicines prescribed for at-home recovery..."
-            />
+            {/* Quick Medicine Preset Buttons (Take-Home Recovery) */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[11px] font-semibold text-slate-700">
+                  Quick Take-Home Presets:
+                </span>
+                <span className="text-[10px] text-slate-400">Click to add common recovery medications</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { name: 'Tab Paracetamol 650mg', dose: '1 tab', freq: 'Three times daily (TDS)', dur: '3 days', inst: 'After meals for fever/pain' },
+                  { name: 'Tab Pantoprazole 40mg', dose: '1 tab', freq: 'Once daily (OD)', dur: '5 days', inst: 'Empty stomach before breakfast' },
+                  { name: 'Tab Amoxicillin 500mg', dose: '1 cap', freq: 'Twice daily (BD)', dur: '5 days', inst: 'Complete antibiotic course' },
+                  { name: 'Tab Multivitamin', dose: '1 tab', freq: 'Once daily (OD)', dur: '15 days', inst: 'Post lunch with water' },
+                  { name: 'Syr Antacid 10ml', dose: '10 ml', freq: 'SOS / As needed', dur: '5 days', inst: 'After meals for acidity' },
+                  { name: 'Tab Cetirizine 10mg', dose: '1 tab', freq: 'Once daily at bedtime (HS)', dur: '5 days', inst: 'For allergy / rhinitis' },
+                ].map((preset, pIdx) => (
+                  <button
+                    key={pIdx}
+                    type="button"
+                    onClick={() => handleQuickAddTakeHomeMed(preset.name, preset.dose, preset.freq, preset.inst, preset.dur)}
+                    className="px-2 py-1 rounded-md bg-white border border-slate-200 text-slate-700 hover:border-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 transition-colors text-[10px] font-medium cursor-pointer"
+                  >
+                    + {preset.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Structured Take-Home Prescriptions Builder */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
+                  <Pill className="w-3.5 h-3.5 text-emerald-600" /> Take-Home Medication Items ({takeHomeRxItems.length})
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={handleAddTakeHomeMed}
+                  leftIcon={<Plus className="w-3 h-3" />}
+                >
+                  Add Medicine
+                </Button>
+              </div>
+
+              {takeHomeRxItems.map((item, idx) => (
+                <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-700 text-[11px]">Medication #{idx + 1}</span>
+                    {takeHomeRxItems.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveTakeHomeMed(idx)}
+                        className="text-slate-400 hover:text-rose-600 p-0.5 cursor-pointer"
+                        title="Remove medication"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                    <div className="sm:col-span-5">
+                      <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">Medicine Name *</label>
+                      <Input
+                        value={item.medicineName}
+                        onChange={(e) => handleTakeHomeMedChange(idx, 'medicineName', e.target.value)}
+                        placeholder="e.g. Tab Paracetamol 650mg, Tab Pantoprazole"
+                        className="text-xs py-1"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">Dosage</label>
+                      <Input
+                        value={item.dosage}
+                        onChange={(e) => handleTakeHomeMedChange(idx, 'dosage', e.target.value)}
+                        placeholder="e.g. 1 tab, 10ml"
+                        className="text-xs py-1"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">Frequency</label>
+                      <Input
+                        value={item.frequency}
+                        onChange={(e) => handleTakeHomeMedChange(idx, 'frequency', e.target.value)}
+                        placeholder="OD, BD, TDS"
+                        className="text-xs py-1"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">Duration</label>
+                      <Input
+                        value={item.duration}
+                        onChange={(e) => handleTakeHomeMedChange(idx, 'duration', e.target.value)}
+                        placeholder="3 days, 1 week"
+                        className="text-xs py-1"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-slate-500 block mb-0.5">Patient Administration Instructions</label>
+                    <Input
+                      value={item.instructions}
+                      onChange={(e) => handleTakeHomeMedChange(idx, 'instructions', e.target.value)}
+                      placeholder="e.g. After food with warm water, avoid dairy"
+                      className="text-xs py-1"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
 
             <Textarea
               label="Discharge Advice, Diet & SOS Follow-Up Instructions"

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import {
   Receipt,
   Plus,
@@ -30,7 +30,10 @@ import {
   Layers,
   ArrowRight,
   ChevronRight,
+  BedDouble,
 } from 'lucide-react';
+import { calculateStayDays, formatStayDuration } from '../../../utils/admissionStay';
+import { calculateItemizedDepartmentalGST, getDepartmentalGSTRate } from '../../../utils/gstCalculation';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
@@ -43,6 +46,8 @@ import {
   EncounterType,
   PaymentType,
   BillingCategory,
+  Admission,
+  Bed,
 } from '../../../types';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
@@ -109,7 +114,24 @@ export const BillingManagement: React.FC = () => {
   const hospId = currentHospital?.id || 'HOSP-001';
 
   const [invoices, setInvoices] = useState<Invoice[]>(() => MockStorage.getInvoices(hospId));
-  const settings = MockStorage.getHospitalSettings(hospId);
+  const [admissions, setAdmissions] = useState<Admission[]>(() => MockStorage.getAdmissions(hospId));
+  const [beds, setBeds] = useState<Bed[]>(() => MockStorage.getBeds(hospId));
+  const [labOrders, setLabOrders] = useState(() => MockStorage.getLabOrders(hospId));
+  const [labCatalog, setLabCatalog] = useState(() => MockStorage.getLabCatalog(hospId));
+  const [settings, setSettings] = useState(() => MockStorage.getHospitalSettings(hospId));
+
+  useEffect(() => {
+    const handleStorageUpdate = () => {
+      setInvoices(MockStorage.getInvoices(hospId));
+      setAdmissions(MockStorage.getAdmissions(hospId));
+      setBeds(MockStorage.getBeds(hospId));
+      setLabOrders(MockStorage.getLabOrders(hospId));
+      setLabCatalog(MockStorage.getLabCatalog(hospId));
+      setSettings(MockStorage.getHospitalSettings(hospId));
+    };
+    window.addEventListener('pulse_storage_updated', handleStorageUpdate);
+    return () => window.removeEventListener('pulse_storage_updated', handleStorageUpdate);
+  }, [hospId]);
 
   // Stream Navigation & Synchronization via URL
   const [searchParams, setSearchParams] = useSearchParams();
@@ -167,6 +189,80 @@ export const BillingManagement: React.FC = () => {
   const [issueDate, setIssueDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState<string>(() => new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]);
 
+  // Inpatient Bed Stay detection for selected patient
+  const selectedPatientAdmission = React.useMemo(() => {
+    if (!selectedPatientId) return null;
+    return (
+      admissions.find(
+        (a) => a.patientId === selectedPatientId && (a.status === 'Active' || a.status === 'Discharge Initiated')
+      ) ||
+      admissions.find((a) => a.patientId === selectedPatientId) ||
+      null
+    );
+  }, [selectedPatientId, admissions]);
+
+  const selectedPatientBed = React.useMemo(() => {
+    if (!selectedPatientAdmission) return null;
+    return beds.find((b) => b.bedNumber === selectedPatientAdmission.bedNumber) || null;
+  }, [selectedPatientAdmission, beds]);
+
+  const ipdStayDays = React.useMemo(() => {
+    if (!selectedPatientAdmission) return 1;
+    return calculateStayDays(selectedPatientAdmission.admissionDate, selectedPatientAdmission.dischargeDate);
+  }, [selectedPatientAdmission]);
+
+  const ipdDailyRate = selectedPatientBed?.dailyRate || 1500;
+  const ipdBedCharges = ipdStayDays * ipdDailyRate;
+
+  // Attending Specialist Doctor for Rounds
+  const ipdDoctor = React.useMemo(() => {
+    if (!selectedPatientAdmission) return null;
+    return (
+      doctors.find(
+        (d) => d.id === (selectedPatientAdmission.dischargeDoctorId || selectedPatientAdmission.doctorId)
+      ) || null
+    );
+  }, [selectedPatientAdmission, doctors]);
+
+  const ipdDocFee = ipdDoctor?.consultationFee || 500;
+  const ipdDoctorCharges = ipdStayDays * ipdDocFee;
+
+  // Actual Laboratory investigations ordered for this patient (only included if actually taken!)
+  const ipdPatientLabOrders = React.useMemo(() => {
+    if (!selectedPatientId) return [];
+    return labOrders.filter(
+      (o) => o.patientId === selectedPatientId && o.status !== 'Cancelled' && o.status !== 'Sample Rejected'
+    );
+  }, [selectedPatientId, labOrders]);
+
+  const ipdLabCharges = React.useMemo(() => {
+    return ipdPatientLabOrders.reduce((sum, order) => {
+      const catalogItem = labCatalog.find((c) => c.id === order.testId || c.testName === order.testName);
+      return sum + (catalogItem?.price || 350);
+    }, 0);
+  }, [ipdPatientLabOrders, labCatalog]);
+
+  // Departmental GST rates for IPD stay components according to Hospital Admin settings
+  const ipdBedGSTRate = getDepartmentalGSTRate('Bed Charge', '', settings);
+  const ipdDocGSTRate = getDepartmentalGSTRate('Consultation', '', settings);
+  const ipdLabGSTRate = getDepartmentalGSTRate('Laboratory', '', settings);
+
+  const ipdBedGST = settings.enableGSTBilling !== false ? (ipdBedCharges * ipdBedGSTRate) / 100 : 0;
+  const ipdDocGST = settings.enableGSTBilling !== false ? (ipdDoctorCharges * ipdDocGSTRate) / 100 : 0;
+  const ipdLabGST = settings.enableGSTBilling !== false ? (ipdLabCharges * ipdLabGSTRate) / 100 : 0;
+  const ipdTotalGST = ipdBedGST + ipdDocGST + ipdLabGST;
+
+  const ipdDeposit = Number(selectedPatientAdmission?.initialDeposit) || 0;
+  const ipdSubtotal = ipdBedCharges + ipdDoctorCharges + ipdLabCharges;
+  const ipdGrossWithGST = ipdSubtotal + ipdTotalGST;
+  const ipdNetDue = Math.max(0, ipdGrossWithGST - ipdDeposit);
+
+  useEffect(() => {
+    if (selectedPatientAdmission && formCategory === 'Hospital Service') {
+      setEncounterType('IPD');
+    }
+  }, [selectedPatientAdmission, formCategory]);
+
   // Insurance / TPA Billing
   const [paymentType, setPaymentType] = useState<PaymentType>('Self Pay');
   const [insuranceProvider, setInsuranceProvider] = useState<string>('');
@@ -177,6 +273,7 @@ export const BillingManagement: React.FC = () => {
   const [items, setItems] = useState<InvoiceItem[]>([
     { id: 'item-1', description: 'Specialist OPD Consultation', category: 'Consultation', quantity: 1, unitPrice: 150, total: 150 },
   ]);
+  const [useDepartmentalGST, setUseDepartmentalGST] = useState(true);
   const [taxRate, setTaxRate] = useState<number>(() =>
     settings.enableGSTBilling !== false ? (settings.defaultGSTRate ?? 5) : 0
   );
@@ -194,6 +291,9 @@ export const BillingManagement: React.FC = () => {
 
   const refreshData = () => {
     setInvoices(MockStorage.getInvoices(hospId));
+    setAdmissions(MockStorage.getAdmissions(hospId));
+    setBeds(MockStorage.getBeds(hospId));
+    setSettings(MockStorage.getHospitalSettings(hospId));
   };
 
   // Segregated invoice lists by category
@@ -288,9 +388,15 @@ export const BillingManagement: React.FC = () => {
     setItems(items.filter((_, i) => i !== index));
   };
 
-  const calculatedSubtotal = items.reduce((acc, it) => acc + (it.total || 0), 0);
-  const calculatedTax = (calculatedSubtotal * taxRate) / 100;
-  const calculatedTotal = Math.max(0, calculatedSubtotal + calculatedTax - discount);
+  // Itemized departmental GST calculation based on Hospital Admin settings
+  const itemizedGST = React.useMemo(() => {
+    return calculateItemizedDepartmentalGST(items, settings, discount);
+  }, [items, settings, discount]);
+
+  const calculatedSubtotal = itemizedGST.subtotal;
+  const calculatedTax = useDepartmentalGST ? itemizedGST.totalTax : (calculatedSubtotal * taxRate) / 100;
+  const calculatedTotal = useDepartmentalGST ? itemizedGST.totalAmount : Math.max(0, calculatedSubtotal + calculatedTax - discount);
+  const effectiveTaxRate = useDepartmentalGST ? itemizedGST.effectiveTaxRate : taxRate;
 
   const handleSelectModalCategory = (cat: BillingCategory) => {
     setFormCategory(cat);
@@ -384,7 +490,7 @@ export const BillingManagement: React.FC = () => {
         dueDate: dueDate || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
         items,
         subtotal: calculatedSubtotal,
-        taxRate,
+        taxRate: effectiveTaxRate,
         taxAmount: calculatedTax,
         discount,
         discountReason: discount > 0 ? discountReason : undefined,
@@ -464,7 +570,7 @@ export const BillingManagement: React.FC = () => {
       dueDate: dueDate || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
       items,
       subtotal: calculatedSubtotal,
-      taxRate,
+      taxRate: effectiveTaxRate,
       taxAmount: calculatedTax,
       discount,
       discountReason: discount > 0 ? discountReason : undefined,
@@ -491,6 +597,16 @@ export const BillingManagement: React.FC = () => {
     };
 
     MockStorage.saveInvoice(newInv);
+
+    if (selectedPatientAdmission) {
+      MockStorage.linkAdmissionInvoice(
+        selectedPatientAdmission.id,
+        newInv.id,
+        newInv.totalAmount,
+        settledAmount
+      );
+    }
+
     showToast('Invoice Generated', `${newInv.id} issued for ${pat.name} (₹${newInv.totalAmount}). Status: ${invStatus}`);
     setIsCreateModalOpen(false);
     setSelectedPatient(null);
@@ -843,6 +959,7 @@ export const BillingManagement: React.FC = () => {
           </div>
         </div>
       </div>
+
 
       {/* Filter and Invoices Table */}
       <Card>
@@ -1472,6 +1589,197 @@ export const BillingManagement: React.FC = () => {
 
           {/* Section 3: Itemized Line Items & Presets */}
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-3">
+            {/* Dynamic Inpatient Bed Stay Detection Banner */}
+            {selectedPatientAdmission && formCategory === 'Hospital Service' && (
+              <div className="p-3.5 rounded-xl bg-indigo-50/90 border border-indigo-200 text-indigo-950 space-y-3 shadow-2xs">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-xs uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                      <BedDouble className="w-4 h-4 text-indigo-600" />
+                      Inpatient Accrued Charges Detected
+                    </span>
+                    <Badge variant={selectedPatientAdmission.status === 'Active' ? 'purple' : 'amber'} size="sm">
+                      {selectedPatientAdmission.status}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-600 font-mono">
+                      Subtotal: ₹{ipdSubtotal.toLocaleString('en-IN')}
+                    </span>
+                    <span className="text-[11px] text-indigo-700 font-mono">
+                      + GST: ₹{ipdTotalGST.toFixed(2)}
+                    </span>
+                    <span className="font-mono font-bold text-xs text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded border border-emerald-300">
+                      Net Balance: ₹{ipdNetDue.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                  <div className="bg-white p-2 rounded-lg border border-indigo-100">
+                    <div className="flex items-center justify-between">
+                      <p className="text-slate-500 text-[10px]">🛏️ Bed Stay ({ipdStayDays}d × ₹{ipdDailyRate})</p>
+                      <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1 rounded">{ipdBedGSTRate}% GST</span>
+                    </div>
+                    <p className="font-bold font-mono text-slate-900">₹{ipdBedCharges.toLocaleString('en-IN')}</p>
+                    <p className="text-[10px] text-slate-500">+ GST: ₹{ipdBedGST.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-indigo-100">
+                    <div className="flex items-center justify-between">
+                      <p className="text-slate-500 text-[10px]">🩺 Specialist Rounds ({ipdStayDays}d × ₹{ipdDocFee})</p>
+                      <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1 rounded">{ipdDocGSTRate}% GST</span>
+                    </div>
+                    <p className="font-bold font-mono text-indigo-700">₹{ipdDoctorCharges.toLocaleString('en-IN')}</p>
+                    <p className="text-[10px] text-slate-500">+ GST: ₹{ipdDocGST.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-indigo-100">
+                    <div className="flex items-center justify-between">
+                      <p className="text-slate-500 text-[10px]">🧪 Lab Tests ({ipdPatientLabOrders.length} taken)</p>
+                      <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1 rounded">{ipdLabGSTRate}% GST</span>
+                    </div>
+                    <p className="font-bold font-mono text-emerald-700">₹{ipdLabCharges.toLocaleString('en-IN')}</p>
+                    <p className="text-[10px] text-slate-500">+ GST: ₹{ipdLabGST.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-indigo-100">
+                    <p className="text-slate-500 text-[10px]">Advance Deposit Paid</p>
+                    <p className="font-bold font-mono text-amber-700">{ipdDeposit > 0 ? `−₹${ipdDeposit.toLocaleString('en-IN')}` : '₹0'}</p>
+                    <p className="text-[10px] text-indigo-700 font-semibold">Total GST: ₹{ipdTotalGST.toFixed(2)}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between flex-wrap gap-2 pt-1 border-t border-indigo-200/80">
+                  <p className="text-[10px] text-slate-600">
+                    Stay: <strong className="font-mono text-indigo-900">{selectedPatientAdmission.bedNumber} ({selectedPatientAdmission.wardType})</strong> • {selectedPatientAdmission.admissionDate} to {selectedPatientAdmission.dischargeDate || new Date().toISOString().split('T')[0]} ({formatStayDuration(ipdStayDays)})
+                  </p>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Add all accrued items at once */}
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="xs"
+                      onClick={() => {
+                        const dischargeDateStr = selectedPatientAdmission.dischargeDate || new Date().toISOString().split('T')[0];
+                        const newItems: InvoiceItem[] = [
+                          {
+                            id: `item-bed-${Date.now()}`,
+                            description: `Bed Stay Charges (${ipdStayDays} Day${ipdStayDays > 1 ? 's' : ''} in ${selectedPatientAdmission.wardType} - ${selectedPatientAdmission.bedNumber}) [${selectedPatientAdmission.admissionDate} to ${dischargeDateStr}]`,
+                            category: 'Bed Charge',
+                            quantity: ipdStayDays,
+                            unitPrice: ipdDailyRate,
+                            total: ipdBedCharges,
+                          },
+                          {
+                            id: `item-doc-${Date.now() + 1}`,
+                            description: `Attending Specialist Daily Inpatient Care & Rounds (${ipdStayDays} Day${ipdStayDays > 1 ? 's' : ''} - Dr. ${ipdDoctor?.name || selectedPatientAdmission.doctorName})`,
+                            category: 'Consultation',
+                            quantity: ipdStayDays,
+                            unitPrice: ipdDocFee,
+                            total: ipdDoctorCharges,
+                          },
+                        ];
+
+                        ipdPatientLabOrders.forEach((order, idx) => {
+                          const catalogItem = labCatalog.find((c) => c.id === order.testId || c.testName === order.testName);
+                          const testPrice = catalogItem?.price || 350;
+                          newItems.push({
+                            id: `item-lab-${order.id || idx}-${Date.now()}`,
+                            description: `Lab Investigation: ${order.testName} (${order.category || 'Diagnostics'})`,
+                            category: 'Laboratory',
+                            quantity: 1,
+                            unitPrice: testPrice,
+                            total: testPrice,
+                          });
+                        });
+
+                        setItems(newItems);
+                        if (ipdDeposit > 0) {
+                          setDiscount(ipdDeposit);
+                          setDiscountReason(`Admission Advance Deposit Adjusted (₹${ipdDeposit})`);
+                        }
+                      }}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-xs"
+                    >
+                      + Apply All Accrued Inpatient Charges (₹{ipdNetDue})
+                    </Button>
+
+                    {/* Add Bed Charges Only */}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => {
+                        setItems((prev) => [
+                          ...prev.filter((i) => i.category !== 'Bed Charge'),
+                          {
+                            id: `item-bed-${Date.now()}`,
+                            description: `Bed Stay Charges (${ipdStayDays} Day${ipdStayDays > 1 ? 's' : ''} in ${selectedPatientAdmission.wardType} - ${selectedPatientAdmission.bedNumber})`,
+                            category: 'Bed Charge',
+                            quantity: ipdStayDays,
+                            unitPrice: ipdDailyRate,
+                            total: ipdBedCharges,
+                          },
+                        ]);
+                      }}
+                      className="text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                    >
+                      + Bed (₹{ipdBedCharges})
+                    </Button>
+
+                    {/* Add Doctor Rounds Only */}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => {
+                        setItems((prev) => [
+                          ...prev.filter((i) => !i.description.includes('Rounds')),
+                          {
+                            id: `item-doc-${Date.now()}`,
+                            description: `Specialist Rounds (${ipdStayDays}d - Dr. ${ipdDoctor?.name || selectedPatientAdmission.doctorName})`,
+                            category: 'Consultation',
+                            quantity: ipdStayDays,
+                            unitPrice: ipdDocFee,
+                            total: ipdDoctorCharges,
+                          },
+                        ]);
+                      }}
+                      className="text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                    >
+                      + Rounds (₹{ipdDoctorCharges})
+                    </Button>
+
+                    {/* Add Labs Only (if any exist) */}
+                    {ipdPatientLabOrders.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => {
+                          const labItems: InvoiceItem[] = ipdPatientLabOrders.map((order, idx) => {
+                            const catalogItem = labCatalog.find((c) => c.id === order.testId || c.testName === order.testName);
+                            const testPrice = catalogItem?.price || 350;
+                            return {
+                              id: `item-lab-${order.id || idx}-${Date.now()}`,
+                              description: `Lab: ${order.testName}`,
+                              category: 'Laboratory',
+                              quantity: 1,
+                              unitPrice: testPrice,
+                              total: testPrice,
+                            };
+                          });
+                          setItems((prev) => [...prev.filter((i) => i.category !== 'Laboratory'), ...labItems]);
+                        }}
+                        className="text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                      >
+                        + Labs ({ipdPatientLabOrders.length} tests: ₹{ipdLabCharges})
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wide">
                 <Receipt className="w-3.5 h-3.5 text-indigo-600" />
@@ -1639,49 +1947,92 @@ export const BillingManagement: React.FC = () => {
           </div>
 
           {/* Section 4: Concessions, Taxes & Financial Summary */}
-          <div className="space-y-2">
+          <div className="space-y-2.5">
+            {/* Hospital Admin GST Preset Configuration Panel */}
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                  <Tag className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Hospital Admin GST Presets</span>
+                  <Badge variant={settings.enableGSTBilling !== false ? 'success' : 'neutral'} size="sm">
+                    {settings.enableGSTBilling !== false
+                      ? settings.gstType === 'IGST'
+                        ? 'IGST (Inter-state 100%)'
+                        : 'CGST + SGST (50/50 Split)'
+                      : 'GST Disabled (0%)'}
+                  </Badge>
+                </div>
+                <label className="text-[11px] font-semibold text-slate-600 flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={useDepartmentalGST}
+                    onChange={(e) => {
+                      setUseDepartmentalGST(e.target.checked);
+                      if (!e.target.checked) {
+                        setTaxRate(settings.defaultGSTRate ?? 5);
+                      }
+                    }}
+                    className="rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>Auto-Calculate Departmental GST Per Item</span>
+                </label>
+              </div>
+
+              {/* Departmental GST Preset Tags */}
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 font-semibold border border-indigo-100">
+                  OPD / Consult: {settings.consultationGSTRate ?? 0}%
+                </span>
+                <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-800 font-semibold border border-purple-100">
+                  Bed / IPD: {settings.ipdRoomGSTRate ?? 5}%
+                </span>
+                <span className="px-2 py-0.5 rounded bg-cyan-50 text-cyan-800 font-semibold border border-cyan-100">
+                  Lab Diagnostics: {settings.labDiagnosticGSTRate ?? 5}%
+                </span>
+                <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 font-semibold border border-emerald-100">
+                  Pharmacy: {settings.pharmacyGSTRate ?? 5}%
+                </span>
+                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold border border-slate-200">
+                  Procedures: {settings.defaultGSTRate ?? 5}%
+                </span>
+              </div>
+
+              {/* Dynamic Departmental Itemized Breakdown */}
+              {useDepartmentalGST && itemizedGST.departmentalBreakdown.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5 text-[10px]">
+                  {itemizedGST.departmentalBreakdown.map((b) => (
+                    <div key={b.category} className="bg-white p-1.5 rounded border border-slate-200 flex justify-between items-center">
+                      <span className="font-medium text-slate-700">{b.department} ({b.gstRate}%):</span>
+                      <span className="font-mono font-bold text-indigo-900">₹{b.taxAmount.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Input
-                  label="Tax / GST Rate (%)"
+                  label={`Tax / GST Rate (%) ${useDepartmentalGST ? '(Blended Effective)' : '(Manual Override)'}`}
                   type="number"
                   min="0"
                   max="100"
-                  step="0.5"
-                  value={taxRate}
-                  onChange={(e) => setTaxRate(Number(e.target.value))}
+                  step="0.1"
+                  value={effectiveTaxRate}
+                  onChange={(e) => {
+                    setUseDepartmentalGST(false);
+                    setTaxRate(Number(e.target.value));
+                  }}
                 />
-                <div className="flex flex-wrap items-center gap-1 mt-1 text-[10px]">
-                  <span className="text-slate-400 font-semibold">Admin Presets:</span>
+                {!useDepartmentalGST && (
                   <button
                     type="button"
-                    onClick={() => setTaxRate(settings.defaultGSTRate ?? 5)}
-                    className="px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold"
+                    onClick={() => setUseDepartmentalGST(true)}
+                    className="text-[10px] text-indigo-600 font-semibold hover:underline mt-1 block"
                   >
-                    General: {settings.defaultGSTRate ?? 5}%
+                    ↺ Reset to Admin Departmental Presets
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setTaxRate(settings.pharmacyGSTRate ?? 5)}
-                    className="px-1.5 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold"
-                  >
-                    Pharm: {settings.pharmacyGSTRate ?? 5}%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTaxRate(settings.consultationGSTRate ?? 0)}
-                    className="px-1.5 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-semibold"
-                  >
-                    OPD: {settings.consultationGSTRate ?? 0}%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTaxRate(settings.labDiagnosticGSTRate ?? 5)}
-                    className="px-1.5 py-0.5 rounded bg-cyan-50 hover:bg-cyan-100 text-cyan-800 font-semibold"
-                  >
-                    Lab: {settings.labDiagnosticGSTRate ?? 5}%
-                  </button>
-                </div>
+                )}
               </div>
               <Input
                 label="Concession / Discount (₹)"
@@ -1690,19 +2041,19 @@ export const BillingManagement: React.FC = () => {
                 value={discount}
                 onChange={(e) => setDiscount(Number(e.target.value))}
               />
-            <Select
-              label="Concession / Waiver Reason"
-              value={discountReason}
-              onChange={(e) => setDiscountReason(e.target.value)}
-              disabled={discount <= 0}
-            >
-              <option value="">-- None / Standard --</option>
-              <option value="Senior Citizen Concession">Senior Citizen Concession</option>
-              <option value="Staff / Healthcare Worker Family">Staff / Family Concession</option>
-              <option value="BPL / Financial Assistance">Financial Assistance / BPL</option>
-              <option value="Medical Director Special Waiver">Director Approval Waiver</option>
-              <option value="Volume / Promotional Discount">Promotional / Package Discount</option>
-            </Select>
+              <Select
+                label="Concession / Waiver Reason"
+                value={discountReason}
+                onChange={(e) => setDiscountReason(e.target.value)}
+                disabled={discount <= 0}
+              >
+                <option value="">-- None / Standard --</option>
+                <option value="Senior Citizen Concession">Senior Citizen Concession</option>
+                <option value="Staff / Healthcare Worker Family">Staff / Family Concession</option>
+                <option value="BPL / Financial Assistance">Financial Assistance / BPL</option>
+                <option value="Medical Director Special Waiver">Director Approval Waiver</option>
+                <option value="Volume / Promotional Discount">Promotional / Package Discount</option>
+              </Select>
             </div>
           </div>
 
@@ -1710,7 +2061,16 @@ export const BillingManagement: React.FC = () => {
             <div className="space-y-0.5">
               <span>Subtotal: <strong>₹{calculatedSubtotal}</strong></span>
               <span className="text-slate-400 mx-2">•</span>
-              <span>Tax ({taxRate}%): <strong>+₹{calculatedTax.toFixed(2)}</strong></span>
+              <span>
+                GST ({effectiveTaxRate.toFixed(1)}% eff.): <strong>+₹{calculatedTax.toFixed(2)}</strong>
+                {settings.enableGSTBilling !== false && useDepartmentalGST && (
+                  <span className="text-slate-400 text-[10px] ml-1">
+                    ({settings.gstType === 'IGST'
+                      ? `IGST: ₹${itemizedGST.igstAmount.toFixed(2)}`
+                      : `CGST: ₹${itemizedGST.cgstAmount.toFixed(2)} + SGST: ₹${itemizedGST.sgstAmount.toFixed(2)}`})
+                  </span>
+                )}
+              </span>
               {discount > 0 && (
                 <>
                   <span className="text-slate-400 mx-2">•</span>
@@ -2073,48 +2433,90 @@ export const BillingManagement: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {selectedInvoice.items.map((it) => (
-                  <tr key={it.id}>
-                    <td className="py-2 px-3">{it.description}</td>
-                    <td className="py-2 px-3 text-center">{it.quantity}</td>
-                    <td className="py-2 px-3 text-right">₹{it.unitPrice}</td>
-                    <td className="py-2 px-3 text-right font-semibold">₹{it.total}</td>
-                  </tr>
-                ))}
+                {selectedInvoice.items.map((it) => {
+                  const itemGSTRate = getDepartmentalGSTRate(it.category, it.description, settings);
+                  return (
+                    <tr key={it.id}>
+                      <td className="py-2 px-3">
+                        <span className="font-medium text-slate-800">{it.description}</span>
+                        <span className="text-[10px] text-slate-400 block">Category: {it.category}</span>
+                      </td>
+                      <td className="py-2 px-3 text-center">{it.quantity}</td>
+                      <td className="py-2 px-3 text-right">₹{it.unitPrice}</td>
+                      <td className="py-2 px-3 text-center font-mono text-[11px] text-indigo-700">
+                        {settings.enableGSTBilling !== false ? `${itemGSTRate}%` : '0%'}
+                      </td>
+                      <td className="py-2 px-3 text-right font-semibold">₹{it.total}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 
-            {/* Financial Totals */}
-            <div className="flex justify-end pt-2">
-              <div className="w-64 space-y-1 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Subtotal:</span>
-                  <span>₹{selectedInvoice.subtotal}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Tax ({selectedInvoice.taxRate}%):</span>
-                  <span>₹{selectedInvoice.taxAmount}</span>
-                </div>
-                {selectedInvoice.discount > 0 && (
-                  <div className="flex justify-between text-amber-700">
-                    <span>Discount {selectedInvoice.discountReason ? `(${selectedInvoice.discountReason})` : ''}:</span>
-                    <span>-₹{selectedInvoice.discount}</span>
+            {/* Financial Totals & Departmental Tax Disclosure */}
+            {(() => {
+              const receiptTax = calculateItemizedDepartmentalGST(
+                selectedInvoice.items,
+                settings,
+                selectedInvoice.discount
+              );
+              return (
+                <div className="flex justify-end pt-2">
+                  <div className="w-80 space-y-1 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Subtotal:</span>
+                      <span className="font-mono">₹{selectedInvoice.subtotal}</span>
+                    </div>
+
+                    {settings.enableGSTBilling !== false && receiptTax.departmentalBreakdown.length > 0 && (
+                      <div className="py-1 my-1 border-y border-dashed border-slate-200 space-y-0.5 text-[11px]">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wide">
+                          Departmental GST Presets:
+                        </span>
+                        {receiptTax.departmentalBreakdown.map((b) => (
+                          <div key={b.category} className="flex justify-between text-slate-600">
+                            <span>• {b.department} ({b.gstRate}%):</span>
+                            <span className="font-mono">₹{b.taxAmount.toFixed(2)}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between text-indigo-700 font-semibold pt-0.5">
+                          <span>{settings.gstType === 'IGST' ? 'IGST (100%):' : 'CGST & SGST Split (50/50):'}</span>
+                          <span className="font-mono">
+                            {settings.gstType === 'IGST'
+                              ? `₹${receiptTax.igstAmount.toFixed(2)}`
+                              : `₹${receiptTax.cgstAmount.toFixed(2)} + ₹${receiptTax.sgstAmount.toFixed(2)}`}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Total Tax / GST:</span>
+                      <span className="font-mono font-semibold">₹{selectedInvoice.taxAmount}</span>
+                    </div>
+
+                    {selectedInvoice.discount > 0 && (
+                      <div className="flex justify-between text-amber-700">
+                        <span>Discount {selectedInvoice.discountReason ? `(${selectedInvoice.discountReason})` : ''}:</span>
+                        <span className="font-mono">-₹{selectedInvoice.discount}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between font-bold text-sm border-t border-slate-200 pt-1 text-slate-900">
+                      <span>Grand Total:</span>
+                      <span className="font-mono">₹{selectedInvoice.totalAmount}</span>
+                    </div>
+                    <div className="flex justify-between text-emerald-700 font-bold pt-1">
+                      <span>Amount Paid:</span>
+                      <span className="font-mono">₹{selectedInvoice.amountPaid}</span>
+                    </div>
+                    <div className="flex justify-between text-rose-600 font-semibold pt-0.5">
+                      <span>Balance Due:</span>
+                      <span className="font-mono">₹{Math.max(0, selectedInvoice.totalAmount - selectedInvoice.amountPaid)}</span>
+                    </div>
                   </div>
-                )}
-                <div className="flex justify-between font-bold text-sm border-t border-slate-200 pt-1 text-slate-900">
-                  <span>Grand Total:</span>
-                  <span>₹{selectedInvoice.totalAmount}</span>
                 </div>
-                <div className="flex justify-between text-emerald-700 font-bold pt-1">
-                  <span>Amount Paid:</span>
-                  <span>₹{selectedInvoice.amountPaid}</span>
-                </div>
-                <div className="flex justify-between text-rose-600 font-semibold pt-0.5">
-                  <span>Balance Due:</span>
-                  <span>₹{Math.max(0, selectedInvoice.totalAmount - selectedInvoice.amountPaid)}</span>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Payment Audit & Who Collected Pay */}
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-[11px] text-slate-700">

@@ -803,5 +803,70 @@ describe('Hospital-Wise Login Authentication and Tenant Isolation Tests', () => 
     assert.equal(newAuth.user?.name, 'Johnathan Doe');
     assert.equal(newAuth.user?.email, updatedEmail);
   });
+
+  test('Scenario 21: Onboard Ambulance Manager in Staff Management -> can log in via hospital sign in', () => {
+    const managerEmail = `amb.manager.${Date.now()}@cmc.org`;
+    const managerPass = 'Manager@1234';
+
+    const staffRes = MockStorage.saveStaff({
+      id: `STF-AMB-${Date.now()}`,
+      hospitalId: 'HOSP-001',
+      name: 'Ravi Kumar (Fleet Lead)',
+      email: managerEmail,
+      phone: '+91 99887 76655',
+      role: 'Ambulance Manager',
+      systemRole: 'ambulance_manager',
+      department: 'Emergency Fleet / Ambulance Unit',
+      shift: 'Rotational',
+      joiningDate: '2026-10-28',
+      status: 'active',
+    });
+    assert.ok(staffRes.success);
+
+    // Save corresponding user
+    MockStorage.saveUser({
+      id: `USR-AMB-${Date.now()}`,
+      name: 'Ravi Kumar (Fleet Lead)',
+      email: managerEmail,
+      password: managerPass,
+      role: 'ambulance_manager',
+      portal: 'hospital',
+      hospitalId: 'HOSP-001',
+      status: 'active',
+      department: 'Emergency Fleet / Ambulance Unit',
+      createdAt: new Date().toISOString(),
+    });
+
+    const auth = MockStorage.findUserForAuth(managerEmail, 'HOSP-001', managerPass);
+    assert.ok(auth.user);
+    assert.equal(auth.user?.role, 'ambulance_manager');
+    assert.equal(auth.user?.portal, 'hospital');
+  });
+
+  test('Scenario 22: Onboard Ambulance Driver in Ambulance Management -> can log in via hospital sign in', () => {
+    const driverEmail = `amb.driver.${Date.now()}@cmc.org`;
+    const drvId = `DRV-${Date.now().toString().slice(-4)}`;
+
+    MockStorage.saveAmbulanceDriver({
+      id: drvId,
+      hospitalId: 'HOSP-001',
+      hospitalName: 'CMC Hospital',
+      name: 'Suresh Pilot',
+      email: driverEmail,
+      phone: '+91 98765 43210',
+      licenseNumber: 'DL-TN-01-2024-9988',
+      licenseExpiry: '2028-12-31',
+      availabilityStatus: 'On Duty & Available',
+      status: 'active',
+      completedTrips: 0,
+      emergencyExperienceYears: 6,
+    });
+
+    // Driver user account was automatically provisioned in saveAmbulanceDriver with default password Staff@1234
+    const auth = MockStorage.findUserForAuth(driverEmail, 'HOSP-001', 'Staff@1234');
+    assert.ok(auth.user);
+    assert.equal(auth.user?.role, 'ambulance_driver');
+    assert.equal(auth.user?.portal, 'hospital');
+  });
 });
 

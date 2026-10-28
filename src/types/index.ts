@@ -11,7 +11,8 @@ export type UserRole =
   | 'pharmacist'
   | 'lab_technician'
   | 'patient'
-  | 'ambulance_driver';
+  | 'ambulance_driver'
+  | 'ambulance_manager';
 
 export type PortalType = 'platform' | 'sales' | 'hospital' | 'patient' | 'ambulance_driver';
 
@@ -189,6 +190,8 @@ export interface SupportTicket {
   assignedTo?: string;
   createdAt: string;
   updatedAt: string;
+  screenshotUrl?: string;
+  attachmentName?: string;
   messages: {
     id: string;
     sender: string;
@@ -196,6 +199,7 @@ export interface SupportTicket {
     avatar?: string;
     message: string;
     timestamp: string;
+    screenshotUrl?: string;
   }[];
 }
 
@@ -505,7 +509,7 @@ export interface Staff {
   name: string;
   email: string;
   phone: string;
-  role: 'Nurse' | 'Receptionist' | 'Accountant' | 'Pharmacist' | 'Lab Technician' | 'Admin' | 'Medical Doctor' | 'Ambulance Driver';
+  role: 'Nurse' | 'Receptionist' | 'Accountant' | 'Pharmacist' | 'Lab Technician' | 'Admin' | 'Medical Doctor' | 'Ambulance Manager' | 'Ambulance Driver';
   systemRole: UserRole;
   department: string;
   shift: 'Morning' | 'Evening' | 'Night' | 'Rotational';
@@ -992,43 +996,124 @@ export type AmbulanceStatus =
   | 'Dispatched'
   | 'On Trip'
   | 'Maintenance'
+  | 'Under Maintenance'
   | 'Out of Service';
 
+export type AmbulanceOwnershipType = 'Owned' | 'Leased';
+export type AmbulanceFuelType = 'Diesel' | 'Petrol' | 'CNG' | 'Electric';
+
 export interface Ambulance {
-  id: string; // e.g. "AMB-101"
+  // Vehicle identification and registration
+  id: string; // e.g. "AMB-101" (auto-generated)
   hospitalId: string;
   hospitalName: string;
   regNumber: string; // e.g. "NY-EMRG-889"
+  registrationDate?: string;
+  registrationExpiryDate?: string;
+  chassisNumber?: string;
+  engineNumber?: string;
+  ownershipType?: AmbulanceOwnershipType;
+
+  // Vehicle specifications
   type: AmbulanceType;
   model: string; // e.g. "Mercedes Sprinter 3500 Mobile ICU"
-  equipmentCategory: 'Class A (Critical Telemetry)' | 'Class B (Defibrillator + O2)' | 'Class C (Standard Transport)';
+  manufacturingYear?: number;
+  seatingCapacity?: number;
+  patientCapacity?: number;
+  odometerReading?: number; // Odometer reading (km)
+  mileageKm: number; // km (synchronized with odometerReading)
+  fuelType?: AmbulanceFuelType;
+  fuelLevel: number; // percentage
+
+  // Operational details
+  status: AmbulanceStatus;
   assignedDriverId?: string;
   assignedDriverName?: string;
   driverPhone?: string;
-  status: AmbulanceStatus;
+  assignedParamedic?: string; // Assigned Paramedic / Crew (optional)
+  homeBranch?: string; // Home Hospital / Branch (if applicable)
   currentLocation: string; // e.g. "Base Station Alpha"
+
+  // Compliance and documents
+  insurancePolicyNumber?: string;
+  insuranceExpiryDate?: string;
+  fitnessCertExpiryDate?: string;
+  permitExpiryDate?: string;
+  pucExpiryDate?: string;
+
+  // Equipment and readiness
+  equipmentCategory: 'Class A (Critical Telemetry)' | 'Class B (Defibrillator + O2)' | 'Class C (Standard Transport)';
+  oxygenCylinderAvailable?: 'Yes' | 'No' | boolean;
+  stretcherAvailable?: 'Yes' | 'No' | boolean;
+  defibrillatorAvailable?: 'Yes' | 'No' | 'Not Applicable';
+  equipmentChecklist?: string[];
+  lastSafetyInspectionDate?: string;
   lastMaintenanceDate: string;
   nextMaintenanceDate: string;
-  fuelLevel: number; // percentage
-  mileageKm: number;
+
+  // Additional details
+  vehiclePhotoUrl?: string;
+  notes?: string;
 }
 
+export type AmbulanceStaffRole = 'Ambulance Driver' | 'Paramedic' | 'Emergency Medical Technician (EMT)';
+export type AmbulanceEmploymentType = 'Full-Time' | 'Part-Time' | 'Contract';
+export type AmbulanceDutyStatus = 'Active' | 'Inactive' | 'On Leave';
+export type AmbulanceShiftType = 'Morning' | 'Evening' | 'Night' | 'Rotational';
+export type AmbulanceAvailabilityStatus = 'Available' | 'On Duty' | 'On Trip' | 'Off Duty' | 'On Duty & Available' | 'On Active Trip' | 'On Break' | string;
+
 export interface AmbulanceDriver {
-  id: string; // e.g. "DRV-201"
+  // Staff identification
+  id: string; // e.g. "DRV-201" (auto-generated)
+  employeeId?: string; // Employee ID (if different from Staff ID)
   hospitalId: string;
   hospitalName: string;
   name: string;
   email: string;
-  phone: string;
+  role?: AmbulanceStaffRole;
+  avatarUrl?: string; // Profile Photo (optional)
+
+  // Personal and contact details
+  phone: string; // Mobile Number
+  alternativePhone?: string; // Alternative Contact Number (optional)
+  address?: string; // Address (optional)
+  emergencyContactName?: string; // Emergency Contact Person Name
+  emergencyContactRelationship?: string; // Emergency Contact Relationship
+
+  // Licence and certification
   licenseNumber: string;
-  licenseExpiry: string;
+  licenseType?: string; // Licence Type / Class (e.g. Heavy Commercial, EVOC)
+  licenseIssueDate?: string;
+  licenseExpiry: string; // Licence Expiry Date
+  evocCertExpiry?: string; // EVOC Certification Expiry Date (if applicable)
+  cprCertExpiry?: string; // First Aid / CPR Certification (if applicable)
+  medicalClearanceExpiry?: string; // Medical or fitness clearance expiry
+
+  // Employment details
+  dateOfJoining?: string;
+  employmentType?: AmbulanceEmploymentType;
+  dutyStatus?: AmbulanceDutyStatus;
+  status: 'active' | 'inactive' | string;
+  assignedBranch?: string; // Assigned Hospital / Branch
+
+  // Duty and shift management
+  shiftType?: AmbulanceShiftType;
+  shiftStartTime?: string;
+  shiftEndTime?: string;
+  availabilityStatus: AmbulanceAvailabilityStatus;
   assignedAmbulanceId?: string;
   assignedAmbulanceReg?: string;
-  availabilityStatus: 'On Duty & Available' | 'On Active Trip' | 'Off Duty' | 'On Break' | string;
-  status: 'active' | 'inactive' | string;
+
+  // Qualifications and experience
   completedTrips: number;
   emergencyExperienceYears: number;
-  avatarUrl?: string;
+  qualificationDetails?: string; // Qualification / Training Details
+  paramedicRegistrationNumber?: string; // Paramedic Registration or Certification Number
+  certificationExpiryDate?: string; // Certification Expiry Date
+
+  // Additional details
+  documentUrl?: string; // Documents / Licence Uploads
+  notes?: string; // Notes / Remarks
 }
 
 export type EmergencyRequestStatus =
@@ -1096,17 +1181,49 @@ export interface AmbulanceTrip {
   paramedicNotes?: string;
 }
 
+export type MaintenanceCategory = 'Preventive' | 'Corrective' | 'Breakdown';
+export type MaintenanceStatus = 'Scheduled' | 'In Progress' | 'Completed' | 'Cancelled';
+export type VehicleAvailabilityDuringMaintenance = 'Available' | 'Under Maintenance' | 'Out of Service';
+export type SafetyInspectionResult = 'Passed' | 'Failed' | 'Pending';
+
 export interface AmbulanceMaintenance {
-  id: string; // e.g. "MNT-301"
+  // Maintenance record details
+  id: string; // e.g. "MNT-301" (auto-generated)
   hospitalId: string;
   ambulanceId: string;
   ambulanceReg: string;
-  serviceDate: string;
-  description: string;
-  cost: number;
-  nextServiceDate: string;
-  serviceType: 'Routine Inspection' | 'O2 & Telemetry Calibration' | 'Brakes & Tires' | 'Engine Overhaul';
-  servicedBy: string;
+  serviceDate: string; // Maintenance Date
+  category?: MaintenanceCategory; // Preventive / Corrective / Breakdown
+  maintenanceStatus?: MaintenanceStatus; // Scheduled / In Progress / Completed / Cancelled
+
+  // Service and inspection details
+  serviceType: 'Routine Inspection' | 'O2 & Telemetry Calibration' | 'Brakes & Tires' | 'Engine Overhaul' | string;
+  servicedBy: string; // Service Provider / Workshop Name
+  odometerAtService?: number; // Odometer Reading at Service (km)
+  reportedIssue?: string; // Reported Issue / Fault (if applicable)
+  partsReplaced?: string; // Parts Replaced / Repairs Performed
+  technicianName?: string; // Technician / Mechanic Name (optional)
+  nextServiceDate: string; // Next Service Due Date
+  nextServiceOdometerKm?: number; // Next Service Due Odometer Reading (km)
+
+  // Cost and payment details
+  partsCost?: number; // Parts Cost (₹)
+  labourCost?: number; // Labour Cost (₹)
+  otherCharges?: number; // Other Charges (₹)
+  cost: number; // Total Cost (₹) — calculate automatically from cost components (partsCost + labourCost + otherCharges)
+  invoiceNumber?: string; // Invoice / Receipt Number (optional)
+  invoiceAttachmentUrl?: string; // Invoice Attachment (optional)
+
+  // Vehicle availability and safety
+  vehicleAvailability?: VehicleAvailabilityDuringMaintenance; // Available / Under Maintenance / Out of Service
+  safetyInspectionResult?: SafetyInspectionResult; // Passed / Failed / Pending
+  returnToServiceDate?: string; // Return-to-Service Date
+  verifiedBy?: string; // Verified By (authorized staff member)
+
+  // Additional details
+  description: string; // Description / Remarks
+  notes?: string;
+  supportingDocsUrl?: string; // Supporting Documents / Photos (optional)
 }
 
 // ===================================

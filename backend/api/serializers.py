@@ -485,6 +485,7 @@ class AppointmentSettingsSerializer(serializers.ModelSerializer):
 
 
 class SupportTicketSerializer(serializers.ModelSerializer):
+    id = serializers.CharField(required=False)
     hospital_id = serializers.CharField(source='hospital.id', read_only=True)
     hospitalId = serializers.CharField(source='hospital.id', read_only=True)
 
@@ -498,7 +499,9 @@ class SupportTicketSerializer(serializers.ModelSerializer):
     def to_internal_value(self, data):
         import uuid
         data = data.copy() if hasattr(data, 'copy') else dict(data)
-        if not data.get('id'):
+        if self.instance and self.instance.id:
+            data['id'] = self.instance.id
+        elif not data.get('id'):
             data['id'] = f"TICK-{uuid.uuid4().hex[:6].upper()}"
         if 'hospital' not in data:
             if 'hospital_id' in data:
@@ -514,6 +517,10 @@ class SupportTicketSerializer(serializers.ModelSerializer):
         if 'assignedTo' in data and 'assigned_to' not in data:
             data['assigned_to'] = data['assignedTo']
         return super().to_internal_value(data)
+
+    def update(self, instance, validated_data):
+        validated_data.pop('id', None)
+        return super().update(instance, validated_data)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

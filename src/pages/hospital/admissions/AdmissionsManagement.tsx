@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   BedDouble,
   Plus,
@@ -36,6 +37,7 @@ import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
 import { Admission, Bed, Ward, WardType, BedStatus, AdmissionRequest, NurseConditionStatus } from '../../../types';
+import { calculateStayDays, formatStayDuration } from '../../../utils/admissionStay';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -44,17 +46,31 @@ import { Input, Textarea } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { Modal } from '../../../components/ui/Modal';
 import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
+import { EmptyState } from '../../../components/ui/EmptyState';
 import { SubscriptionUpgradeModal } from '../../../components/common/SubscriptionUpgradeModal';
 import { PatientCombobox } from '../../../components/common/PatientCombobox';
 
-type MainTab = 'overview' | 'wards_beds' | 'requests' | 'admit' | 'history';
+type MainTab = 'overview' | 'wards_beds' | 'ready_release' | 'requests' | 'admit' | 'history';
 
 export const AdmissionsManagement: React.FC = () => {
   const { currentHospital, user } = useAuth();
   const { showToast } = useNotification();
   const hospId = currentHospital?.id || 'HOSP-001';
 
-  const [activeTab, setActiveTab] = useState<MainTab>('overview');
+  const [searchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab') as MainTab | null;
+  const [activeTab, setActiveTab] = useState<MainTab>(() => {
+    if (urlTab && ['overview', 'wards_beds', 'ready_release', 'requests', 'admit', 'history'].includes(urlTab)) {
+      return urlTab;
+    }
+    return 'overview';
+  });
+
+  useEffect(() => {
+    if (urlTab && ['overview', 'wards_beds', 'ready_release', 'requests', 'admit', 'history'].includes(urlTab)) {
+      setActiveTab(urlTab);
+    }
+  }, [urlTab]);
 
   // State collections
   const [wards, setWards] = useState<Ward[]>(() => MockStorage.getWards(hospId));
@@ -75,7 +91,7 @@ export const AdmissionsManagement: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [wardFilter, setWardFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [historyTab, setHistoryTab] = useState<'active' | 'discharged' | 'all'>('active');
+  const [historyTab, setHistoryTab] = useState<'active' | 'ready_release' | 'awaiting_billing' | 'discharged' | 'all'>('active');
 
   // Modal States
   const [isWardModalOpen, setIsWardModalOpen] = useState(false);
@@ -122,6 +138,7 @@ export const AdmissionsManagement: React.FC = () => {
     wardId: '',
     bedNumber: '',
     wardType: 'General Ward' as WardType,
+    admissionDate: new Date().toISOString().split('T')[0],
     admissionType: 'Emergency' as Admission['admissionType'],
     reason: '',
     notes: '',
@@ -137,6 +154,7 @@ export const AdmissionsManagement: React.FC = () => {
   const [isDoctorDischargeModalOpen, setIsDoctorDischargeModalOpen] = useState(false);
   const [selectedAdmForDoctorDischarge, setSelectedAdmForDoctorDischarge] = useState<Admission | null>(null);
   const [doctorDischargeForm, setDoctorDischargeForm] = useState({
+    dischargeDate: new Date().toISOString().split('T')[0],
     diagnosis: '',
     summary: '',
     advice: '',
@@ -173,6 +191,12 @@ export const AdmissionsManagement: React.FC = () => {
   // Helper Metrics
   const activeAdmissions = admissions.filter((a) => a.status === 'Active');
   const dischargedAdmissions = admissions.filter((a) => a.status === 'Discharged');
+  const readyForReleaseAdmissions = admissions.filter(
+    (a) => a.status === 'Discharge Initiated' && (a.billingStatus === 'Paid' || a.billingStatus === 'Cleared')
+  );
+  const awaitingBillingAdmissions = admissions.filter(
+    (a) => a.status === 'Discharge Initiated' && a.billingStatus !== 'Paid' && a.billingStatus !== 'Cleared'
+  );
 
   const availableBeds = beds.filter((b) => b.status === 'Available');
   const occupiedBeds = beds.filter((b) => b.status === 'Occupied');
@@ -504,6 +528,7 @@ export const AdmissionsManagement: React.FC = () => {
       wardId: selectedW?.id || firstFree?.wardId || '',
       bedNumber: firstFree?.bedNumber || '',
       wardType: selectedW?.wardType || firstFree?.wardType || 'General Ward',
+      admissionDate: new Date().toISOString().split('T')[0],
       admissionType: 'Emergency',
       reason: 'Acute Medical Inpatient Observation & Telemetry',
       notes: '',
@@ -550,6 +575,7 @@ export const AdmissionsManagement: React.FC = () => {
       wardId: targetW?.id || firstFree?.wardId || '',
       bedNumber: firstFree?.bedNumber || '',
       wardType: targetW?.wardType || firstFree?.wardType || req.recommendedWardType || 'General Ward',
+      admissionDate: new Date().toISOString().split('T')[0],
       admissionType: req.priority === 'Emergency' ? 'Emergency' : 'Elective',
       reason: req.reason || req.diagnosis || 'Inpatient admission referral from specialist',
       notes: req.instructions ? `Doctor Directives: ${req.instructions}` : '',
@@ -596,7 +622,7 @@ export const AdmissionsManagement: React.FC = () => {
       departmentName: doc.departmentName,
       wardType: chosenBed?.wardType || admitFormData.wardType,
       bedNumber: admitFormData.bedNumber,
-      admissionDate: new Date().toISOString().split('T')[0],
+      admissionDate: admitFormData.admissionDate || new Date().toISOString().split('T')[0],
       admissionType: admitFormData.admissionType,
       reason: admitFormData.reason,
       notes: admitFormData.notes,
@@ -661,6 +687,7 @@ export const AdmissionsManagement: React.FC = () => {
   const handleOpenDoctorDischargeModal = (adm: Admission) => {
     setSelectedAdmForDoctorDischarge(adm);
     setDoctorDischargeForm({
+      dischargeDate: new Date().toISOString().split('T')[0],
       diagnosis: adm.diagnosis || adm.reason || '',
       summary: adm.dischargeSummary || `Patient showed steady clinical improvement. Afebrile for 24h, vital parameters stabilized, tolerating oral diet and ambulating comfortably.`,
       advice: adm.dischargeAdvice || `Adequate fluid intake, wound care/dressing as advised. Avoid heavy lifting for 7 days. Review in OPD clinic after 1 week.`,
@@ -674,6 +701,7 @@ export const AdmissionsManagement: React.FC = () => {
     if (!selectedAdmForDoctorDischarge) return;
 
     const res = MockStorage.initiateDoctorDischarge(selectedAdmForDoctorDischarge.id, {
+      dischargeDate: doctorDischargeForm.dischargeDate || new Date().toISOString().split('T')[0],
       dischargeSummary: doctorDischargeForm.summary.trim(),
       dischargeAdvice: doctorDischargeForm.advice.trim(),
       dischargePrescriptions: doctorDischargeForm.prescriptions.trim(),
@@ -684,7 +712,7 @@ export const AdmissionsManagement: React.FC = () => {
     if (res.success) {
       showToast(
         'Medical Discharge Initiated',
-        `Discharge signed by Dr. ${selectedAdmForDoctorDischarge.doctorName}. Inpatient invoice generated for cashier settlement.`
+        `Discharge signed by Dr. ${selectedAdmForDoctorDischarge.doctorName}. Patient info is now ready in Billing for accountant to create invoice.`
       );
       setIsDoctorDischargeModalOpen(false);
       refreshData();
@@ -766,7 +794,11 @@ export const AdmissionsManagement: React.FC = () => {
         ? true
         : historyTab === 'active'
           ? a.status === 'Active'
-          : a.status === 'Discharged';
+          : historyTab === 'ready_release'
+            ? a.status === 'Discharge Initiated' && (a.billingStatus === 'Paid' || a.billingStatus === 'Cleared')
+            : historyTab === 'awaiting_billing'
+              ? a.status === 'Discharge Initiated' && a.billingStatus !== 'Paid' && a.billingStatus !== 'Cleared'
+              : a.status === 'Discharged';
     const matchesSearch =
       a.patientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       a.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -833,6 +865,21 @@ export const AdmissionsManagement: React.FC = () => {
         >
           <Building2 className="w-4 h-4" />
           Wards & Beds ({wards.length} Wards • {beds.length}/{maxBedsLimit} Beds)
+        </button>
+        <button
+          onClick={() => setActiveTab('ready_release')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium text-xs transition-all ${activeTab === 'ready_release'
+              ? 'bg-emerald-600 text-white shadow-xs font-semibold'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+        >
+          <LogOut className="w-4 h-4" />
+          Ready for Bed Release
+          {readyForReleaseAdmissions.length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-500 text-white shadow-xs animate-pulse">
+              {readyForReleaseAdmissions.length}
+            </span>
+          )}
         </button>
         <button
           onClick={() => setActiveTab('requests')}
@@ -919,6 +966,37 @@ export const AdmissionsManagement: React.FC = () => {
           Upgrade Capacity Plan
         </Button>
       </div>
+
+      {/* Ready for Bed Release & Discharge Alert Banner for Receptionist */}
+      {readyForReleaseAdmissions.length > 0 && activeTab === 'overview' && (
+        <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-50 via-teal-50 to-indigo-50 border border-emerald-300 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <FileCheck className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-950">
+                  {readyForReleaseAdmissions.length} Inpatient{readyForReleaseAdmissions.length > 1 ? 's' : ''} Paid & Medically Cleared — Ready for Bed Release
+                </h3>
+                <Badge variant="success" size="sm">Billing Paid • Exit Clearance Ready</Badge>
+              </div>
+              <p className="text-xs text-emerald-800 mt-0.5">
+                Specialist discharge orders completed and inpatient billing settled. Receptionist can now issue exit pass and release bed to Available inventory for new patients.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setActiveTab('ready_release')}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold shrink-0 shadow-xs"
+            rightIcon={<ArrowRight className="w-4 h-4" />}
+          >
+            Release Bed & Discharge ({readyForReleaseAdmissions.length})
+          </Button>
+        </div>
+      )}
 
       {/* Doctor Referrals Alert Banner on Overview */}
       {pendingAdmissionRequests.length > 0 && activeTab === 'overview' && (
@@ -1277,7 +1355,7 @@ export const AdmissionsManagement: React.FC = () => {
                         <p className="font-semibold text-slate-800">{bed.wardName || bed.wardType}</p>
                         <p className="text-[10px] text-slate-500">{bed.floor}</p>
                       </td>
-                      <td className="px-4 py-3.5 font-bold text-slate-800">${bed.dailyRate}/day</td>
+                      <td className="px-4 py-3.5 font-bold text-slate-800">₹{bed.dailyRate}/day</td>
                       <td className="px-4 py-3.5">
                         <select
                           value={bed.status}
@@ -1427,7 +1505,17 @@ export const AdmissionsManagement: React.FC = () => {
                 </Select>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <Input
+                  label="Admission Date *"
+                  type="date"
+                  value={admitFormData.admissionDate}
+                  onChange={(e) =>
+                    setAdmitFormData({ ...admitFormData, admissionDate: e.target.value })
+                  }
+                  required
+                  className="font-mono text-xs"
+                />
                 <Input
                   label="Initial Deposit Amount (₹)"
                   type="number"
@@ -1463,6 +1551,115 @@ export const AdmissionsManagement: React.FC = () => {
                 </Button>
               </div>
             </form>
+          </div>
+        </Card>
+      )}
+
+      {/* TAB: READY FOR BED RELEASE & DISCHARGE QUEUE FOR RECEPTIONIST */}
+      {activeTab === 'ready_release' && (
+        <Card>
+          <CardHeader
+            title="Inpatient Exit Clearance & Bed Release Desk"
+            subtitle="Receptionist releases physical beds back to available inventory after confirming doctor discharge orders and full bill settlement."
+            action={
+              <Badge variant={readyForReleaseAdmissions.length > 0 ? 'success' : 'neutral'} size="sm">
+                {readyForReleaseAdmissions.length} Ready to Release
+              </Badge>
+            }
+          />
+          <div className="p-3.5 border-b border-slate-100 bg-emerald-50/50 flex items-center justify-between gap-3 flex-wrap text-xs">
+            <div className="flex items-center gap-2 text-emerald-950 font-semibold">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>Two-Stage Discharge Protocol Completed: Doctor Signed Off Medical Discharge + Accountant Cleared Invoice</span>
+            </div>
+            <span className="text-slate-500 font-mono text-[11px]">
+              Releasing bed makes it immediately Available for another patient
+            </span>
+          </div>
+
+          <div className="p-4">
+            {readyForReleaseAdmissions.length === 0 ? (
+              <div className="py-12 text-center">
+                <EmptyState
+                  icon={<CheckCircle2 className="w-10 h-10 text-emerald-500" />}
+                  title="No Inpatients Pending Bed Release"
+                  description="All medically cleared and billed inpatients have completed final discharge. Bed inventory is fully synchronized."
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {readyForReleaseAdmissions.map((adm) => {
+                  const bedObj = beds.find((b) => b.bedNumber === adm.bedNumber);
+                  const dailyRate = bedObj?.dailyRate || 1500;
+                  const stayDays = calculateStayDays(adm.admissionDate, adm.dischargeDate);
+
+                  return (
+                    <div
+                      key={adm.id}
+                      className="p-4 rounded-xl border border-emerald-300 bg-emerald-50/30 shadow-xs space-y-3 flex flex-col justify-between"
+                    >
+                      <div className="space-y-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <h4 className="font-bold text-slate-900 text-sm">{adm.patientName}</h4>
+                            <p className="text-[11px] text-slate-500 font-mono">ID: {adm.patientId}</p>
+                          </div>
+                          <Badge variant="success" size="sm">
+                            Ready to Release
+                          </Badge>
+                        </div>
+
+                        <div className="p-2.5 rounded-lg bg-white border border-emerald-200 text-xs space-y-1.5">
+                          <div className="flex justify-between items-center">
+                            <span className="text-slate-500 text-[11px]">Bed & Ward:</span>
+                            <strong className="font-mono text-indigo-700 font-bold">
+                              {adm.bedNumber} ({adm.wardType})
+                            </strong>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-slate-500 text-[11px]">Stay Duration:</span>
+                            <span className="font-mono text-slate-800">
+                              {adm.admissionDate} to {adm.dischargeDate || new Date().toISOString().split('T')[0]} ({formatStayDuration(stayDays)})
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-slate-500 text-[11px]">Discharged By:</span>
+                            <strong className="text-slate-800 text-[11px]">
+                              Dr. {adm.dischargeDoctorName || adm.doctorName}
+                            </strong>
+                          </div>
+                          <div className="flex justify-between items-center pt-1 border-t border-slate-100">
+                            <span className="text-slate-500 text-[11px]">Invoice Status:</span>
+                            <span className="font-mono text-emerald-700 font-bold bg-emerald-100 px-1.5 py-0.5 rounded text-[10px]">
+                              Paid #{adm.invoiceId || 'PAID'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {adm.dischargeSummary && (
+                          <div className="p-2 rounded bg-white/80 border border-slate-200 text-[11px] text-slate-600">
+                            <p className="font-semibold text-slate-700">Doctor's Medical Note:</p>
+                            <p className="line-clamp-2 italic">{adm.dischargeSummary}</p>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="pt-2 border-t border-emerald-200/60">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => handleOpenFinalReleaseModal(adm)}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs justify-center shadow-xs"
+                          leftIcon={<LogOut className="w-4 h-4" />}
+                        >
+                          Release Bed & Discharge
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </Card>
       )}
@@ -1612,13 +1809,29 @@ export const AdmissionsManagement: React.FC = () => {
             title="Inpatient Admissions Log & Roster"
             subtitle="Track current active inpatient stays and historical patient discharges."
             action={
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <Button
                   variant={historyTab === 'active' ? 'primary' : 'outline'}
                   size="xs"
                   onClick={() => setHistoryTab('active')}
                 >
                   Active ({activeAdmissions.length})
+                </Button>
+                <Button
+                  variant={historyTab === 'ready_release' ? 'primary' : 'outline'}
+                  size="xs"
+                  onClick={() => setHistoryTab('ready_release')}
+                  className={historyTab === 'ready_release' ? 'bg-emerald-600 text-white' : 'text-emerald-700 border-emerald-300'}
+                >
+                  Ready to Release ({readyForReleaseAdmissions.length})
+                </Button>
+                <Button
+                  variant={historyTab === 'awaiting_billing' ? 'primary' : 'outline'}
+                  size="xs"
+                  onClick={() => setHistoryTab('awaiting_billing')}
+                  className={historyTab === 'awaiting_billing' ? 'bg-amber-600 text-white' : 'text-amber-700 border-amber-300'}
+                >
+                  Awaiting Bill ({awaitingBillingAdmissions.length})
                 </Button>
                 <Button
                   variant={historyTab === 'discharged' ? 'primary' : 'outline'}
@@ -1632,7 +1845,7 @@ export const AdmissionsManagement: React.FC = () => {
                   size="xs"
                   onClick={() => setHistoryTab('all')}
                 >
-                  All Logs
+                  All Logs ({admissions.length})
                 </Button>
               </div>
             }
@@ -1677,15 +1890,52 @@ export const AdmissionsManagement: React.FC = () => {
                   return (
                     <tr key={adm.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="px-5 py-3.5">
-                        <p className="font-bold text-slate-900">{adm.patientName}</p>
-                        <p className="text-[10px] text-indigo-600 font-mono">{adm.id} • {adm.patientId}</p>
-                        <p className="text-[10px] text-slate-500 line-clamp-1">{adm.diagnosis || adm.reason}</p>
+                        {(() => {
+                          const bedObj = beds.find((b) => b.bedNumber === adm.bedNumber);
+                          const dailyRate = bedObj?.dailyRate || 1500;
+                          const stayDays = calculateStayDays(adm.admissionDate, adm.dischargeDate);
+                          const bedTotal = stayDays * dailyRate;
+
+                          return (
+                            <>
+                              <p className="font-bold text-slate-900">{adm.patientName}</p>
+                              <div className="text-[10px] text-indigo-600 font-mono flex items-center gap-1.5 flex-wrap mt-0.5">
+                                <span>{adm.id} • {adm.patientId}</span>
+                                <span>•</span>
+                                <span className="text-slate-500">Adm: {adm.admissionDate}</span>
+                                <span className="bg-indigo-50 text-indigo-700 border border-indigo-200/80 px-1.5 py-0.2 rounded font-semibold text-[9px]">
+                                  {formatStayDuration(stayDays)} Stay
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">{adm.diagnosis || adm.reason}</p>
+                            </>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3.5">
-                        <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                          Bed {adm.bedNumber}
-                        </span>
-                        <p className="text-[10px] text-slate-500 mt-0.5">{adm.wardType}</p>
+                        {(() => {
+                          const bedObj = beds.find((b) => b.bedNumber === adm.bedNumber);
+                          const dailyRate = bedObj?.dailyRate || 1500;
+                          const stayDays = calculateStayDays(adm.admissionDate, adm.dischargeDate);
+                          const bedTotal = stayDays * dailyRate;
+
+                          return (
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 font-mono text-[11px]">
+                                  Bed {adm.bedNumber}
+                                </span>
+                                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                                  ₹{dailyRate.toLocaleString('en-IN')}/day
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 mt-1">{adm.wardType}</p>
+                              <p className="text-[10px] text-slate-600 mt-0.5 font-mono">
+                                Stay Total: <strong className="text-emerald-700">₹{bedTotal.toLocaleString('en-IN')}</strong> ({stayDays}d)
+                              </p>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3.5">
                         <p className="font-bold text-slate-900">{adm.doctorName}</p>
@@ -2177,7 +2427,15 @@ export const AdmissionsManagement: React.FC = () => {
             </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Input
+              label="Admission Date *"
+              type="date"
+              value={admitFormData.admissionDate}
+              onChange={(e) => setAdmitFormData({ ...admitFormData, admissionDate: e.target.value })}
+              required
+              className="font-mono text-xs"
+            />
             <Input
               label="Initial Admission Deposit (₹)"
               type="number"
@@ -2248,17 +2506,31 @@ export const AdmissionsManagement: React.FC = () => {
               </div>
             )}
 
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                Final Discharge Diagnosis *
-              </label>
-              <Input
-                value={doctorDischargeForm.diagnosis}
-                onChange={(e) => setDoctorDischargeForm({ ...doctorDischargeForm, diagnosis: e.target.value })}
-                placeholder="e.g. Acute Gastroenteritis - Resolved"
-                required
-                className="text-xs"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Specialist Discharge Date *
+                </label>
+                <Input
+                  type="date"
+                  value={doctorDischargeForm.dischargeDate}
+                  onChange={(e) => setDoctorDischargeForm({ ...doctorDischargeForm, dischargeDate: e.target.value })}
+                  required
+                  className="text-xs font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Final Discharge Diagnosis *
+                </label>
+                <Input
+                  value={doctorDischargeForm.diagnosis}
+                  onChange={(e) => setDoctorDischargeForm({ ...doctorDischargeForm, diagnosis: e.target.value })}
+                  placeholder="e.g. Acute Gastroenteritis - Resolved"
+                  required
+                  className="text-xs"
+                />
+              </div>
             </div>
 
             <div>
@@ -2303,7 +2575,7 @@ export const AdmissionsManagement: React.FC = () => {
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
               <span>
-                <strong>Next Workflow Step:</strong> Submitting this medical discharge signs off clinical care and automatically issues an Inpatient Bill for cashier settlement before bed release.
+                <strong>Next Workflow Step:</strong> Submitting this medical discharge signs off clinical care. Patient stay info is forwarded to Billing for the accountant to manually review and create the invoice.
               </span>
             </div>
 

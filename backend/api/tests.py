@@ -756,6 +756,7 @@ class SupportTicketWorkflowTests(TestCase):
         self.assertEqual(len(reply_res.data['messages']), 2)
 
         # 3. Update status to resolved
+        count_before_status = SupportTicket.objects.count()
         status_res = self.client.post(
             f'/api/support-tickets/{res.data["id"]}/update_status/',
             {'status': 'resolved'},
@@ -763,12 +764,24 @@ class SupportTicketWorkflowTests(TestCase):
         )
         self.assertEqual(status_res.status_code, status.HTTP_200_OK)
         self.assertEqual(status_res.data['status'], 'resolved')
+        self.assertEqual(SupportTicket.objects.count(), count_before_status)
 
-        # 4. Metrics endpoint returns accurate counts
+        # 4. Partial update (PATCH) does not duplicate ticket or alter ID
+        patch_res = self.client.patch(
+            f'/api/support-tickets/{res.data["id"]}/',
+            {'status': 'closed'},
+            format='json'
+        )
+        self.assertEqual(patch_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(patch_res.data['id'], res.data['id'])
+        self.assertEqual(patch_res.data['status'], 'closed')
+        self.assertEqual(SupportTicket.objects.count(), count_before_status)
+
+        # 5. Metrics endpoint returns accurate counts
         metrics_res = self.client.get('/api/support-tickets/metrics/')
         self.assertEqual(metrics_res.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(metrics_res.data['total'], 1)
-        self.assertGreaterEqual(metrics_res.data['resolved'], 1)
+        self.assertGreaterEqual(metrics_res.data['closed'], 1)
 
 
 

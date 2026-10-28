@@ -2597,8 +2597,12 @@ export const MockStorage = {
   },
 
   // Support Tickets
-  getSupportTickets(): SupportTicket[] {
-    return getStored(STORAGE_KEYS.TICKETS, initialSupportTickets);
+  getSupportTickets(hospitalId?: string): SupportTicket[] {
+    const list = getStored<SupportTicket[]>(STORAGE_KEYS.TICKETS, initialSupportTickets);
+    if (hospitalId) {
+      return list.filter((t) => this.matchHospitalId(t.hospitalId, hospitalId));
+    }
+    return list;
   },
 
   getSupportTicketById(id: string): SupportTicket | undefined {
@@ -2606,7 +2610,7 @@ export const MockStorage = {
   },
 
   saveSupportTicket(ticket: SupportTicket): void {
-    const tickets = this.getSupportTickets();
+    const tickets = getStored<SupportTicket[]>(STORAGE_KEYS.TICKETS, initialSupportTickets);
     const idx = tickets.findIndex((t) => t.id === ticket.id);
     if (idx >= 0) {
       tickets[idx] = ticket;
@@ -2614,6 +2618,7 @@ export const MockStorage = {
       tickets.unshift(ticket);
     }
     setStored(STORAGE_KEYS.TICKETS, tickets);
+    window.dispatchEvent(new Event('pulse_storage_updated'));
 
     // Asynchronously sync with Django backend
     if (idx >= 0) {
@@ -2621,6 +2626,7 @@ export const MockStorage = {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: ticket.id,
           hospital: ticket.hospitalId,
           hospital_name: ticket.hospitalName,
           title: ticket.title,
@@ -2656,8 +2662,14 @@ export const MockStorage = {
     }
   },
 
-  addTicketReply(ticketId: string, message: string, sender: string, senderRole: 'hospital' | 'platform_support'): void {
-    const tickets = this.getSupportTickets();
+  addTicketReply(
+    ticketId: string,
+    message: string,
+    sender: string,
+    senderRole: 'hospital' | 'platform_support',
+    screenshotUrl?: string
+  ): void {
+    const tickets = getStored<SupportTicket[]>(STORAGE_KEYS.TICKETS, initialSupportTickets);
     const ticket = tickets.find((t) => t.id === ticketId);
     if (ticket) {
       ticket.messages.push({
@@ -2666,9 +2678,11 @@ export const MockStorage = {
         senderRole,
         message,
         timestamp: new Date().toISOString().replace('T', ' ').substring(0, 16),
+        screenshotUrl,
       });
       ticket.updatedAt = new Date().toISOString().replace('T', ' ').substring(0, 16);
       setStored(STORAGE_KEYS.TICKETS, tickets);
+      window.dispatchEvent(new Event('pulse_storage_updated'));
 
       fetch(`${API_BASE_URL}/support-tickets/${ticketId}/add_reply/`, {
         method: 'POST',
@@ -3853,10 +3867,10 @@ export const MockStorage = {
         message: 'Plan Restriction: Lab Technician role cannot be onboarded because Laboratory & Diagnostics is locked on your current subscription plan. Upgrade to Professional Hospital to enable this role.',
       };
     }
-    if (staff.role === 'Ambulance Driver' && !isCapabilityAllowedForTier(tier, 'ambulance_emergency')) {
+    if ((staff.role === 'Ambulance Manager' || staff.role === 'Ambulance Driver') && !isCapabilityAllowedForTier(tier, 'ambulance_emergency')) {
       return {
         success: false,
-        message: 'Plan Restriction: Ambulance Driver role cannot be onboarded because Ambulance & Emergency is locked on your current subscription plan. Upgrade to Professional Hospital to enable this role.',
+        message: 'Plan Restriction: Ambulance Manager role cannot be onboarded because Ambulance & Emergency is locked on your current subscription plan. Upgrade to Professional Hospital to enable this role.',
       };
     }
 
@@ -4512,15 +4526,18 @@ export const MockStorage = {
       dischargeSummary: string;
       dischargeAdvice?: string;
       dischargePrescriptions?: string;
+      dischargeDate?: string;
       doctorId: string;
       doctorName: string;
     }
-  ): { success: boolean; invoiceId?: string; totalAmount?: number } {
+  ): { success: boolean } {
     const list = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
     const adm = list.find((a) => a.id === admissionId);
     if (!adm) return { success: false };
 
+    const effectiveDischargeDate = data.dischargeDate || new Date().toISOString().split('T')[0];
     adm.status = 'Discharge Initiated';
+    adm.dischargeDate = effectiveDischargeDate;
     adm.dischargeInitiatedAt = new Date().toISOString();
     adm.dischargeDoctorId = data.doctorId;
     adm.dischargeDoctorName = data.doctorName;
@@ -4528,92 +4545,13 @@ export const MockStorage = {
     adm.dischargeAdvice = data.dischargeAdvice;
     adm.dischargePrescriptions = data.dischargePrescriptions;
     adm.billingStatus = 'Pending';
+    adm.invoiceId = undefined;
 
-    // Calculate Inpatient Stay Cost and create Inpatient Billing Invoice
-    const bed = this.getBeds(adm.hospitalId).find((b) => b.bedNumber === adm.bedNumber);
-    const dailyRate = bed?.dailyRate || 1500;
-    const admissionDate = new Date(adm.admissionDate);
-    const today = new Date();
-    const diffTime = Math.abs(today.getTime() - admissionDate.getTime());
-    const daysStayed = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
-
-    const bedChargeTotal = daysStayed * dailyRate;
-    const nursingChargeTotal = daysStayed * 250;
-    const doctorRoundingTotal = daysStayed * 500;
-    const subtotal = bedChargeTotal + nursingChargeTotal + doctorRoundingTotal;
-    const taxAmount = Math.round(subtotal * 0.05);
-    const totalAmount = subtotal + taxAmount;
-    const depositPaid = Number(adm.initialDeposit) || 0;
-    const balanceDue = Math.max(0, totalAmount - depositPaid);
-
-    const invId = `INV-IPD-${Date.now().toString().slice(-6)}`;
-    adm.invoiceId = invId;
-    adm.finalBilledAmount = totalAmount;
-    adm.finalPaidAmount = depositPaid;
-
-    const newInvoice: Invoice = {
-      id: invId,
-      hospitalId: adm.hospitalId,
-      patientId: adm.patientId,
-      patientName: adm.patientName,
-      patientPhone: '9876543210',
-      issueDate: new Date().toISOString().split('T')[0],
-      dueDate: new Date().toISOString().split('T')[0],
-      billingCategory: 'Hospital Service',
-      encounterType: 'IPD',
-      doctorId: data.doctorId,
-      doctorName: data.doctorName,
-      departmentName: adm.departmentName,
-      paymentType: 'Self Pay',
-      items: [
-        {
-          id: `ITEM-BED-${Date.now()}-1`,
-          description: `Inpatient Bed & Ward Charges (${daysStayed} Day${daysStayed > 1 ? 's' : ''} in ${adm.wardType} - ${adm.bedNumber})`,
-          category: 'Bed Charge',
-          quantity: daysStayed,
-          unitPrice: dailyRate,
-          total: bedChargeTotal,
-        },
-        {
-          id: `ITEM-NURSE-${Date.now()}-2`,
-          description: `24/7 Ward Nursing Care & Telemetry Monitoring (${daysStayed} Day${daysStayed > 1 ? 's' : ''})`,
-          category: 'Nursing',
-          quantity: daysStayed,
-          unitPrice: 250,
-          total: nursingChargeTotal,
-        },
-        {
-          id: `ITEM-DOC-${Date.now()}-3`,
-          description: `Attending Specialist Daily Inpatient Rounds (${daysStayed} Day${daysStayed > 1 ? 's' : ''})`,
-          category: 'Consultation',
-          quantity: daysStayed,
-          unitPrice: 500,
-          total: doctorRoundingTotal,
-        },
-      ],
-      subtotal,
-      taxRate: 5,
-      taxAmount,
-      discount: depositPaid > 0 ? depositPaid : 0,
-      discountReason: depositPaid > 0 ? `Admission Advance Deposit Adjusted (₹${depositPaid})` : undefined,
-      totalAmount: balanceDue,
-      amountPaid: 0,
-      status: balanceDue === 0 ? 'Paid' : 'Pending',
-      cashierDesk: 'IPD Discharge Billing Counter',
-      notes: `Final Inpatient Discharge Settlement for Bed ${adm.bedNumber}. Doctor: ${data.doctorName}. Initial deposit: ₹${depositPaid}. Balance due: ₹${balanceDue}.`,
-      createdAt: new Date().toISOString(),
-    };
-
-    if (balanceDue === 0) {
-      adm.billingStatus = 'Paid';
-    }
-
-    this.saveInvoice(newInvoice);
     setStored(STORAGE_KEYS.ADMISSIONS, list);
 
     this.logActivity(
       'Doctor Initiated Discharge',
-      `Dr. ${data.doctorName} initiated medical discharge for ${adm.patientName} (${adm.bedNumber}). Inpatient Invoice ${invId} generated.`,
+      `Dr. ${data.doctorName} initiated medical discharge for ${adm.patientName} (${adm.bedNumber}). Patient info ready for manual billing by accountant.`,
       'patient',
       'Doctor',
       data.doctorName,
@@ -4624,7 +4562,27 @@ export const MockStorage = {
       window.dispatchEvent(new Event('pulse_storage_updated'));
     }
 
-    return { success: true, invoiceId: invId, totalAmount: balanceDue };
+    return { success: true };
+  },
+
+  linkAdmissionInvoice(
+    admissionId: string,
+    invoiceId: string,
+    totalAmount: number,
+    paidAmount: number
+  ): void {
+    const list = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const adm = list.find((a) => a.id === admissionId);
+    if (adm) {
+      adm.invoiceId = invoiceId;
+      adm.finalBilledAmount = totalAmount;
+      adm.finalPaidAmount = paidAmount;
+      adm.billingStatus = paidAmount >= totalAmount && totalAmount > 0 ? 'Paid' : 'Pending';
+      setStored(STORAGE_KEYS.ADMISSIONS, list);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('pulse_storage_updated'));
+      }
+    }
   },
 
   settleInpatientBilling(admissionId: string, invoiceId?: string): void {
@@ -5815,6 +5773,34 @@ export const MockStorage = {
       list.unshift(driver);
     }
     setStored(STORAGE_KEYS.AMBULANCE_DRIVERS, list);
+
+    // Ensure corresponding user account exists so driver can log in like other staff
+    if (driver.email && driver.email.trim()) {
+      const emailTrimmed = driver.email.trim();
+      const users = this.getUsers();
+      const existingUser = users.find(
+        (u) => (u.email || '').toLowerCase() === emailTrimmed.toLowerCase()
+      );
+      if (!existingUser) {
+        const newUser: User = {
+          id: `USR-DRV-${driver.id}`,
+          name: driver.name,
+          email: emailTrimmed,
+          password: 'Staff@1234',
+          role: 'ambulance_driver',
+          portal: 'hospital',
+          hospitalId: driver.hospitalId,
+          hospitalName: driver.hospitalName || 'Hospital',
+          department: 'Emergency Fleet / Ambulance Unit',
+          phone: driver.phone,
+          status: 'active',
+          driverId: driver.id,
+          createdAt: new Date().toISOString(),
+        };
+        this.saveUser(newUser);
+      }
+    }
+
     ApiService.saveAmbulanceDriver({
       id: driver.id,
       hospital: driver.hospitalId || 'hosp-1',

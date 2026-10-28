@@ -90,8 +90,8 @@ export const Login: React.FC = () => {
           navigate('/sales/dashboard');
         } else if (authUser?.role === 'patient') {
           navigate('/patient/dashboard');
-        } else if (authUser?.role === 'ambulance_driver') {
-          navigate('/driver/dashboard');
+        } else if (authUser?.role === 'ambulance_manager' || authUser?.role === 'ambulance_driver') {
+          navigate('/hospital/ambulance');
         } else if (authUser?.role === 'doctor') {
           navigate('/hospital/doctor/dashboard');
         } else {
@@ -116,8 +116,8 @@ export const Login: React.FC = () => {
           navigate('/patient/dashboard');
         } else if (authUser?.role === 'doctor') {
           navigate('/hospital/doctor/dashboard');
-        } else if (authUser?.role === 'ambulance_driver') {
-          navigate('/driver/dashboard');
+        } else if (authUser?.role === 'ambulance_manager' || authUser?.role === 'ambulance_driver') {
+          navigate('/hospital/ambulance');
         } else {
           navigate('/hospital/dashboard');
         }

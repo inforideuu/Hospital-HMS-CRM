@@ -48,6 +48,7 @@ import { DepartmentManagement } from '../pages/hospital/departments/DepartmentMa
 import { OPDRoomManagement } from '../pages/hospital/opd-rooms/OPDRoomManagement';
 import { AdmissionsManagement } from '../pages/hospital/admissions/AdmissionsManagement';
 import { BillingManagement } from '../pages/hospital/billing/BillingManagement';
+import { DischargeInvoicingManagement } from '../pages/hospital/billing/DischargeInvoicingManagement';
 import { PharmacyManagement } from '../pages/hospital/pharmacy/PharmacyManagement';
 import { LaboratoryManagement } from '../pages/hospital/laboratory/LaboratoryManagement';
 import { LaboratoryDashboard } from '../pages/hospital/laboratory/LaboratoryDashboard';
@@ -56,6 +57,7 @@ import { PharmacistDashboard } from '../pages/hospital/pharmacist/PharmacistDash
 import { AmbulanceManagement } from '../pages/hospital/ambulance/AmbulanceManagement';
 import { ReportsAnalytics } from '../pages/hospital/reports/ReportsAnalytics';
 import { HospitalSettings } from '../pages/hospital/settings/HospitalSettings';
+import { HospitalSupportManagement } from '../pages/hospital/support/HospitalSupportManagement';
 import { EnterpriseManagement } from '../pages/hospital/enterprise/EnterpriseManagement';
 import { EnterpriseDashboard } from '../pages/hospital/enterprise/EnterpriseDashboard';
 import { OrganizationProfile } from '../pages/hospital/enterprise/OrganizationProfile';
@@ -320,6 +322,14 @@ export const AppRoutes: React.FC = () => {
           }
         />
         <Route
+          path="billing/discharges"
+          element={
+            <ProtectedRoute allowedRoles={['hospital_admin', 'accountant']}>
+              <DischargeInvoicingManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="pharmacy"
           element={
             <ProtectedRoute allowedRoles={['hospital_admin', 'pharmacist', 'doctor']}>
@@ -386,7 +396,7 @@ export const AppRoutes: React.FC = () => {
         <Route
           path="ambulance"
           element={
-            <ProtectedRoute allowedRoles={['hospital_admin', 'doctor', 'receptionist', 'nurse']}>
+            <ProtectedRoute allowedRoles={['hospital_admin', 'doctor', 'receptionist', 'nurse', 'ambulance_manager', 'ambulance_driver']}>
               <AmbulanceManagement />
             </ProtectedRoute>
           }
@@ -468,6 +478,14 @@ export const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['hospital_admin']}>
               <HospitalSettings />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="support"
+          element={
+            <ProtectedRoute allowedRoles={['hospital_admin']}>
+              <HospitalSupportManagement />
             </ProtectedRoute>
           }
         />

@@ -11,7 +11,8 @@ export type UserRole =
   | 'pharmacist'
   | 'lab_technician'
   | 'patient'
-  | 'ambulance_driver';
+  | 'ambulance_driver'
+  | 'ambulance_manager';
 
 export type PortalType = 'platform' | 'hospital' | 'patient' | 'ambulance_driver';
 
