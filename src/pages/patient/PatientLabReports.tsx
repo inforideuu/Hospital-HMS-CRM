@@ -313,15 +313,43 @@ export const PatientLabReports: React.FC = () => {
               </div>
             )}
 
-            <div className="flex justify-between items-center pt-3 border-t border-slate-100">
-              <Button
-                variant="outline"
-                size="sm"
-                leftIcon={<Printer className="w-4 h-4" />}
-                onClick={() => window.print()}
-              >
-                Print Report
-              </Button>
+            <div className="flex justify-between items-center pt-3 border-t border-slate-100 gap-2">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  leftIcon={<Download className="w-4 h-4" />}
+                  onClick={() => {
+                    MockStorage.exportToCSV(`Lab_Report_${selectedOrder.id}`, [
+                      {
+                        Report_ID: selectedOrder.id,
+                        Test_Name: selectedOrder.testName,
+                        Category: selectedOrder.category,
+                        Patient_Name: selectedOrder.patientName,
+                        Patient_ID: selectedOrder.patientId,
+                        Sample_Type: selectedOrder.sampleType,
+                        Result_Value: selectedOrder.resultValue || 'Pending Analysis',
+                        Reference_Range: selectedOrder.referenceRange || 'N/A',
+                        Status: selectedOrder.status,
+                        Order_Date: selectedOrder.orderDate,
+                        Result_Date: selectedOrder.completedDate || selectedOrder.verifiedDate || 'In Progress',
+                        Technician_Notes: selectedOrder.labTechnicianNotes || 'None',
+                      },
+                    ]);
+                    showToast('Report Downloaded', `Diagnostic report ${selectedOrder.id} downloaded successfully.`);
+                  }}
+                >
+                  Download Report
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  leftIcon={<Printer className="w-4 h-4" />}
+                  onClick={() => window.print()}
+                >
+                  Print Report
+                </Button>
+              </div>
               <Button variant="primary" onClick={() => setIsDetailModalOpen(false)}>
                 Close
               </Button>

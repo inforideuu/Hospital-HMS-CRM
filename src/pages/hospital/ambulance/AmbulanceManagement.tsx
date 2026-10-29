@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
 import { MockStorage } from '../../../services/mockStorage';
@@ -7,6 +7,7 @@ import {
   Ambulance,
   AmbulanceDriver,
   EmergencyRequest,
+  EmergencyPriority,
   AmbulanceMaintenance,
   AmbulanceType,
   AmbulanceStatus,
@@ -61,7 +62,9 @@ import {
   Mail,
   Truck,
   CheckSquare,
-  Square
+  Square,
+  Edit,
+  Trash2
 } from 'lucide-react';
 
 const STANDARD_EQUIPMENT_CHECKLIST = [
@@ -99,10 +102,52 @@ export const AmbulanceManagement: React.FC = () => {
   const [selectedAmbulanceId, setSelectedAmbulanceId] = useState('');
   const [selectedDriverId, setSelectedDriverId] = useState('');
 
+  // Emergency Queue Sub-filter & Clear State ('active' | 'completed' | 'all')
+  const [emergencyFilter, setEmergencyFilter] = useState<'active' | 'completed' | 'all'>('active');
+  const [isClearAllConfirmOpen, setIsClearAllConfirmOpen] = useState(false);
+  const [requestToClear, setRequestToClear] = useState<EmergencyRequest | null>(null);
+
+  const activeEmergencies = useMemo(
+    () => emergencyRequests.filter((r) => r.status !== 'Completed' && r.status !== 'Cancelled'),
+    [emergencyRequests]
+  );
+  const completedEmergencies = useMemo(
+    () => emergencyRequests.filter((r) => r.status === 'Completed'),
+    [emergencyRequests]
+  );
+  const displayedEmergencies = useMemo(() => {
+    if (emergencyFilter === 'active') return activeEmergencies;
+    if (emergencyFilter === 'completed') return completedEmergencies;
+    return emergencyRequests;
+  }, [emergencyFilter, activeEmergencies, completedEmergencies, emergencyRequests]);
+
   // Modals for Detailed Views
   const [selectedAmbulanceDetails, setSelectedAmbulanceDetails] = useState<Ambulance | null>(null);
   const [selectedDriverDetails, setSelectedDriverDetails] = useState<AmbulanceDriver | null>(null);
   const [selectedMaintenanceDetails, setSelectedMaintenanceDetails] = useState<AmbulanceMaintenance | null>(null);
+
+  // State for Editing & Deleting
+  const [editingAmbulance, setEditingAmbulance] = useState<Ambulance | null>(null);
+  const [ambulanceToDelete, setAmbulanceToDelete] = useState<Ambulance | null>(null);
+
+  const [editingDriver, setEditingDriver] = useState<AmbulanceDriver | null>(null);
+  const [driverToDelete, setDriverToDelete] = useState<AmbulanceDriver | null>(null);
+
+  const [editingMaintenance, setEditingMaintenance] = useState<AmbulanceMaintenance | null>(null);
+  const [maintenanceToDelete, setMaintenanceToDelete] = useState<AmbulanceMaintenance | null>(null);
+
+  // Manual Emergency Dispatch Call Form State (for ambulance manager)
+  const [isManualEmergencyModalOpen, setIsManualEmergencyModalOpen] = useState(false);
+  const [manualEmergencyForm, setManualEmergencyForm] = useState({
+    patientName: '',
+    patientPhone: '',
+    pickupLocation: '',
+    emergencyType: 'Cardiac Arrest / Severe Chest Pain',
+    priority: 'Critical / Code Blue' as EmergencyPriority,
+    chiefComplaint: '',
+    assignedAmbulanceId: '',
+    assignedDriverId: '',
+  });
 
   // 1. ADD AMBULANCE FORM STATE
   const [isAddAmbulanceModalOpen, setIsAddAmbulanceModalOpen] = useState(false);
@@ -287,12 +332,290 @@ export const AmbulanceManagement: React.FC = () => {
 
   const handleUpdateStatus = (requestId: string, status: EmergencyRequest['status']) => {
     MockStorage.updateEmergencyStatus(requestId, status);
+    loadData();
     showToast('Trip Status Updated', `Emergency request ${requestId} updated to ${status}.`, 'info');
   };
 
-  // Handle Add Ambulance
+  const handleConfirmClearAllCompleted = () => {
+    MockStorage.clearCompletedEmergencyRequests(hospitalId);
+    loadData();
+    setIsClearAllConfirmOpen(false);
+    showToast('Queue Cleared', 'All completed emergency requests have been cleared.', 'info');
+  };
+
+  const handleConfirmClearSingle = () => {
+    if (!requestToClear) return;
+    MockStorage.deleteEmergencyRequest(requestToClear.id);
+    loadData();
+    showToast('Record Cleared', `Emergency request ${requestToClear.id} removed from queue.`, 'info');
+    setRequestToClear(null);
+  };
+
+  // Handler for Ambulance Manager Manually Logging Emergency Call / Dispatch
+  const handleSaveManualEmergency = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualEmergencyForm.patientName || !manualEmergencyForm.patientPhone || !manualEmergencyForm.pickupLocation) {
+      showToast('Validation Error', 'Please enter caller/patient name, contact phone, and pickup location.', 'error');
+      return;
+    }
+
+    const selectedAmb = ambulances.find((a) => a.id === manualEmergencyForm.assignedAmbulanceId);
+    const selectedDrv = drivers.find((d) => d.id === manualEmergencyForm.assignedDriverId);
+    const isAssigned = !!selectedAmb && !!selectedDrv;
+
+    const newReq: EmergencyRequest = {
+      id: `EMR-MAN-${Date.now().toString().slice(-4)}`,
+      hospitalId,
+      hospitalName: currentHospital?.name || 'Hospital Emergency Desk',
+      patientName: manualEmergencyForm.patientName,
+      patientPhone: manualEmergencyForm.patientPhone,
+      pickupLocation: manualEmergencyForm.pickupLocation,
+      destinationHospital: `${currentHospital?.name || 'Hospital'} Emergency Trauma Bay`,
+      emergencyType: manualEmergencyForm.emergencyType as any,
+      priority: manualEmergencyForm.priority,
+      requestDate: new Date().toISOString().split('T')[0],
+      requestTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      status: isAssigned ? 'Dispatched' : 'Requested',
+      chiefComplaint: manualEmergencyForm.chiefComplaint || 'Emergency call logged manually by ambulance manager',
+      assignedAmbulanceId: selectedAmb?.id,
+      assignedAmbulanceReg: selectedAmb?.regNumber,
+      assignedDriverId: selectedDrv?.id,
+      assignedDriverName: selectedDrv?.name,
+      driverPhone: selectedDrv?.phone,
+      fareEstimate: 150,
+    };
+
+    MockStorage.saveEmergencyRequest(newReq);
+
+    // If unit and driver assigned at creation, dispatch and update their statuses
+    if (selectedAmb && selectedDrv) {
+      MockStorage.dispatchEmergency(newReq.id, selectedAmb.id, selectedDrv.id);
+    }
+
+    showToast(
+      'Emergency Call Logged',
+      `Emergency call ${newReq.id} recorded and logged into Live Emergency Triage Queue.`,
+      'success'
+    );
+
+    setIsManualEmergencyModalOpen(false);
+    setManualEmergencyForm({
+      patientName: '',
+      patientPhone: '',
+      pickupLocation: '',
+      emergencyType: 'Cardiac Arrest / Severe Chest Pain',
+      priority: 'Critical / Code Blue',
+      chiefComplaint: '',
+      assignedAmbulanceId: '',
+      assignedDriverId: '',
+    });
+    loadData();
+  };
+
+  // Handler for Updating Maintenance Status & Synchronizing Vehicle Availability
+  const handleUpdateMaintenanceStatus = (
+    maintenanceId: string,
+    newStatus: MaintenanceStatus
+  ) => {
+    const mnt = maintenanceRecords.find((m) => m.id === maintenanceId);
+    if (!mnt) return;
+
+    const amb = ambulances.find((a) => a.id === mnt.ambulanceId || a.regNumber === mnt.ambulanceReg);
+
+    const updatedMnt: AmbulanceMaintenance = {
+      ...mnt,
+      maintenanceStatus: newStatus,
+      vehicleAvailability: (newStatus === 'Completed' || newStatus === 'Cancelled') ? 'Available' : 'Under Maintenance',
+      returnToServiceDate: newStatus === 'Completed' ? new Date().toISOString().split('T')[0] : mnt.returnToServiceDate,
+    };
+    MockStorage.saveAmbulanceMaintenance(updatedMnt);
+
+    if (amb) {
+      let targetStatus: AmbulanceStatus = 'Available';
+      if (newStatus === 'In Progress') {
+        targetStatus = 'Maintenance';
+      } else if (newStatus === 'Completed' || newStatus === 'Cancelled') {
+        targetStatus = 'Available';
+      } else if (newStatus === 'Scheduled') {
+        const todayStr = new Date().toISOString().split('T')[0];
+        targetStatus = mnt.serviceDate === todayStr ? 'Maintenance' : 'Available';
+      }
+
+      const updatedAmb: Ambulance = {
+        ...amb,
+        status: targetStatus,
+        lastMaintenanceDate: newStatus === 'Completed' ? mnt.serviceDate : amb.lastMaintenanceDate,
+      };
+      MockStorage.saveAmbulance(updatedAmb);
+    }
+
+    showToast(
+      'Maintenance Status Updated',
+      `Log ${mnt.id} updated to ${newStatus}. Ambulance ${mnt.ambulanceReg} status synchronized to ${newStatus === 'In Progress' ? 'Maintenance' : 'Available'}.`,
+      'info'
+    );
+    loadData();
+  };
+
+  // Handlers for Ambulance Add / Edit / Delete
+  const handleOpenAddAmbulance = () => {
+    setEditingAmbulance(null);
+    setNewAmbulance({
+      regNumber: '',
+      registrationDate: new Date().toISOString().split('T')[0],
+      registrationExpiryDate: new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0],
+      chassisNumber: '',
+      engineNumber: '',
+      ownershipType: 'Owned' as AmbulanceOwnershipType,
+      model: '',
+      type: 'Advanced Life Support (ALS)' as AmbulanceType,
+      manufacturingYear: new Date().getFullYear(),
+      seatingCapacity: 4,
+      patientCapacity: 1,
+      odometerReading: 15000,
+      mileageKm: 15000,
+      fuelType: 'Diesel' as AmbulanceFuelType,
+      fuelLevel: 100,
+      status: 'Available' as AmbulanceStatus,
+      assignedDriverId: '',
+      assignedDriverName: '',
+      driverPhone: '',
+      assignedParamedic: '',
+      homeBranch: hospitalName,
+      currentLocation: 'Base Station Alpha',
+      insurancePolicyNumber: '',
+      insuranceExpiryDate: new Date(Date.now() + 300 * 86400000).toISOString().split('T')[0],
+      fitnessCertExpiryDate: new Date(Date.now() + 240 * 86400000).toISOString().split('T')[0],
+      permitExpiryDate: new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0],
+      pucExpiryDate: new Date(Date.now() + 180 * 86400000).toISOString().split('T')[0],
+      equipmentCategory: 'Class A (Critical Telemetry)' as Ambulance['equipmentCategory'],
+      oxygenCylinderAvailable: 'Yes' as 'Yes' | 'No',
+      stretcherAvailable: 'Yes' as 'Yes' | 'No',
+      defibrillatorAvailable: 'Yes' as 'Yes' | 'No' | 'Not Applicable',
+      equipmentChecklist: ['Oxygen Cylinder & Flowmeter', 'Foldable Stretcher & Trolley', 'Multi-Para Cardiac Monitor', 'First Aid Trauma Dressing Bag'],
+      lastSafetyInspectionDate: new Date().toISOString().split('T')[0],
+      lastMaintenanceDate: new Date().toISOString().split('T')[0],
+      nextMaintenanceDate: new Date(Date.now() + 90 * 86400000).toISOString().split('T')[0],
+      vehiclePhotoUrl: '',
+      notes: '',
+    });
+    setIsAddAmbulanceModalOpen(true);
+  };
+
+  const handleOpenEditAmbulance = (amb: Ambulance) => {
+    setEditingAmbulance(amb);
+    setNewAmbulance({
+      regNumber: amb.regNumber || '',
+      registrationDate: amb.registrationDate || new Date().toISOString().split('T')[0],
+      registrationExpiryDate: amb.registrationExpiryDate || new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0],
+      chassisNumber: amb.chassisNumber || '',
+      engineNumber: amb.engineNumber || '',
+      ownershipType: amb.ownershipType || ('Owned' as AmbulanceOwnershipType),
+      model: amb.model || '',
+      type: amb.type || ('Advanced Life Support (ALS)' as AmbulanceType),
+      manufacturingYear: amb.manufacturingYear || new Date().getFullYear(),
+      seatingCapacity: amb.seatingCapacity ?? 4,
+      patientCapacity: amb.patientCapacity ?? 1,
+      odometerReading: amb.odometerReading ?? amb.mileageKm ?? 0,
+      mileageKm: amb.mileageKm ?? amb.odometerReading ?? 0,
+      fuelType: amb.fuelType || ('Diesel' as AmbulanceFuelType),
+      fuelLevel: amb.fuelLevel ?? 100,
+      status: amb.status || ('Available' as AmbulanceStatus),
+      assignedDriverId: amb.assignedDriverId || '',
+      assignedDriverName: amb.assignedDriverName || '',
+      driverPhone: amb.driverPhone || '',
+      assignedParamedic: amb.assignedParamedic || '',
+      homeBranch: amb.homeBranch || hospitalName,
+      currentLocation: amb.currentLocation || 'Base Station Alpha',
+      insurancePolicyNumber: amb.insurancePolicyNumber || '',
+      insuranceExpiryDate: amb.insuranceExpiryDate || '',
+      fitnessCertExpiryDate: amb.fitnessCertExpiryDate || '',
+      permitExpiryDate: amb.permitExpiryDate || '',
+      pucExpiryDate: amb.pucExpiryDate || '',
+      equipmentCategory: amb.equipmentCategory || ('Class A (Critical Telemetry)' as Ambulance['equipmentCategory']),
+      oxygenCylinderAvailable: (amb.oxygenCylinderAvailable === true || amb.oxygenCylinderAvailable === 'Yes') ? 'Yes' : 'No',
+      stretcherAvailable: (amb.stretcherAvailable === true || amb.stretcherAvailable === 'Yes') ? 'Yes' : 'No',
+      defibrillatorAvailable: amb.defibrillatorAvailable || 'Yes',
+      equipmentChecklist: amb.equipmentChecklist || ['Oxygen Cylinder & Flowmeter', 'Foldable Stretcher & Trolley'],
+      lastSafetyInspectionDate: amb.lastSafetyInspectionDate || '',
+      lastMaintenanceDate: amb.lastMaintenanceDate || '',
+      nextMaintenanceDate: amb.nextMaintenanceDate || '',
+      vehiclePhotoUrl: amb.vehiclePhotoUrl || '',
+      notes: amb.notes || '',
+    });
+    setIsAddAmbulanceModalOpen(true);
+  };
+
+  const handleConfirmDeleteAmbulance = () => {
+    if (!ambulanceToDelete) return;
+    MockStorage.deleteAmbulance(ambulanceToDelete.id);
+    loadData();
+    showToast('Ambulance Decommissioned', `Unit ${ambulanceToDelete.regNumber} has been removed from the fleet inventory.`, 'success');
+    if (selectedAmbulanceDetails?.id === ambulanceToDelete.id) {
+      setSelectedAmbulanceDetails(null);
+    }
+    setAmbulanceToDelete(null);
+  };
+
+  // Handle Add / Edit Ambulance
   const handleAddAmbulance = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (editingAmbulance) {
+      const amb: Ambulance = {
+        ...editingAmbulance,
+        hospitalId,
+        hospitalName,
+        regNumber: newAmbulance.regNumber.toUpperCase().trim(),
+        registrationDate: newAmbulance.registrationDate,
+        registrationExpiryDate: newAmbulance.registrationExpiryDate,
+        chassisNumber: newAmbulance.chassisNumber,
+        engineNumber: newAmbulance.engineNumber,
+        ownershipType: newAmbulance.ownershipType,
+        type: newAmbulance.type,
+        model: newAmbulance.model,
+        manufacturingYear: Number(newAmbulance.manufacturingYear) || new Date().getFullYear(),
+        seatingCapacity: Number(newAmbulance.seatingCapacity) || 4,
+        patientCapacity: Number(newAmbulance.patientCapacity) || 1,
+        odometerReading: Number(newAmbulance.odometerReading) || 0,
+        mileageKm: Number(newAmbulance.odometerReading) || Number(newAmbulance.mileageKm) || 0,
+        fuelType: newAmbulance.fuelType,
+        fuelLevel: Number(newAmbulance.fuelLevel) || 100,
+        status: newAmbulance.status,
+        assignedDriverId: newAmbulance.assignedDriverId || undefined,
+        assignedDriverName: newAmbulance.assignedDriverName || undefined,
+        driverPhone: newAmbulance.driverPhone || undefined,
+        assignedParamedic: newAmbulance.assignedParamedic || undefined,
+        homeBranch: newAmbulance.homeBranch || hospitalName,
+        currentLocation: newAmbulance.currentLocation,
+        insurancePolicyNumber: newAmbulance.insurancePolicyNumber || undefined,
+        insuranceExpiryDate: newAmbulance.insuranceExpiryDate || undefined,
+        fitnessCertExpiryDate: newAmbulance.fitnessCertExpiryDate || undefined,
+        permitExpiryDate: newAmbulance.permitExpiryDate || undefined,
+        pucExpiryDate: newAmbulance.pucExpiryDate || undefined,
+        equipmentCategory: newAmbulance.equipmentCategory,
+        oxygenCylinderAvailable: newAmbulance.oxygenCylinderAvailable,
+        stretcherAvailable: newAmbulance.stretcherAvailable,
+        defibrillatorAvailable: newAmbulance.defibrillatorAvailable,
+        equipmentChecklist: newAmbulance.equipmentChecklist,
+        lastSafetyInspectionDate: newAmbulance.lastSafetyInspectionDate,
+        lastMaintenanceDate: newAmbulance.lastMaintenanceDate,
+        nextMaintenanceDate: newAmbulance.nextMaintenanceDate,
+        vehiclePhotoUrl: newAmbulance.vehiclePhotoUrl || undefined,
+        notes: newAmbulance.notes || undefined,
+      };
+
+      MockStorage.saveAmbulance(amb);
+      loadData();
+      showToast('Ambulance Updated', `Unit ${amb.regNumber} (${amb.id}) specifications updated successfully.`, 'success');
+      if (selectedAmbulanceDetails?.id === amb.id) {
+        setSelectedAmbulanceDetails(amb);
+      }
+      setIsAddAmbulanceModalOpen(false);
+      setEditingAmbulance(null);
+      return;
+    }
+
     const autoGenId = `AMB-${Date.now().toString().slice(-4)}`;
     const amb: Ambulance = {
       id: autoGenId,
@@ -338,13 +661,161 @@ export const AmbulanceManagement: React.FC = () => {
     };
 
     MockStorage.saveAmbulance(amb);
+    loadData();
     showToast('Ambulance Registered', `Unit ${amb.regNumber} (${amb.id}) enrolled with full specifications & compliance.`, 'success');
     setIsAddAmbulanceModalOpen(false);
   };
 
-  // Handle Add Driver / Paramedic
+  // Handlers for Driver Add / Edit / Delete
+  const handleOpenAddDriver = () => {
+    setEditingDriver(null);
+    setNewDriver({
+      employeeId: '',
+      name: '',
+      role: 'Ambulance Driver' as AmbulanceStaffRole,
+      avatarUrl: '',
+      email: '',
+      phone: '',
+      alternativePhone: '',
+      address: '',
+      emergencyContactName: '',
+      emergencyContactRelationship: 'Spouse',
+      licenseNumber: '',
+      licenseType: 'Commercial Heavy / EVOC',
+      licenseIssueDate: new Date(Date.now() - 365 * 86400000 * 3).toISOString().split('T')[0],
+      licenseExpiry: new Date(Date.now() + 365 * 86400000 * 2).toISOString().split('T')[0],
+      evocCertExpiry: new Date(Date.now() + 365 * 86400000 * 2).toISOString().split('T')[0],
+      cprCertExpiry: new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0],
+      medicalClearanceExpiry: new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0],
+      dateOfJoining: new Date().toISOString().split('T')[0],
+      employmentType: 'Full-Time' as AmbulanceEmploymentType,
+      dutyStatus: 'Active' as AmbulanceDutyStatus,
+      status: 'active',
+      assignedBranch: hospitalName,
+      shiftType: 'Morning' as AmbulanceShiftType,
+      shiftStartTime: '08:00',
+      shiftEndTime: '16:00',
+      availabilityStatus: 'On Duty & Available' as AmbulanceAvailabilityStatus,
+      assignedAmbulanceId: '',
+      assignedAmbulanceReg: '',
+      emergencyExperienceYears: 5,
+      qualificationDetails: 'Emergency Medical Vehicle Operations (EVOC) Certified',
+      paramedicRegistrationNumber: '',
+      certificationExpiryDate: new Date(Date.now() + 365 * 86400000 * 2).toISOString().split('T')[0],
+      documentUrl: '',
+      notes: '',
+    });
+    setIsAddDriverModalOpen(true);
+  };
+
+  const handleOpenEditDriver = (drv: AmbulanceDriver) => {
+    setEditingDriver(drv);
+    setNewDriver({
+      employeeId: drv.employeeId || drv.id || '',
+      name: drv.name || '',
+      role: drv.role || ('Ambulance Driver' as AmbulanceStaffRole),
+      avatarUrl: drv.avatarUrl || '',
+      email: drv.email || '',
+      phone: drv.phone || '',
+      alternativePhone: drv.alternativePhone || '',
+      address: drv.address || '',
+      emergencyContactName: drv.emergencyContactName || '',
+      emergencyContactRelationship: drv.emergencyContactRelationship || 'Spouse',
+      licenseNumber: drv.licenseNumber || '',
+      licenseType: drv.licenseType || 'Commercial Heavy / EVOC',
+      licenseIssueDate: drv.licenseIssueDate || '',
+      licenseExpiry: drv.licenseExpiry || '',
+      evocCertExpiry: drv.evocCertExpiry || '',
+      cprCertExpiry: drv.cprCertExpiry || '',
+      medicalClearanceExpiry: drv.medicalClearanceExpiry || '',
+      dateOfJoining: drv.dateOfJoining || new Date().toISOString().split('T')[0],
+      employmentType: drv.employmentType || ('Full-Time' as AmbulanceEmploymentType),
+      dutyStatus: drv.dutyStatus || ('Active' as AmbulanceDutyStatus),
+      status: drv.status || 'active',
+      assignedBranch: drv.assignedBranch || hospitalName,
+      shiftType: drv.shiftType || ('Morning' as AmbulanceShiftType),
+      shiftStartTime: drv.shiftStartTime || '08:00',
+      shiftEndTime: drv.shiftEndTime || '16:00',
+      availabilityStatus: drv.availabilityStatus || ('On Duty & Available' as AmbulanceAvailabilityStatus),
+      assignedAmbulanceId: drv.assignedAmbulanceId || '',
+      assignedAmbulanceReg: drv.assignedAmbulanceReg || '',
+      emergencyExperienceYears: drv.emergencyExperienceYears || 0,
+      qualificationDetails: drv.qualificationDetails || '',
+      paramedicRegistrationNumber: drv.paramedicRegistrationNumber || '',
+      certificationExpiryDate: drv.certificationExpiryDate || '',
+      documentUrl: drv.documentUrl || '',
+      notes: drv.notes || '',
+    });
+    setIsAddDriverModalOpen(true);
+  };
+
+  const handleConfirmDeleteDriver = () => {
+    if (!driverToDelete) return;
+    MockStorage.deleteAmbulanceDriver(driverToDelete.id);
+    loadData();
+    showToast('Staff Removed', `${driverToDelete.name} has been removed from the emergency crew roster.`, 'success');
+    if (selectedDriverDetails?.id === driverToDelete.id) {
+      setSelectedDriverDetails(null);
+    }
+    setDriverToDelete(null);
+  };
+
+  // Handle Add / Edit Driver / Paramedic
   const handleAddDriver = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (editingDriver) {
+      const drv: AmbulanceDriver = {
+        ...editingDriver,
+        hospitalId,
+        hospitalName,
+        employeeId: newDriver.employeeId || editingDriver.employeeId || editingDriver.id,
+        name: newDriver.name,
+        email: newDriver.email,
+        phone: newDriver.phone,
+        alternativePhone: newDriver.alternativePhone || undefined,
+        address: newDriver.address || undefined,
+        emergencyContactName: newDriver.emergencyContactName || undefined,
+        emergencyContactRelationship: newDriver.emergencyContactRelationship || undefined,
+        role: newDriver.role,
+        avatarUrl: newDriver.avatarUrl || undefined,
+        licenseNumber: newDriver.licenseNumber,
+        licenseType: newDriver.licenseType,
+        licenseIssueDate: newDriver.licenseIssueDate,
+        licenseExpiry: newDriver.licenseExpiry,
+        evocCertExpiry: newDriver.evocCertExpiry || undefined,
+        cprCertExpiry: newDriver.cprCertExpiry || undefined,
+        medicalClearanceExpiry: newDriver.medicalClearanceExpiry || undefined,
+        dateOfJoining: newDriver.dateOfJoining,
+        employmentType: newDriver.employmentType,
+        dutyStatus: newDriver.dutyStatus,
+        status: newDriver.status,
+        assignedBranch: newDriver.assignedBranch || hospitalName,
+        shiftType: newDriver.shiftType,
+        shiftStartTime: newDriver.shiftStartTime,
+        shiftEndTime: newDriver.shiftEndTime,
+        availabilityStatus: newDriver.availabilityStatus,
+        assignedAmbulanceId: newDriver.assignedAmbulanceId || undefined,
+        assignedAmbulanceReg: newDriver.assignedAmbulanceReg || undefined,
+        emergencyExperienceYears: Number(newDriver.emergencyExperienceYears) || 0,
+        qualificationDetails: newDriver.qualificationDetails,
+        paramedicRegistrationNumber: newDriver.paramedicRegistrationNumber || undefined,
+        certificationExpiryDate: newDriver.certificationExpiryDate || undefined,
+        documentUrl: newDriver.documentUrl || undefined,
+        notes: newDriver.notes || undefined,
+      };
+
+      MockStorage.saveAmbulanceDriver(drv);
+      loadData();
+      showToast('Staff Profile Updated', `${drv.name} (${drv.role}) profile updated successfully.`, 'success');
+      if (selectedDriverDetails?.id === drv.id) {
+        setSelectedDriverDetails(drv);
+      }
+      setIsAddDriverModalOpen(false);
+      setEditingDriver(null);
+      return;
+    }
+
     const autoGenStaffId = `STF-DRV-${Date.now().toString().slice(-4)}`;
     const drv: AmbulanceDriver = {
       id: autoGenStaffId,
@@ -413,34 +884,168 @@ export const AmbulanceManagement: React.FC = () => {
       MockStorage.saveUser(userToSave);
     }
 
+    loadData();
     showToast('Staff Onboarded & Login Created', `${drv.name} (${drv.role}) has been added with Staff ID ${drv.id}.`, 'success');
     setIsAddDriverModalOpen(false);
   };
 
-  // Handle Add Maintenance
+  // Handlers for Maintenance Add / Edit / Delete
+  const handleOpenAddMaintenance = () => {
+    setEditingMaintenance(null);
+    setNewMaintenance({
+      ambulanceId: ambulances.length > 0 ? ambulances[0].id : '',
+      serviceDate: new Date().toISOString().split('T')[0],
+      category: 'Preventive' as MaintenanceCategory,
+      maintenanceStatus: 'Completed' as MaintenanceStatus,
+      serviceType: 'Routine Inspection',
+      servicedBy: 'Metro Fleet Service Center',
+      odometerAtService: ambulances.length > 0 ? (ambulances[0].odometerReading || ambulances[0].mileageKm || 15000) : 15000,
+      reportedIssue: '',
+      partsReplaced: '',
+      technicianName: '',
+      nextServiceDate: new Date(Date.now() + 90 * 86400000).toISOString().split('T')[0],
+      nextServiceOdometerKm: 20000,
+      partsCost: 3500,
+      labourCost: 1500,
+      otherCharges: 250,
+      cost: 5250,
+      invoiceNumber: '',
+      invoiceAttachmentUrl: '',
+      vehicleAvailability: 'Available' as VehicleAvailabilityDuringMaintenance,
+      safetyInspectionResult: 'Passed' as SafetyInspectionResult,
+      returnToServiceDate: new Date().toISOString().split('T')[0],
+      verifiedBy: 'Fleet Officer / Dr. Patel',
+      description: 'Scheduled preventive 15,000 km general service and equipment test.',
+      notes: '',
+      supportingDocsUrl: '',
+    });
+    setIsAddMaintenanceModalOpen(true);
+  };
+
+  const handleOpenEditMaintenance = (rec: AmbulanceMaintenance) => {
+    setEditingMaintenance(rec);
+    setNewMaintenance({
+      ambulanceId: rec.ambulanceId || '',
+      serviceDate: rec.serviceDate || new Date().toISOString().split('T')[0],
+      category: rec.category || ('Preventive' as MaintenanceCategory),
+      maintenanceStatus: rec.maintenanceStatus || ('Completed' as MaintenanceStatus),
+      serviceType: rec.serviceType || 'Routine Inspection',
+      servicedBy: rec.servicedBy || '',
+      odometerAtService: rec.odometerAtService || 0,
+      reportedIssue: rec.reportedIssue || '',
+      partsReplaced: rec.partsReplaced || '',
+      technicianName: rec.technicianName || '',
+      nextServiceDate: rec.nextServiceDate || '',
+      nextServiceOdometerKm: rec.nextServiceOdometerKm || 0,
+      partsCost: rec.partsCost || 0,
+      labourCost: rec.labourCost || 0,
+      otherCharges: rec.otherCharges || 0,
+      cost: rec.cost || 0,
+      invoiceNumber: rec.invoiceNumber || '',
+      invoiceAttachmentUrl: rec.invoiceAttachmentUrl || '',
+      vehicleAvailability: rec.vehicleAvailability || ('Available' as VehicleAvailabilityDuringMaintenance),
+      safetyInspectionResult: rec.safetyInspectionResult || ('Passed' as SafetyInspectionResult),
+      returnToServiceDate: rec.returnToServiceDate || '',
+      verifiedBy: rec.verifiedBy || '',
+      description: rec.description || '',
+      notes: rec.notes || '',
+      supportingDocsUrl: rec.supportingDocsUrl || '',
+    });
+    setIsAddMaintenanceModalOpen(true);
+  };
+
+  const handleConfirmDeleteMaintenance = () => {
+    if (!maintenanceToDelete) return;
+    MockStorage.deleteAmbulanceMaintenance(maintenanceToDelete.id);
+    loadData();
+    showToast('Record Deleted', `Maintenance log ${maintenanceToDelete.id} has been deleted.`, 'success');
+    if (selectedMaintenanceDetails?.id === maintenanceToDelete.id) {
+      setSelectedMaintenanceDetails(null);
+    }
+    setMaintenanceToDelete(null);
+  };
+
+  // Handle Add / Edit Maintenance
   const handleAddMaintenance = (e: React.FormEvent) => {
     e.preventDefault();
     const amb = ambulances.find((a) => a.id === newMaintenance.ambulanceId);
-    if (!amb) {
+    if (!amb && !editingMaintenance) {
       showToast('Error', 'Please select an ambulance unit.', 'error');
       return;
     }
 
     const calculatedTotal = (Number(newMaintenance.partsCost) || 0) + (Number(newMaintenance.labourCost) || 0) + (Number(newMaintenance.otherCharges) || 0);
     const finalTotal = newMaintenance.cost > 0 ? newMaintenance.cost : calculatedTotal;
+
+    if (editingMaintenance) {
+      const mnt: AmbulanceMaintenance = {
+        ...editingMaintenance,
+        hospitalId,
+        ambulanceId: newMaintenance.ambulanceId || editingMaintenance.ambulanceId,
+        ambulanceReg: amb?.regNumber || editingMaintenance.ambulanceReg,
+        serviceDate: newMaintenance.serviceDate,
+        category: newMaintenance.category,
+        maintenanceStatus: newMaintenance.maintenanceStatus,
+        serviceType: newMaintenance.serviceType,
+        servicedBy: newMaintenance.servicedBy,
+        odometerAtService: Number(newMaintenance.odometerAtService) || 0,
+        reportedIssue: newMaintenance.reportedIssue || undefined,
+        partsReplaced: newMaintenance.partsReplaced || undefined,
+        technicianName: newMaintenance.technicianName || undefined,
+        nextServiceDate: newMaintenance.nextServiceDate,
+        nextServiceOdometerKm: Number(newMaintenance.nextServiceOdometerKm) || undefined,
+        partsCost: Number(newMaintenance.partsCost) || 0,
+        labourCost: Number(newMaintenance.labourCost) || 0,
+        otherCharges: Number(newMaintenance.otherCharges) || 0,
+        cost: finalTotal,
+        invoiceNumber: newMaintenance.invoiceNumber || undefined,
+        invoiceAttachmentUrl: newMaintenance.invoiceAttachmentUrl || undefined,
+        vehicleAvailability: newMaintenance.vehicleAvailability,
+        safetyInspectionResult: newMaintenance.safetyInspectionResult,
+        returnToServiceDate: newMaintenance.returnToServiceDate || undefined,
+        verifiedBy: newMaintenance.verifiedBy || undefined,
+        description: newMaintenance.description,
+        notes: newMaintenance.notes || undefined,
+        supportingDocsUrl: newMaintenance.supportingDocsUrl || undefined,
+      };
+
+      MockStorage.saveAmbulanceMaintenance(mnt);
+
+      if (amb) {
+        const updatedAmb: Ambulance = {
+          ...amb,
+          lastMaintenanceDate: mnt.serviceDate,
+          nextMaintenanceDate: mnt.nextServiceDate,
+          status: (mnt.maintenanceStatus === 'In Progress' || mnt.vehicleAvailability === 'Under Maintenance' || mnt.vehicleAvailability === 'Out of Service') ? 'Maintenance' : 'Available',
+          odometerReading: mnt.odometerAtService || amb.odometerReading,
+          mileageKm: mnt.odometerAtService || amb.mileageKm,
+        };
+        MockStorage.saveAmbulance(updatedAmb);
+      }
+
+      loadData();
+      showToast('Maintenance Record Updated', `Log ${mnt.id} updated successfully.`, 'success');
+      if (selectedMaintenanceDetails?.id === mnt.id) {
+        setSelectedMaintenanceDetails(mnt);
+      }
+      setIsAddMaintenanceModalOpen(false);
+      setEditingMaintenance(null);
+      return;
+    }
+
     const autoGenMntId = `MNT-LOG-${Date.now().toString().slice(-4)}`;
 
     const mnt: AmbulanceMaintenance = {
       id: autoGenMntId,
       hospitalId,
-      ambulanceId: amb.id,
-      ambulanceReg: amb.regNumber,
+      ambulanceId: amb!.id,
+      ambulanceReg: amb!.regNumber,
       serviceDate: newMaintenance.serviceDate,
       category: newMaintenance.category,
       maintenanceStatus: newMaintenance.maintenanceStatus,
       serviceType: newMaintenance.serviceType,
       servicedBy: newMaintenance.servicedBy,
-      odometerAtService: Number(newMaintenance.odometerAtService) || amb.odometerReading || amb.mileageKm,
+      odometerAtService: Number(newMaintenance.odometerAtService) || amb!.odometerReading || amb!.mileageKm,
       reportedIssue: newMaintenance.reportedIssue || undefined,
       partsReplaced: newMaintenance.partsReplaced || undefined,
       technicianName: newMaintenance.technicianName || undefined,
@@ -465,22 +1070,39 @@ export const AmbulanceManagement: React.FC = () => {
 
     // Synchronize vehicle status & maintenance dates on ambulance
     const updatedAmb: Ambulance = {
-      ...amb,
+      ...amb!,
       lastMaintenanceDate: mnt.serviceDate,
       nextMaintenanceDate: mnt.nextServiceDate,
-      status: mnt.vehicleAvailability === 'Available' ? 'Available' : 'Maintenance',
-      odometerReading: mnt.odometerAtService || amb.odometerReading,
-      mileageKm: mnt.odometerAtService || amb.mileageKm,
+      status: (mnt.maintenanceStatus === 'In Progress' || mnt.vehicleAvailability === 'Under Maintenance' || mnt.vehicleAvailability === 'Out of Service') ? 'Maintenance' : 'Available',
+      odometerReading: mnt.odometerAtService || amb!.odometerReading,
+      mileageKm: mnt.odometerAtService || amb!.mileageKm,
     };
     MockStorage.saveAmbulance(updatedAmb);
+    loadData();
 
     showToast('Maintenance Logged', `Service log ${mnt.id} registered with total cost ₹${finalTotal.toLocaleString()}.`, 'success');
     setIsAddMaintenanceModalOpen(false);
   };
 
   const handleExportCSV = () => {
-    MockStorage.exportToCSV('Ambulance_Fleet_Export', ambulances);
-    showToast('CSV Exported', 'Ambulance fleet records downloaded successfully.', 'success');
+    if (activeTab === 'dispatch') {
+      const exportList = emergencyFilter === 'active'
+        ? activeEmergencies
+        : emergencyFilter === 'completed'
+        ? completedEmergencies
+        : emergencyRequests;
+      MockStorage.exportToCSV(`Emergency_Triage_${emergencyFilter}`, exportList);
+      showToast('CSV Exported', `${emergencyFilter.toUpperCase()} emergency triage records downloaded successfully.`, 'success');
+    } else if (activeTab === 'drivers') {
+      MockStorage.exportToCSV('Ambulance_Drivers_Roster', drivers);
+      showToast('CSV Exported', 'Ambulance drivers and paramedic roster downloaded successfully.', 'success');
+    } else if (activeTab === 'maintenance') {
+      MockStorage.exportToCSV('Ambulance_Maintenance_Logs', maintenanceRecords);
+      showToast('CSV Exported', 'Ambulance maintenance history records downloaded successfully.', 'success');
+    } else {
+      MockStorage.exportToCSV('Ambulance_Fleet_Inventory', ambulances);
+      showToast('CSV Exported', 'Ambulance fleet records downloaded successfully.', 'success');
+    }
   };
 
   // Helper for file upload preview (image/docs)
@@ -517,13 +1139,13 @@ export const AmbulanceManagement: React.FC = () => {
         </div>
         <div className="flex items-center gap-3">
           <Button variant="outline" size="sm" leftIcon={<Download className="w-4 h-4" />} onClick={handleExportCSV}>
-            Export Fleet
+            Export {activeTab === 'dispatch' ? 'Dispatches' : activeTab === 'drivers' ? 'Roster' : activeTab === 'maintenance' ? 'Maintenance' : 'Fleet'}
           </Button>
           <Button
             variant="primary"
             size="sm"
             leftIcon={<Plus className="w-4 h-4" />}
-            onClick={() => setIsAddAmbulanceModalOpen(true)}
+            onClick={handleOpenAddAmbulance}
           >
             Add Ambulance
           </Button>
@@ -570,25 +1192,123 @@ export const AmbulanceManagement: React.FC = () => {
       {/* TAB 1: EMERGENCY 911 DISPATCH */}
       {activeTab === 'dispatch' && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Radio className="w-5 h-5 text-rose-600 animate-pulse" />
-              Live Emergency Triage Queue
-            </h3>
-            <span className="text-xs text-slate-500 font-medium">Real-time reactive synchronization active</span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Radio className="w-5 h-5 text-rose-600 animate-pulse" />
+                Live Emergency Triage Queue
+              </h3>
+              <p className="text-xs text-slate-500 font-medium">Real-time reactive triage for patient portal & manual 911 dispatch calls</p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {completedEmergencies.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  leftIcon={<Trash2 className="w-4 h-4 text-rose-600" />}
+                  onClick={() => setIsClearAllConfirmOpen(true)}
+                  className="border-rose-200 text-rose-700 hover:bg-rose-50 hover:border-rose-300 font-semibold shadow-sm"
+                >
+                  Clear All Completed ({completedEmergencies.length})
+                </Button>
+              )}
+              <Button
+                variant="danger"
+                size="sm"
+                leftIcon={<Plus className="w-4 h-4" />}
+                onClick={() => setIsManualEmergencyModalOpen(true)}
+                className="font-bold shadow-md shadow-rose-600/20"
+              >
+                Log Emergency Call / Dispatch
+              </Button>
+            </div>
           </div>
 
-          {emergencyRequests.length === 0 ? (
+          {/* Sub-Queue Filter Tabs */}
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3 gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setEmergencyFilter('active')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+                  emergencyFilter === 'active'
+                    ? 'bg-white text-rose-600 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>Active Triage Queue</span>
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  emergencyFilter === 'active' ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {activeEmergencies.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEmergencyFilter('completed')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+                  emergencyFilter === 'completed'
+                    ? 'bg-white text-emerald-700 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>Completed Trips</span>
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  emergencyFilter === 'completed' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {completedEmergencies.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEmergencyFilter('all')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+                  emergencyFilter === 'all'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>All Calls</span>
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  emergencyFilter === 'all' ? 'bg-slate-200 text-slate-800' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {emergencyRequests.length}
+                </span>
+              </button>
+            </div>
+
+            {emergencyFilter === 'completed' && completedEmergencies.length > 0 && (
+              <span className="text-xs text-slate-500 italic">
+                Showing {completedEmergencies.length} completed & cleared run{completedEmergencies.length > 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+
+          {displayedEmergencies.length === 0 ? (
             <Card className="p-12">
               <EmptyState
                 icon={<Flame className="w-7 h-7" />}
-                title="No Emergency Requests"
-                description="The emergency dispatch queue is currently clear."
+                title={
+                  emergencyFilter === 'active'
+                    ? 'No Active Emergency Calls'
+                    : emergencyFilter === 'completed'
+                    ? 'No Completed Trips'
+                    : 'No Emergency Requests'
+                }
+                description={
+                  emergencyFilter === 'active'
+                    ? 'The live emergency triage queue is currently clear of active dispatches.'
+                    : emergencyFilter === 'completed'
+                    ? 'No completed emergency records currently stored in history.'
+                    : 'The emergency dispatch queue is currently clear.'
+                }
               />
             </Card>
           ) : (
             <div className="space-y-4">
-              {emergencyRequests.map((req) => {
+              {displayedEmergencies.map((req) => {
                 const isOngoing = req.status !== 'Completed' && req.status !== 'Cancelled';
                 return (
                   <Card
@@ -598,7 +1318,7 @@ export const AmbulanceManagement: React.FC = () => {
                         ? 'border-l-rose-600 shadow-md'
                         : isOngoing
                         ? 'border-l-amber-500'
-                        : 'border-l-slate-300 opacity-75'
+                        : 'border-l-emerald-500 bg-slate-50/50'
                     }`}
                   >
                     <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -636,6 +1356,11 @@ export const AmbulanceManagement: React.FC = () => {
                           <span className="text-xs text-slate-400 flex items-center gap-1">
                             <Clock className="w-3.5 h-3.5" /> {req.requestDate} {req.requestTime}
                           </span>
+                          {req.completedTime && (
+                            <span className="text-xs text-emerald-700 font-semibold flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                              <Check className="w-3 h-3 text-emerald-600" /> Completed at {req.completedTime}
+                            </span>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-700 pt-1">
@@ -715,6 +1440,18 @@ export const AmbulanceManagement: React.FC = () => {
                             Complete & Clear Unit
                           </Button>
                         )}
+
+                        {req.status === 'Completed' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            leftIcon={<Trash2 className="w-3.5 h-3.5 text-rose-500" />}
+                            onClick={() => setRequestToClear(req)}
+                            className="border-slate-200 text-slate-700 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300"
+                          >
+                            Clear Record
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </Card>
@@ -740,7 +1477,7 @@ export const AmbulanceManagement: React.FC = () => {
               variant="primary"
               size="sm"
               leftIcon={<Plus className="w-4 h-4" />}
-              onClick={() => setIsAddAmbulanceModalOpen(true)}
+              onClick={handleOpenAddAmbulance}
             >
               Add New Ambulance
             </Button>
@@ -837,19 +1574,42 @@ export const AmbulanceManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                  <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500">
                     <div>
                       <p className="font-medium text-slate-700">Odometer: {(amb.odometerReading || amb.mileageKm).toLocaleString()} km</p>
                       <p className="text-[11px] text-slate-400">Next Service: {amb.nextMaintenanceDate}</p>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      leftIcon={<Eye className="w-3.5 h-3.5" />}
-                      onClick={() => setSelectedAmbulanceDetails(amb)}
-                    >
-                      View Specs
-                    </Button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        leftIcon={<Eye className="w-3.5 h-3.5" />}
+                        onClick={() => setSelectedAmbulanceDetails(amb)}
+                        title="View Specifications"
+                      >
+                        Specs
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-brand-600 hover:text-brand-700 hover:bg-brand-50"
+                        leftIcon={<Edit className="w-3.5 h-3.5" />}
+                        onClick={() => handleOpenEditAmbulance(amb)}
+                        title="Edit Ambulance"
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200"
+                        leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                        onClick={() => setAmbulanceToDelete(amb)}
+                        title="Delete Ambulance"
+                      >
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 </Card>
               ))}
@@ -872,7 +1632,7 @@ export const AmbulanceManagement: React.FC = () => {
               variant="primary"
               size="sm"
               leftIcon={<Plus className="w-4 h-4" />}
-              onClick={() => setIsAddDriverModalOpen(true)}
+              onClick={handleOpenAddDriver}
             >
               Onboard Staff / Driver
             </Button>
@@ -964,18 +1724,41 @@ export const AmbulanceManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                    <span className="truncate max-w-[150px]">
-                      {drv.assignedAmbulanceReg ? `Unit: ${drv.assignedAmbulanceReg}` : 'Unassigned to Unit'}
+                  <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500">
+                    <span className="truncate max-w-[120px]">
+                      {drv.assignedAmbulanceReg ? `Unit: ${drv.assignedAmbulanceReg}` : 'Unassigned'}
                     </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      leftIcon={<Eye className="w-3.5 h-3.5" />}
-                      onClick={() => setSelectedDriverDetails(drv)}
-                    >
-                      View Profile
-                    </Button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        leftIcon={<Eye className="w-3.5 h-3.5" />}
+                        onClick={() => setSelectedDriverDetails(drv)}
+                        title="View Profile"
+                      >
+                        Profile
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-brand-600 hover:text-brand-700 hover:bg-brand-50"
+                        leftIcon={<Edit className="w-3.5 h-3.5" />}
+                        onClick={() => handleOpenEditDriver(drv)}
+                        title="Edit Driver"
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200"
+                        leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                        onClick={() => setDriverToDelete(drv)}
+                        title="Delete Driver"
+                      >
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 </Card>
               ))}
@@ -992,16 +1775,7 @@ export const AmbulanceManagement: React.FC = () => {
               variant="primary"
               size="sm"
               leftIcon={<Plus className="w-4 h-4" />}
-              onClick={() => {
-                if (ambulances.length > 0) {
-                  setNewMaintenance((prev) => ({
-                    ...prev,
-                    ambulanceId: ambulances[0].id,
-                    odometerAtService: ambulances[0].odometerReading || ambulances[0].mileageKm || 15000
-                  }));
-                }
-                setIsAddMaintenanceModalOpen(true);
-              }}
+              onClick={handleOpenAddMaintenance}
             >
               Log Service Record
             </Button>
@@ -1037,7 +1811,7 @@ export const AmbulanceManagement: React.FC = () => {
                           <div className="text-[10px] font-mono text-slate-400">{rec.id}</div>
                         </td>
                         <td className="py-3 px-4">
-                          <div className="flex flex-col gap-1">
+                          <div className="flex flex-col gap-1.5">
                             <Badge
                               variant={
                                 rec.category === 'Breakdown'
@@ -1050,9 +1824,42 @@ export const AmbulanceManagement: React.FC = () => {
                             >
                               {rec.category || 'Preventive'}
                             </Badge>
-                            <span className="text-[10px] font-semibold text-slate-500">
-                              {rec.maintenanceStatus || 'Completed'}
-                            </span>
+                            {rec.maintenanceStatus === 'Scheduled' && (
+                              <div className="space-y-1">
+                                <Badge variant="warning" dot size="sm">Scheduled</Badge>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateMaintenanceStatus(rec.id, 'In Progress')}
+                                  className="text-[10px] font-bold text-brand-600 hover:text-brand-800 flex items-center gap-1 hover:underline cursor-pointer"
+                                  title="Mark In Progress and Ground Ambulance"
+                                >
+                                  <Wrench className="w-3 h-3 text-brand-600" /> Start Service
+                                </button>
+                              </div>
+                            )}
+                            {rec.maintenanceStatus === 'In Progress' && (
+                              <div className="space-y-1">
+                                <Badge variant="error" dot size="sm">In Progress</Badge>
+                                <span className="text-[10px] text-rose-600 font-semibold block">Vehicle Grounded</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateMaintenanceStatus(rec.id, 'Completed')}
+                                  className="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 flex items-center gap-1 hover:underline cursor-pointer"
+                                  title="Mark Completed and Restore Ambulance to Fleet"
+                                >
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Complete Service
+                                </button>
+                              </div>
+                            )}
+                            {(!rec.maintenanceStatus || rec.maintenanceStatus === 'Completed') && (
+                              <div>
+                                <Badge variant="success" dot size="sm">Completed</Badge>
+                                <span className="text-[10px] text-emerald-600 block mt-0.5">Fleet Active</span>
+                              </div>
+                            )}
+                            {rec.maintenanceStatus === 'Cancelled' && (
+                              <Badge variant="neutral" size="sm">Cancelled</Badge>
+                            )}
                           </div>
                         </td>
                         <td className="py-3 px-4">
@@ -1094,14 +1901,37 @@ export const AmbulanceManagement: React.FC = () => {
                           )}
                         </td>
                         <td className="py-3 px-4 text-center">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setSelectedMaintenanceDetails(rec)}
-                            leftIcon={<Eye className="w-3.5 h-3.5" />}
-                          >
-                            Details
-                          </Button>
+                          <div className="flex items-center justify-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setSelectedMaintenanceDetails(rec)}
+                              leftIcon={<Eye className="w-3.5 h-3.5" />}
+                              title="View Details"
+                            >
+                              Details
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-brand-600 hover:text-brand-700 hover:bg-brand-50"
+                              onClick={() => handleOpenEditMaintenance(rec)}
+                              leftIcon={<Edit className="w-3.5 h-3.5" />}
+                              title="Edit Log"
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                              onClick={() => setMaintenanceToDelete(rec)}
+                              leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                              title="Delete Log"
+                            >
+                              Delete
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -1184,8 +2014,8 @@ export const AmbulanceManagement: React.FC = () => {
       {/* ========================================================================= */}
       <Modal
         isOpen={isAddAmbulanceModalOpen}
-        onClose={() => setIsAddAmbulanceModalOpen(false)}
-        title="Enroll New Ambulance Unit (Fleet Inventory)"
+        onClose={() => { setIsAddAmbulanceModalOpen(false); setEditingAmbulance(null); }}
+        title={editingAmbulance ? `Edit Ambulance Specifications (${editingAmbulance.regNumber})` : "Enroll New Ambulance Unit (Fleet Inventory)"}
         maxWidth="4xl"
       >
         <form onSubmit={handleAddAmbulance} className="space-y-6 max-h-[75vh] overflow-y-auto px-1">
@@ -1199,7 +2029,7 @@ export const AmbulanceManagement: React.FC = () => {
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Vehicle ID / Ambulance ID</label>
                 <div className="px-3 py-2 bg-slate-200/80 border border-slate-300 rounded-lg text-xs font-mono text-slate-600">
-                  (Auto-generated upon save)
+                  {editingAmbulance ? editingAmbulance.id : "(Auto-generated upon save)"}
                 </div>
               </div>
               <div>
@@ -1704,7 +2534,7 @@ export const AmbulanceManagement: React.FC = () => {
       {/* ========================================================================= */}
       <Modal
         isOpen={isAddDriverModalOpen}
-        onClose={() => setIsAddDriverModalOpen(false)}
+        onClose={() => { setIsAddDriverModalOpen(false); setEditingDriver(null); }}
         title="Onboard Driver & Paramedic Crew"
         maxWidth="4xl"
       >
@@ -2188,7 +3018,7 @@ export const AmbulanceManagement: React.FC = () => {
       {/* ========================================================================= */}
       <Modal
         isOpen={isAddMaintenanceModalOpen}
-        onClose={() => setIsAddMaintenanceModalOpen(false)}
+        onClose={() => { setIsAddMaintenanceModalOpen(false); setEditingMaintenance(null); }}
         title="Log Vehicle Maintenance & Calibration"
         maxWidth="4xl"
       >
@@ -2256,20 +3086,50 @@ export const AmbulanceManagement: React.FC = () => {
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div>
+              <div className="col-span-full sm:col-span-2">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Maintenance Status *</label>
                 <select
                   value={newMaintenance.maintenanceStatus}
-                  onChange={(e) =>
-                    setNewMaintenance({ ...newMaintenance, maintenanceStatus: e.target.value as MaintenanceStatus })
-                  }
+                  onChange={(e) => {
+                    const st = e.target.value as MaintenanceStatus;
+                    setNewMaintenance({
+                      ...newMaintenance,
+                      maintenanceStatus: st,
+                      vehicleAvailability: (st === 'Completed' || st === 'Cancelled') ? 'Available' : 'Under Maintenance',
+                    });
+                  }}
                   className="w-full text-xs rounded-lg border-slate-300 p-2.5 border bg-white"
                 >
-                  <option value="Scheduled">Scheduled</option>
-                  <option value="In Progress">In Progress</option>
-                  <option value="Completed">Completed</option>
-                  <option value="Cancelled">Cancelled</option>
+                  <option value="Scheduled">Scheduled (Planned future maintenance)</option>
+                  <option value="In Progress">In Progress (Grounds vehicle from dispatch)</option>
+                  <option value="Completed">Completed (Restores vehicle to available fleet)</option>
+                  <option value="Cancelled">Cancelled (Aborts service)</option>
                 </select>
+              </div>
+              <div className="col-span-full">
+                {newMaintenance.maintenanceStatus === 'In Progress' && (
+                  <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
+                    <Wrench className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span><strong>Active Function:</strong> Setting status to <strong>'In Progress'</strong> automatically sets vehicle availability to <em>Under Maintenance</em> and updates the ambulance status to <strong>'Maintenance'</strong> so it cannot be dispatched.</span>
+                  </div>
+                )}
+                {newMaintenance.maintenanceStatus === 'Completed' && (
+                  <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span><strong>Active Function:</strong> Setting status to <strong>'Completed'</strong> automatically restores vehicle availability to <em>Available</em> and makes the ambulance active in the emergency fleet.</span>
+                  </div>
+                )}
+                {newMaintenance.maintenanceStatus === 'Scheduled' && (
+                  <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span><strong>Active Function:</strong> Maintenance is scheduled. The vehicle remains available in the active fleet until service begins.</span>
+                  </div>
+                )}
+                {newMaintenance.maintenanceStatus === 'Cancelled' && (
+                  <div className="p-2.5 rounded-lg bg-slate-100 border border-slate-200 text-xs text-slate-700 flex items-center gap-2">
+                    <span><strong>Active Function:</strong> Maintenance cancelled. Vehicle returned to active fleet roster.</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2812,10 +3672,38 @@ export const AmbulanceManagement: React.FC = () => {
               </div>
             )}
 
-            <div className="flex justify-end pt-2">
-              <Button variant="outline" onClick={() => setSelectedAmbulanceDetails(null)}>
-                Close Specifications
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-200">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200 w-full sm:w-auto"
+                leftIcon={<Trash2 className="w-4 h-4" />}
+                onClick={() => {
+                  const amb = selectedAmbulanceDetails;
+                  setSelectedAmbulanceDetails(null);
+                  setAmbulanceToDelete(amb);
+                }}
+              >
+                Delete Ambulance
               </Button>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-brand-700 hover:bg-brand-50"
+                  leftIcon={<Edit className="w-4 h-4" />}
+                  onClick={() => {
+                    const amb = selectedAmbulanceDetails;
+                    setSelectedAmbulanceDetails(null);
+                    handleOpenEditAmbulance(amb);
+                  }}
+                >
+                  Edit Specifications
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setSelectedAmbulanceDetails(null)}>
+                  Close
+                </Button>
+              </div>
             </div>
           </div>
         </Modal>
@@ -2997,10 +3885,38 @@ export const AmbulanceManagement: React.FC = () => {
               )}
             </div>
 
-            <div className="flex justify-end pt-2">
-              <Button variant="outline" onClick={() => setSelectedDriverDetails(null)}>
-                Close Profile
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-200">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200 w-full sm:w-auto"
+                leftIcon={<Trash2 className="w-4 h-4" />}
+                onClick={() => {
+                  const drv = selectedDriverDetails;
+                  setSelectedDriverDetails(null);
+                  setDriverToDelete(drv);
+                }}
+              >
+                Delete Staff
               </Button>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-brand-700 hover:bg-brand-50"
+                  leftIcon={<Edit className="w-4 h-4" />}
+                  onClick={() => {
+                    const drv = selectedDriverDetails;
+                    setSelectedDriverDetails(null);
+                    handleOpenEditDriver(drv);
+                  }}
+                >
+                  Edit Profile
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setSelectedDriverDetails(null)}>
+                  Close
+                </Button>
+              </div>
             </div>
           </div>
         </Modal>
@@ -3117,9 +4033,213 @@ export const AmbulanceManagement: React.FC = () => {
               <strong>Service Summary:</strong> {selectedMaintenanceDetails.description}
             </div>
 
-            <div className="flex justify-end pt-2">
-              <Button variant="outline" onClick={() => setSelectedMaintenanceDetails(null)}>
-                Close Report
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-200">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200 w-full sm:w-auto"
+                leftIcon={<Trash2 className="w-4 h-4" />}
+                onClick={() => {
+                  const rec = selectedMaintenanceDetails;
+                  setSelectedMaintenanceDetails(null);
+                  setMaintenanceToDelete(rec);
+                }}
+              >
+                Delete Log
+              </Button>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-brand-700 hover:bg-brand-50"
+                  leftIcon={<Edit className="w-4 h-4" />}
+                  onClick={() => {
+                    const rec = selectedMaintenanceDetails;
+                    setSelectedMaintenanceDetails(null);
+                    handleOpenEditMaintenance(rec);
+                  }}
+                >
+                  Edit Log
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setSelectedMaintenanceDetails(null)}>
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* DELETE AMBULANCE CONFIRMATION MODAL */}
+      {ambulanceToDelete && (
+        <Modal
+          isOpen={!!ambulanceToDelete}
+          onClose={() => setAmbulanceToDelete(null)}
+          title="Confirm Ambulance Decommission / Deletion"
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs">
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-rose-900">Permanent Fleet Removal</p>
+                <p className="mt-0.5 text-rose-700 leading-relaxed">
+                  Are you sure you want to decommission and remove unit <span className="font-bold font-mono text-rose-950">{ambulanceToDelete.regNumber}</span> ({ambulanceToDelete.model || ambulanceToDelete.type})? This action cannot be reversed.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" size="sm" onClick={() => setAmbulanceToDelete(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                className="bg-rose-600 hover:bg-rose-700 text-white border-transparent"
+                onClick={handleConfirmDeleteAmbulance}
+                leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+              >
+                Confirm Delete
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* DELETE DRIVER / PARAMEDIC CONFIRMATION MODAL */}
+      {driverToDelete && (
+        <Modal
+          isOpen={!!driverToDelete}
+          onClose={() => setDriverToDelete(null)}
+          title="Confirm Staff Removal from Roster"
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs">
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-rose-900">Remove from Emergency Roster</p>
+                <p className="mt-0.5 text-rose-700 leading-relaxed">
+                  Are you sure you want to remove <span className="font-bold text-rose-950">{driverToDelete.name}</span> ({driverToDelete.role}, Staff ID: <span className="font-mono">{driverToDelete.id}</span>)? Active shifts and vehicle assignments will be released.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" size="sm" onClick={() => setDriverToDelete(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                className="bg-rose-600 hover:bg-rose-700 text-white border-transparent"
+                onClick={handleConfirmDeleteDriver}
+                leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+              >
+                Confirm Remove
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* DELETE MAINTENANCE LOG CONFIRMATION MODAL */}
+      {maintenanceToDelete && (
+        <Modal
+          isOpen={!!maintenanceToDelete}
+          onClose={() => setMaintenanceToDelete(null)}
+          title="Confirm Maintenance Log Deletion"
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs">
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-rose-900">Permanent Record Deletion</p>
+                <p className="mt-0.5 text-rose-700 leading-relaxed">
+                  Are you sure you want to delete maintenance record <span className="font-mono font-bold text-rose-950">{maintenanceToDelete.id}</span> for unit <span className="font-bold text-rose-950">{maintenanceToDelete.ambulanceReg}</span> logged on {maintenanceToDelete.serviceDate}?
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" size="sm" onClick={() => setMaintenanceToDelete(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                className="bg-rose-600 hover:bg-rose-700 text-white border-transparent"
+                onClick={handleConfirmDeleteMaintenance}
+                leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+              >
+                Confirm Delete
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* CLEAR ALL COMPLETED EMERGENCY REQUESTS CONFIRMATION MODAL */}
+      <Modal
+        isOpen={isClearAllConfirmOpen}
+        onClose={() => setIsClearAllConfirmOpen(false)}
+        title="Clear All Completed Emergency Records"
+        maxWidth="md"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 text-xs">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-rose-950 text-sm">Clear Completed Dispatch Records?</p>
+              <p className="mt-1 text-rose-700 leading-relaxed">
+                This will permanently clear and remove all <span className="font-bold text-rose-950">{completedEmergencies.length}</span> completed emergency triage record{completedEmergencies.length > 1 ? 's' : ''} from the live queue and server history. Ongoing emergency dispatches will not be affected.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2.5 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setIsClearAllConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              leftIcon={<Trash2 className="w-4 h-4" />}
+              onClick={handleConfirmClearAllCompleted}
+            >
+              Confirm Clear All ({completedEmergencies.length})
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* CLEAR SINGLE EMERGENCY REQUEST CONFIRMATION MODAL */}
+      {requestToClear && (
+        <Modal
+          isOpen={!!requestToClear}
+          onClose={() => setRequestToClear(null)}
+          title="Clear Emergency Record"
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-amber-950 text-sm">Remove Record from Queue?</p>
+                <p className="mt-1 text-amber-800 leading-relaxed">
+                  Are you sure you want to clear completed emergency dispatch record <span className="font-mono font-bold text-amber-950">{requestToClear.id}</span> for patient <span className="font-bold text-amber-950">{requestToClear.patientName}</span>?
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <Button variant="outline" size="sm" onClick={() => setRequestToClear(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                leftIcon={<Trash2 className="w-4 h-4" />}
+                onClick={handleConfirmClearSingle}
+              >
+                Clear Record
               </Button>
             </div>
           </div>

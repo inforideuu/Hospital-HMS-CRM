@@ -81,14 +81,16 @@ export const ConsolidatedReports: React.FC = () => {
       b.revenue,
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r: any) => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r: any) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
     link.setAttribute('download', `${organization?.slug || 'enterprise'}-consolidated-report.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
 
     showToast('Report Exported', 'Consolidated CSV performance report downloaded successfully.', 'success');
   };

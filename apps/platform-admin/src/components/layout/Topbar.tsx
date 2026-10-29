@@ -323,8 +323,19 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenMobileMenu, portalType }) 
                       user?.portal === 'platform' ||
                       user?.role === 'super_admin' ||
                       user?.role === 'super_admin_manager';
+                    const targetHospitalId =
+                      user?.hospitalId ||
+                      (typeof window !== 'undefined' && window.sessionStorage
+                        ? sessionStorage.getItem('pulse_active_hospital_target')
+                        : null);
                     logout();
-                    navigate(isPlatform ? '/superadmin-login' : '/login');
+                    if (isPlatform) {
+                      navigate('/superadmin-login');
+                    } else if (targetHospitalId) {
+                      navigate(`/login?targetHospital=${encodeURIComponent(targetHospitalId)}`);
+                    } else {
+                      navigate('/login');
+                    }
                   }}
                   className="w-full text-left px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 flex items-center gap-2.5 font-semibold transition-colors cursor-pointer"
                 >

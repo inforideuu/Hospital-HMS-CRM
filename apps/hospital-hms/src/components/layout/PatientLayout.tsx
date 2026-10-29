@@ -98,8 +98,17 @@ export const PatientLayout: React.FC = () => {
               </div>
               <button
                 onClick={() => {
+                  const targetHospitalId =
+                    user?.hospitalId ||
+                    (typeof window !== 'undefined' && window.sessionStorage
+                      ? sessionStorage.getItem('pulse_active_hospital_target')
+                      : null);
                   logout();
-                  navigate('/login');
+                  if (targetHospitalId) {
+                    navigate(`/login?targetHospital=${encodeURIComponent(targetHospitalId)}`);
+                  } else {
+                    navigate('/login');
+                  }
                 }}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
                 title="Sign Out"

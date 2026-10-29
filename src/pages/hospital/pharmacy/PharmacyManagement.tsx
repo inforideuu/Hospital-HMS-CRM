@@ -506,10 +506,24 @@ export const PharmacyManagement: React.FC = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => MockStorage.exportToCSV('Pharmacy_Stock', filteredMedicines)}
+              onClick={() => {
+                if (currentTab === 'prescriptions') {
+                  MockStorage.exportToCSV('Pharmacy_Prescriptions_Queue', prescriptions);
+                  showToast('Export Successful', 'Prescriptions queue downloaded as CSV.');
+                } else if (currentTab === 'expiry') {
+                  MockStorage.exportToCSV('Pharmacy_Batch_Expiry_Log', filteredMedicines.filter((m) => m.status === 'Expiring' || m.status === 'Expired'));
+                  showToast('Export Successful', 'Batch expiry log downloaded as CSV.');
+                } else if (currentTab === 'invoices') {
+                  MockStorage.exportToCSV('Pharmacy_Dispensary_Invoices', pharmacyInvoices);
+                  showToast('Export Successful', 'Dispensary sales invoices downloaded as CSV.');
+                } else {
+                  MockStorage.exportToCSV('Pharmacy_Stock_Inventory', filteredMedicines);
+                  showToast('Export Successful', 'Pharmacy inventory stock downloaded as CSV.');
+                }
+              }}
               leftIcon={<Download className="w-3.5 h-3.5" />}
             >
-              Export CSV
+              Export {currentTab === 'prescriptions' ? 'Prescriptions' : currentTab === 'expiry' ? 'Expiry Log' : currentTab === 'invoices' ? 'Invoices' : 'Stock CSV'}
             </Button>
             <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
               Add Medicine
@@ -1885,6 +1899,27 @@ export const PharmacyManagement: React.FC = () => {
 
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" size="sm" onClick={() => setIsReceiptModalOpen(false)}>Close</Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const rows = (receiptInvoice.items || []).map((it) => ({
+                    Receipt_ID: receiptInvoice.id,
+                    Medicine: it.description,
+                    Category: it.category,
+                    Quantity: it.quantity,
+                    Price: it.unitPrice,
+                    Total: it.total,
+                    Tax: receiptInvoice.taxAmount,
+                    Grand_Total: receiptInvoice.totalAmount,
+                    Date: receiptInvoice.issueDate,
+                  }));
+                  MockStorage.exportToCSV(`Pharmacy_Receipt_${receiptInvoice.id}`, rows);
+                  showToast('Downloaded', `Receipt ${receiptInvoice.id} downloaded as CSV.`);
+                }}
+              >
+                <Download className="w-4 h-4 mr-1" /> Download CSV
+              </Button>
               <Button variant="primary" size="sm" onClick={() => window.print()}>
                 <Printer className="w-4 h-4 mr-1" /> Print Slip
               </Button>

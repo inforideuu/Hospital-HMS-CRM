@@ -51,6 +51,8 @@ import {
   Organization,
   BranchCreationRequest,
   FollowUpRequest,
+  PatientAppointmentRequest,
+  AppointmentRequestStatus,
   AdmissionRequest,
   AdmissionRequestPriority,
   AdmissionRequestStatus,
@@ -149,8 +151,56 @@ const STORAGE_KEYS = {
   ORGANIZATIONS: 'pulse_organizations',
   BRANCH_REQUESTS: 'pulse_branch_requests',
   FOLLOW_UP_REQUESTS: 'pulse_follow_up_requests',
+  APPOINTMENT_REQUESTS: 'pulse_appointment_requests',
   ADMISSION_REQUESTS: 'pulse_admission_requests',
 };
+
+export const initialAppointmentRequests: PatientAppointmentRequest[] = [
+  {
+    id: 'REQ-8001',
+    hospitalId: 'HOSP-001',
+    patientId: 'PAT-1001',
+    patientName: 'Aarav Patel',
+    patientPhone: '+91 98765 43210',
+    patientAge: 38,
+    patientGender: 'Male',
+    doctorId: 'DOC-101',
+    doctorName: 'Dr. Rajesh Sharma',
+    doctorSpecialization: 'Cardiologist',
+    departmentId: 'DEP-001',
+    departmentName: 'Cardiology',
+    preferredDate: new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0],
+    preferredTime: '10:30 AM',
+    type: 'Consultation',
+    reason: 'Chest tightness after morning brisk walk',
+    notes: 'Prefer morning consultation slot before 12:00 PM',
+    status: 'Pending',
+    createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
+  },
+  {
+    id: 'REQ-8002',
+    hospitalId: 'HOSP-001',
+    patientId: 'PAT-1001',
+    patientName: 'Aarav Patel',
+    patientPhone: '+91 98765 43210',
+    patientAge: 38,
+    patientGender: 'Male',
+    doctorId: 'DOC-102',
+    doctorName: 'Dr. Priya Desai',
+    doctorSpecialization: 'Neurologist',
+    departmentId: 'DEP-002',
+    departmentName: 'Neurology',
+    preferredDate: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+    preferredTime: '03:00 PM',
+    type: 'Consultation',
+    reason: 'Recurring migraine headache consultations',
+    status: 'Declined',
+    receptionistNote: 'Dr. Priya Desai is attending an emergency neurology seminar on this date. We have open slots available on Friday at 11:00 AM or 04:00 PM. Please send a new request for Friday.',
+    respondedBy: 'Sarah Jenkins (Front Desk Receptionist)',
+    respondedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+    createdAt: new Date(Date.now() - 3600000 * 8).toISOString(),
+  }
+];
 
 const initialAdmissionRequests: AdmissionRequest[] = [
   {
@@ -314,6 +364,19 @@ export async function syncWithDjangoBackend() {
       doctorSchedulesRes,
       doctorUnavailabilityRes,
       appointmentSettingsRes,
+      ambulancesRes,
+      ambulanceMaintenanceRes,
+      ambulanceTripsRes,
+      appointmentRequestsRes,
+      labCatalogRes,
+      couponsRes,
+      branchRequestsRes,
+      admissionRequestsRes,
+      followUpRequestsRes,
+      leadFollowUpsRes,
+      leadActivitiesRes,
+      convertedCustomersRes,
+      testimonialsRes,
     ] = await Promise.allSettled([
       fetch(`${API_BASE_URL}/hospitals/`).then((r) => r.json()),
       fetch(`${API_BASE_URL}/patients/`).then((r) => r.json()),
@@ -341,6 +404,19 @@ export async function syncWithDjangoBackend() {
       fetch(`${API_BASE_URL}/doctor-schedules/`).then((r) => r.json()),
       fetch(`${API_BASE_URL}/doctor-unavailability/`).then((r) => r.json()),
       fetch(`${API_BASE_URL}/appointment-settings/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/ambulances/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/ambulance-maintenance/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/ambulance-trips/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/appointment-requests/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/lab-catalog/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/coupons/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/branch-requests/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/admission-requests/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/follow-up-requests/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/lead-followups/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/lead-activities/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/converted-customers/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/testimonials/`).then((r) => r.json()),
     ]);
 
     let updated = false;
@@ -657,41 +733,6 @@ export async function syncWithDjangoBackend() {
         localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(reconciledUsers));
         updated = true;
       }
-    }
-
-    if (emergenciesRes.status === 'fulfilled' && Array.isArray(emergenciesRes.value) && emergenciesRes.value.length > 0) {
-      const mapped = emergenciesRes.value.map((e: any) => ({
-        id: e.id,
-        hospitalId: e.hospital || 'hosp-1',
-        patientName: e.patient_name || e.patientName,
-        patientPhone: e.patient_phone || e.patientPhone,
-        pickupLocation: e.pickup_location || e.pickupLocation,
-        destinationHospital: e.destination_hospital || e.destinationHospital,
-        emergencyType: e.emergency_type || e.emergencyType,
-        priority: e.priority,
-        status: e.status,
-        assignedDriverId: e.assigned_driver || e.assignedDriverId,
-        assignedDriverName: e.assigned_driver_name || e.assignedDriverName || 'Carlos Mendez',
-        chiefComplaint: e.chief_complaint || e.chiefComplaint,
-        requestTime: e.created_at || new Date().toISOString(),
-      }));
-      localStorage.setItem(STORAGE_KEYS.EMERGENCY_REQUESTS, JSON.stringify(mapped));
-      updated = true;
-    }
-
-    if (driversRes.status === 'fulfilled' && Array.isArray(driversRes.value) && driversRes.value.length > 0) {
-      const mapped = driversRes.value.map((dr: any) => ({
-        id: dr.id,
-        hospitalId: dr.hospital || 'hosp-1',
-        driverName: dr.name || dr.driverName,
-        phone: dr.phone,
-        licenseNumber: dr.license_number || dr.licenseNumber,
-        assignedAmbulanceReg: dr.assigned_ambulance_reg || dr.assignedAmbulanceReg,
-        availabilityStatus: dr.availability_status || dr.availabilityStatus,
-        completedTrips: dr.completed_trips || dr.completedTrips || 0,
-      }));
-      localStorage.setItem(STORAGE_KEYS.AMBULANCE_DRIVERS, JSON.stringify(mapped));
-      updated = true;
     }
 
     if (appointmentsRes && appointmentsRes.status === 'fulfilled' && Array.isArray(appointmentsRes.value)) {
@@ -1165,7 +1206,33 @@ export async function syncWithDjangoBackend() {
         if (emr && emr.id) mergedMap.set(emr.id, emr);
       }
       for (const emr of mapped) {
-        if (emr && emr.id) mergedMap.set(emr.id, emr);
+        if (emr && emr.id) {
+          const local = mergedMap.get(emr.id);
+          if (local) {
+            // Keep local progressive status if local has reached or progressed through the workflow
+            const isLocalMoreAdvanced = 
+              local.status === 'Completed' ||
+              local.status === 'Arrived at Hospital' ||
+              local.status === 'Patient Picked Up' ||
+              (local.status === 'Dispatched' && emr.status === 'Requested');
+
+            mergedMap.set(emr.id, {
+              ...emr,
+              ...local,
+              status: isLocalMoreAdvanced ? local.status : (emr.status || local.status),
+              assignedAmbulanceId: local.assignedAmbulanceId || emr.assignedAmbulanceId,
+              assignedAmbulanceReg: local.assignedAmbulanceReg || emr.assignedAmbulanceReg,
+              assignedDriverId: local.assignedDriverId || emr.assignedDriverId,
+              assignedDriverName: local.assignedDriverName || emr.assignedDriverName,
+              pickupTime: local.pickupTime || emr.pickupTime,
+              hospitalArrivalTime: local.hospitalArrivalTime || emr.hospitalArrivalTime,
+              completedTime: local.completedTime || emr.completedTime,
+              notes: local.notes || emr.notes,
+            });
+          } else {
+            mergedMap.set(emr.id, emr);
+          }
+        }
       }
       const reconciled = Array.from(mergedMap.values());
       if (reconciled.length !== currentEmergencies.length || JSON.stringify(reconciled) !== JSON.stringify(currentEmergencies)) {
@@ -1482,6 +1549,507 @@ export async function syncWithDjangoBackend() {
         }));
         localStorage.setItem(STORAGE_KEYS.APPOINTMENT_SETTINGS, JSON.stringify(mapped));
         updated = true;
+      }
+    }
+
+    if (ambulancesRes && ambulancesRes.status === 'fulfilled' && Array.isArray(ambulancesRes.value)) {
+      const backendAmbulances = ambulancesRes.value;
+      const currentAmbulances = getStored<Ambulance[]>(STORAGE_KEYS.AMBULANCES, initialAmbulances);
+      const mapped: Ambulance[] = backendAmbulances.map((a: any) => ({
+        id: a.id,
+        hospitalId: a.hospital || a.hospital_id || a.hospitalId || 'hosp-1',
+        hospitalName: a.hospitalName || 'Apex Care Hospital',
+        regNumber: a.reg_number || a.regNumber,
+        type: a.type || 'Advanced Life Support (ALS)',
+        model: a.model || 'Mercedes Sprinter',
+        status: a.status || 'Available',
+        mileageKm: Number(a.mileage_km || a.mileageKm || 0),
+        fuelLevel: Number(a.fuel_level !== undefined ? a.fuel_level : (a.fuelLevel !== undefined ? a.fuelLevel : 100)),
+        equipmentCategory: a.equipment_category || a.equipmentCategory || 'Class A (Critical Telemetry)',
+        currentLocation: a.current_location || a.currentLocation || 'Base Station',
+        assignedDriverId: a.assigned_driver || a.assigned_driver_id || a.assignedDriverId,
+        assignedDriverName: a.assigned_driver_name || a.assignedDriverName,
+        driverPhone: a.driver_phone || a.driverPhone,
+        lastMaintenanceDate: a.last_maintenance_date || a.lastMaintenanceDate,
+        nextMaintenanceDate: a.next_maintenance_date || a.nextMaintenanceDate,
+        ...(a.details || {}),
+      }));
+
+      const mergedMap = new Map<string, Ambulance>();
+      for (const a of currentAmbulances) {
+        if (a && a.id) mergedMap.set(a.id, a);
+      }
+      for (const a of mapped) {
+        if (a && a.id) mergedMap.set(a.id, a);
+      }
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentAmbulances.length || JSON.stringify(reconciled) !== JSON.stringify(currentAmbulances)) {
+        localStorage.setItem(STORAGE_KEYS.AMBULANCES, JSON.stringify(reconciled));
+        updated = true;
+      }
+
+      for (const amb of reconciled) {
+        const inBackend = backendAmbulances.some((b: any) => b.id === amb.id);
+        if (!inBackend) {
+          ApiService.saveAmbulance(amb).catch(() => {});
+        }
+      }
+    }
+
+    if (ambulanceMaintenanceRes && ambulanceMaintenanceRes.status === 'fulfilled' && Array.isArray(ambulanceMaintenanceRes.value)) {
+      const backendMnt = ambulanceMaintenanceRes.value;
+      const currentMnt = getStored<AmbulanceMaintenance[]>(STORAGE_KEYS.AMBULANCE_MAINTENANCE, initialAmbulanceMaintenance);
+      const mapped: AmbulanceMaintenance[] = backendMnt.map((m: any) => ({
+        id: m.id,
+        hospitalId: m.hospital || m.hospital_id || m.hospitalId || 'hosp-1',
+        ambulanceId: m.ambulance || m.ambulance_id || m.ambulanceId,
+        ambulanceReg: m.ambulance_reg || m.ambulanceReg,
+        serviceDate: m.service_date || m.serviceDate || new Date().toISOString().split('T')[0],
+        category: m.category || 'Preventive',
+        maintenanceStatus: m.maintenance_status || m.maintenanceStatus || 'Scheduled',
+        serviceType: m.service_type || m.serviceType,
+        servicedBy: m.serviced_by || m.servicedBy,
+        cost: Number(m.cost || 0),
+        partsCost: Number(m.parts_cost || m.partsCost || 0),
+        labourCost: Number(m.labour_cost || m.labourCost || 0),
+        otherCharges: Number(m.other_charges || m.otherCharges || 0),
+        reportedIssue: m.reported_issue || m.reportedIssue,
+        partsReplaced: m.parts_replaced || m.partsReplaced,
+        technicianName: m.technician_name || m.technicianName,
+        nextServiceDate: m.next_service_date || m.nextServiceDate,
+        vehicleAvailability: m.vehicle_availability || m.vehicleAvailability || 'Available',
+        safetyInspectionResult: m.safety_inspection_result || m.safetyInspectionResult || 'Passed',
+        returnToServiceDate: m.return_to_service_date || m.returnToServiceDate,
+        description: m.description,
+        notes: m.notes,
+      }));
+
+      const mergedMap = new Map<string, AmbulanceMaintenance>();
+      for (const m of currentMnt) {
+        if (m && m.id) mergedMap.set(m.id, m);
+      }
+      for (const m of mapped) {
+        if (m && m.id) mergedMap.set(m.id, m);
+      }
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentMnt.length || JSON.stringify(reconciled) !== JSON.stringify(currentMnt)) {
+        localStorage.setItem(STORAGE_KEYS.AMBULANCE_MAINTENANCE, JSON.stringify(reconciled));
+        updated = true;
+      }
+
+      for (const m of reconciled) {
+        const inBackend = backendMnt.some((bm: any) => bm.id === m.id);
+        if (!inBackend) {
+          ApiService.saveAmbulanceMaintenance(m).catch(() => {});
+        }
+      }
+    }
+
+    if (ambulanceTripsRes && ambulanceTripsRes.status === 'fulfilled' && Array.isArray(ambulanceTripsRes.value)) {
+      const backendTrips = ambulanceTripsRes.value;
+      const currentTrips = getStored<AmbulanceTrip[]>(STORAGE_KEYS.AMBULANCE_TRIPS, initialAmbulanceTrips);
+      const mapped: AmbulanceTrip[] = backendTrips.map((t: any) => ({
+        id: t.id,
+        hospitalId: t.hospital || t.hospital_id || t.hospitalId || 'hosp-1',
+        requestId: t.request_id || t.requestId,
+        ambulanceId: t.ambulance_id || t.ambulanceId,
+        ambulanceReg: t.ambulance_reg || t.ambulanceReg,
+        driverId: t.driver_id || t.driverId,
+        driverName: t.driver_name || t.driverName,
+        patientName: t.patient_name || t.patientName,
+        patientPhone: t.patient_phone || t.patientPhone,
+        pickupAddress: t.pickup_address || t.pickupAddress,
+        destination: t.destination,
+        status: t.status,
+        startTime: t.start_time || t.startTime,
+        pickupTime: t.pickup_time || t.pickupTime,
+        hospitalArrivalTime: t.hospital_arrival_time || t.hospitalArrivalTime,
+        endTime: t.end_time || t.endTime,
+        distanceKm: Number(t.distance_km || t.distanceKm || 0),
+        paramedicNotes: t.paramedic_notes || t.paramedicNotes,
+      }));
+
+      const mergedMap = new Map<string, AmbulanceTrip>();
+      for (const t of currentTrips) {
+        if (t && t.id) mergedMap.set(t.id, t);
+      }
+      for (const t of mapped) {
+        if (t && t.id) mergedMap.set(t.id, t);
+      }
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentTrips.length || JSON.stringify(reconciled) !== JSON.stringify(currentTrips)) {
+        localStorage.setItem(STORAGE_KEYS.AMBULANCE_TRIPS, JSON.stringify(reconciled));
+        updated = true;
+      }
+
+      for (const t of reconciled) {
+        const inBackend = backendTrips.some((bt: any) => bt.id === t.id);
+        if (!inBackend) {
+          ApiService.saveAmbulanceTrip(t).catch(() => {});
+        }
+      }
+    }
+
+    if (appointmentRequestsRes && appointmentRequestsRes.status === 'fulfilled' && Array.isArray(appointmentRequestsRes.value)) {
+      const backendReqs = appointmentRequestsRes.value;
+      const currentReqs = getStored<PatientAppointmentRequest[]>(STORAGE_KEYS.APPOINTMENT_REQUESTS, initialAppointmentRequests);
+      const mapped: PatientAppointmentRequest[] = backendReqs.map((r: any) => ({
+        id: r.id,
+        hospitalId: r.hospital || r.hospital_id || r.hospitalId || 'hosp-1',
+        patientId: r.patient || r.patient_id || r.patientId,
+        patientName: r.patient_name || r.patientName,
+        patientPhone: r.patient_phone || r.patientPhone,
+        patientAge: r.patient_age !== undefined ? Number(r.patient_age) : r.patientAge,
+        patientGender: r.patient_gender || r.patientGender,
+        doctorId: r.doctor || r.doctor_id || r.doctorId,
+        doctorName: r.doctor_name || r.doctorName,
+        doctorSpecialization: r.doctor_specialization || r.doctorSpecialization,
+        departmentId: r.department || r.department_id || r.departmentId,
+        departmentName: r.department_name || r.departmentName,
+        preferredDate: r.preferred_date || r.preferredDate,
+        preferredTime: r.preferred_time || r.preferredTime,
+        type: r.type || 'Consultation',
+        reason: r.reason || '',
+        notes: r.notes,
+        status: r.status || 'Pending',
+        receptionistNote: r.receptionist_note || r.receptionistNote,
+        respondedBy: r.responded_by || r.respondedBy,
+        respondedAt: r.responded_at || r.respondedAt,
+        createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+      }));
+
+      const mergedMap = new Map<string, PatientAppointmentRequest>();
+      for (const r of currentReqs) {
+        if (r && r.id) mergedMap.set(r.id, r);
+      }
+      for (const r of mapped) {
+        if (r && r.id) mergedMap.set(r.id, r);
+      }
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentReqs.length || JSON.stringify(reconciled) !== JSON.stringify(currentReqs)) {
+        localStorage.setItem(STORAGE_KEYS.APPOINTMENT_REQUESTS, JSON.stringify(reconciled));
+        updated = true;
+      }
+
+      for (const r of reconciled) {
+        const inBackend = backendReqs.some((br: any) => br.id === r.id);
+        if (!inBackend) {
+          ApiService.saveAppointmentRequest(r).catch(() => {});
+        }
+      }
+    }
+
+    if (labCatalogRes && labCatalogRes.status === 'fulfilled' && Array.isArray(labCatalogRes.value)) {
+      const backendCatalog = labCatalogRes.value;
+      const currentCatalog = getStored<LabTestCatalog[]>(STORAGE_KEYS.LAB_CATALOG, initialLabCatalog);
+      const mapped: LabTestCatalog[] = backendCatalog.map((c: any) => ({
+        id: c.id,
+        hospitalId: c.hospital || c.hospital_id || c.hospitalId || 'hosp-1',
+        testName: c.test_name || c.testName,
+        code: c.code,
+        category: c.category || 'Biochemistry',
+        price: Number(c.price || 0),
+        turnaroundHours: Number(c.turnaround_hours || c.turnaroundHours || 24),
+        sampleType: c.sample_type || c.sampleType || 'Blood',
+        tubeColor: c.tube_color || c.tubeColor,
+        normalRange: c.normal_range || c.normalRange,
+        parameters: Array.isArray(c.parameters) ? c.parameters : [],
+        status: (c.status || 'active') as any,
+      }));
+
+      const mergedMap = new Map<string, LabTestCatalog>();
+      for (const c of currentCatalog) {
+        if (c && c.id) mergedMap.set(c.id, c);
+      }
+      for (const c of mapped) {
+        if (c && c.id) mergedMap.set(c.id, c);
+      }
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentCatalog.length || JSON.stringify(reconciled) !== JSON.stringify(currentCatalog)) {
+        localStorage.setItem(STORAGE_KEYS.LAB_CATALOG, JSON.stringify(reconciled));
+        updated = true;
+      }
+
+      for (const c of reconciled) {
+        const inBackend = backendCatalog.some((bc: any) => bc.id === c.id);
+        if (!inBackend) {
+          ApiService.saveLabCatalogItem(c).catch(() => {});
+        }
+      }
+    }
+
+    if (couponsRes && couponsRes.status === 'fulfilled' && Array.isArray(couponsRes.value)) {
+      const backendCoupons = couponsRes.value;
+      const currentCoupons = getStored<CouponCode[]>(STORAGE_KEYS.COUPONS, initialCoupons);
+      const mapped: CouponCode[] = backendCoupons.map((c: any) => ({
+        id: c.id,
+        code: c.code,
+        discountPercentage: Number(c.discount_percentage || c.discountPercentage || 10),
+        description: c.description || '',
+        isActive: c.is_active !== undefined ? Boolean(c.is_active) : (c.isActive !== undefined ? Boolean(c.isActive) : true),
+        validUntil: c.valid_until || c.validUntil,
+        maxUses: c.max_uses !== undefined ? Number(c.max_uses) : c.maxUses,
+        usedCount: Number(c.used_count || c.usedCount || 0),
+        usedByHospitals: Array.isArray(c.used_by_hospitals) ? c.used_by_hospitals : (Array.isArray(c.usedByHospitals) ? c.usedByHospitals : []),
+        createdAt: c.created_at || c.createdAt || new Date().toISOString(),
+      }));
+
+      const mergedMap = new Map<string, CouponCode>();
+      for (const c of currentCoupons) if (c && c.id) mergedMap.set(c.id, c);
+      for (const c of mapped) if (c && c.id) mergedMap.set(c.id, c);
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentCoupons.length || JSON.stringify(reconciled) !== JSON.stringify(currentCoupons)) {
+        localStorage.setItem(STORAGE_KEYS.COUPONS, JSON.stringify(reconciled));
+        updated = true;
+      }
+      for (const c of reconciled) {
+        if (!backendCoupons.some((bc: any) => bc.id === c.id)) {
+          ApiService.saveCoupon(c).catch(() => {});
+        }
+      }
+    }
+
+    if (branchRequestsRes && branchRequestsRes.status === 'fulfilled' && Array.isArray(branchRequestsRes.value)) {
+      const backendBR = branchRequestsRes.value;
+      const currentBR = getStored<BranchCreationRequest[]>(STORAGE_KEYS.BRANCH_REQUESTS, []);
+      const mapped: BranchCreationRequest[] = backendBR.map((b: any) => ({
+        id: b.id,
+        organizationId: b.organization_id || b.organizationId,
+        organizationName: b.organization_name || b.organizationName,
+        branchName: b.branch_name || b.branchName,
+        branchCode: b.branch_code || b.branchCode,
+        address: b.address || '',
+        city: b.city || '',
+        state: b.state || '',
+        country: b.country || '',
+        contactPerson: b.contact_person || b.contactPerson,
+        contactPhone: b.contact_phone || b.contactPhone,
+        contactEmail: b.contact_email || b.contactEmail,
+        description: b.description || '',
+        branchAdminName: b.branch_admin_name || b.branchAdminName,
+        branchAdminEmail: b.branch_admin_email || b.branchAdminEmail,
+        branchAdminPhone: b.branch_admin_phone || b.branchAdminPhone,
+        status: b.status || 'pending',
+        createdHospitalId: b.created_hospital_id || b.createdHospitalId,
+        createdAt: b.created_at || b.createdAt || new Date().toISOString(),
+      }));
+
+      const mergedMap = new Map<string, BranchCreationRequest>();
+      for (const b of currentBR) if (b && b.id) mergedMap.set(b.id, b);
+      for (const b of mapped) if (b && b.id) mergedMap.set(b.id, b);
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentBR.length || JSON.stringify(reconciled) !== JSON.stringify(currentBR)) {
+        localStorage.setItem(STORAGE_KEYS.BRANCH_REQUESTS, JSON.stringify(reconciled));
+        updated = true;
+      }
+      for (const b of reconciled) {
+        if (!backendBR.some((bb: any) => bb.id === b.id)) {
+          ApiService.saveBranchRequest(b).catch(() => {});
+        }
+      }
+    }
+
+    if (admissionRequestsRes && admissionRequestsRes.status === 'fulfilled' && Array.isArray(admissionRequestsRes.value)) {
+      const backendAR = admissionRequestsRes.value;
+      const currentAR = getStored<AdmissionRequest[]>(STORAGE_KEYS.ADMISSION_REQUESTS, initialAdmissionRequests);
+      const mapped: AdmissionRequest[] = backendAR.map((a: any) => ({
+        id: a.id,
+        hospitalId: a.hospital || a.hospital_id || a.hospitalId || 'hosp-1',
+        consultationId: a.consultation_id || a.consultationId,
+        appointmentId: a.appointment_id || a.appointmentId,
+        patientId: a.patient_id || a.patientId,
+        patientName: a.patient_name || a.patientName,
+        patientPhone: a.patient_phone || a.patientPhone,
+        patientAge: a.patient_age !== undefined ? Number(a.patient_age) : a.patientAge,
+        patientGender: a.patient_gender || a.patientGender,
+        doctorId: a.doctor_id || a.doctorId,
+        doctorName: a.doctor_name || a.doctorName,
+        departmentName: a.department_name || a.departmentName,
+        recommendedWardType: a.recommended_ward_type || a.recommendedWardType || 'General Ward',
+        priority: a.priority || 'Normal',
+        reason: a.reason || '',
+        notes: a.notes || '',
+        status: a.status || 'Pending',
+        createdAt: a.created_at || a.createdAt || new Date().toISOString(),
+      }));
+
+      const mergedMap = new Map<string, AdmissionRequest>();
+      for (const a of currentAR) if (a && a.id) mergedMap.set(a.id, a);
+      for (const a of mapped) if (a && a.id) mergedMap.set(a.id, a);
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentAR.length || JSON.stringify(reconciled) !== JSON.stringify(currentAR)) {
+        localStorage.setItem(STORAGE_KEYS.ADMISSION_REQUESTS, JSON.stringify(reconciled));
+        updated = true;
+      }
+      for (const a of reconciled) {
+        if (!backendAR.some((ba: any) => ba.id === a.id)) {
+          ApiService.saveAdmissionRequest(a).catch(() => {});
+        }
+      }
+    }
+
+    if (followUpRequestsRes && followUpRequestsRes.status === 'fulfilled' && Array.isArray(followUpRequestsRes.value)) {
+      const backendFR = followUpRequestsRes.value;
+      const currentFR = getStored<FollowUpRequest[]>(STORAGE_KEYS.FOLLOW_UP_REQUESTS, []);
+      const mapped: FollowUpRequest[] = backendFR.map((f: any) => ({
+        id: f.id,
+        hospitalId: f.hospital || f.hospital_id || f.hospitalId || 'hosp-1',
+        consultationId: f.consultation_id || f.consultationId,
+        originalAppointmentId: f.original_appointment_id || f.originalAppointmentId,
+        patientId: f.patient_id || f.patientId,
+        patientName: f.patient_name || f.patientName,
+        patientPhone: f.patient_phone || f.patientPhone,
+        patientAge: f.patient_age !== undefined ? Number(f.patient_age) : f.patientAge,
+        patientGender: f.patient_gender || f.patientGender,
+        doctorId: f.doctor_id || f.doctorId,
+        doctorName: f.doctor_name || f.doctorName,
+        departmentId: f.department_id || f.departmentId,
+        departmentName: f.department_name || f.departmentName,
+        suggestedDate: f.suggested_date || f.suggestedDate,
+        intervalDays: f.interval_days !== undefined ? Number(f.interval_days) : f.intervalDays,
+        reason: f.reason || '',
+        instructions: f.instructions || '',
+        status: f.status || 'Scheduled',
+        createdAt: f.created_at || f.createdAt || new Date().toISOString(),
+      }));
+
+      const mergedMap = new Map<string, FollowUpRequest>();
+      for (const f of currentFR) if (f && f.id) mergedMap.set(f.id, f);
+      for (const f of mapped) if (f && f.id) mergedMap.set(f.id, f);
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentFR.length || JSON.stringify(reconciled) !== JSON.stringify(currentFR)) {
+        localStorage.setItem(STORAGE_KEYS.FOLLOW_UP_REQUESTS, JSON.stringify(reconciled));
+        updated = true;
+      }
+      for (const f of reconciled) {
+        if (!backendFR.some((bf: any) => bf.id === f.id)) {
+          ApiService.saveFollowUpRequest(f).catch(() => {});
+        }
+      }
+    }
+
+    if (leadFollowUpsRes && leadFollowUpsRes.status === 'fulfilled' && Array.isArray(leadFollowUpsRes.value)) {
+      const backendLF = leadFollowUpsRes.value;
+      const currentLF = getStored<LeadFollowUp[]>(STORAGE_KEYS.LEAD_FOLLOWUPS, initialLeadFollowUps);
+      const mapped: LeadFollowUp[] = backendLF.map((l: any) => ({
+        id: l.id,
+        leadId: l.lead_id || l.leadId,
+        leadHospitalName: l.lead_hospital_name || l.leadHospitalName,
+        leadContactPerson: l.lead_contact_person || l.leadContactPerson,
+        assignedTo: l.assigned_to || l.assignedTo,
+        date: l.date,
+        time: l.time,
+        type: l.type || 'Call',
+        notes: l.notes || '',
+        status: l.status || 'Pending',
+        reminder: l.reminder !== undefined ? Boolean(l.reminder) : false,
+      }));
+
+      const mergedMap = new Map<string, LeadFollowUp>();
+      for (const l of currentLF) if (l && l.id) mergedMap.set(l.id, l);
+      for (const l of mapped) if (l && l.id) mergedMap.set(l.id, l);
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentLF.length || JSON.stringify(reconciled) !== JSON.stringify(currentLF)) {
+        localStorage.setItem(STORAGE_KEYS.LEAD_FOLLOWUPS, JSON.stringify(reconciled));
+        updated = true;
+      }
+      for (const l of reconciled) {
+        if (!backendLF.some((bl: any) => bl.id === l.id)) {
+          ApiService.saveLeadFollowUp(l).catch(() => {});
+        }
+      }
+    }
+
+    if (leadActivitiesRes && leadActivitiesRes.status === 'fulfilled' && Array.isArray(leadActivitiesRes.value)) {
+      const backendLA = leadActivitiesRes.value;
+      const currentLA = getStored<LeadActivity[]>(STORAGE_KEYS.LEAD_ACTIVITIES, initialLeadActivities);
+      const mapped: LeadActivity[] = backendLA.map((a: any) => ({
+        id: a.id,
+        leadId: a.lead_id || a.leadId,
+        type: a.type || 'Note',
+        description: a.description || '',
+        createdBy: a.created_by || a.createdBy,
+        createdAt: a.created_at || a.createdAt || new Date().toISOString(),
+      }));
+
+      const mergedMap = new Map<string, LeadActivity>();
+      for (const a of currentLA) if (a && a.id) mergedMap.set(a.id, a);
+      for (const a of mapped) if (a && a.id) mergedMap.set(a.id, a);
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentLA.length || JSON.stringify(reconciled) !== JSON.stringify(currentLA)) {
+        localStorage.setItem(STORAGE_KEYS.LEAD_ACTIVITIES, JSON.stringify(reconciled));
+        updated = true;
+      }
+      for (const a of reconciled) {
+        if (!backendLA.some((ba: any) => ba.id === a.id)) {
+          ApiService.saveLeadActivity(a).catch(() => {});
+        }
+      }
+    }
+
+    if (convertedCustomersRes && convertedCustomersRes.status === 'fulfilled' && Array.isArray(convertedCustomersRes.value)) {
+      const backendCC = convertedCustomersRes.value;
+      const currentCC = getStored<ConvertedCustomer[]>(STORAGE_KEYS.CONVERTED_CUSTOMERS, initialConvertedCustomers);
+      const mapped: ConvertedCustomer[] = backendCC.map((c: any) => ({
+        id: c.id,
+        leadId: c.lead_id || c.leadId,
+        hospitalId: c.hospital_id || c.hospitalId,
+        hospitalName: c.hospital_name || c.hospitalName,
+        contactPerson: c.contact_person || c.contactPerson,
+        email: c.email,
+        phone: c.phone,
+        convertedBy: c.converted_by || c.convertedBy,
+        convertedByName: c.converted_by_name || c.convertedByName,
+        convertedAt: c.converted_at || c.convertedAt,
+        interestedPlan: c.interested_plan || c.interestedPlan,
+        subscriptionStatus: c.subscription_status || c.subscriptionStatus,
+        hospitalAdminStatus: c.hospital_admin_status || c.hospitalAdminStatus,
+        onboardingStatus: c.onboarding_status || c.onboardingStatus,
+      }));
+
+      const mergedMap = new Map<string, ConvertedCustomer>();
+      for (const c of currentCC) if (c && c.id) mergedMap.set(c.id, c);
+      for (const c of mapped) if (c && c.id) mergedMap.set(c.id, c);
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentCC.length || JSON.stringify(reconciled) !== JSON.stringify(currentCC)) {
+        localStorage.setItem(STORAGE_KEYS.CONVERTED_CUSTOMERS, JSON.stringify(reconciled));
+        updated = true;
+      }
+      for (const c of reconciled) {
+        if (!backendCC.some((bc: any) => bc.id === c.id)) {
+          ApiService.saveConvertedCustomer(c).catch(() => {});
+        }
+      }
+    }
+
+    if (testimonialsRes && testimonialsRes.status === 'fulfilled' && Array.isArray(testimonialsRes.value)) {
+      const backendT = testimonialsRes.value;
+      const currentT = getStored<PatientTestimonial[]>(STORAGE_KEYS.TESTIMONIALS, initialTestimonials);
+      const mapped: PatientTestimonial[] = backendT.map((t: any) => ({
+        id: t.id,
+        hospitalId: t.hospital || t.hospital_id || t.hospitalId || 'hosp-1',
+        patientName: t.patient_name || t.patientName,
+        patientRole: t.patient_role || t.patientRole,
+        avatarUrl: t.avatar_url || t.avatarUrl,
+        rating: Number(t.rating || 5),
+        headline: t.headline || '',
+        reviewText: t.review_text || t.reviewText,
+        verified: t.verified !== undefined ? Boolean(t.verified) : true,
+        date: t.date || '',
+      }));
+
+      const mergedMap = new Map<string, PatientTestimonial>();
+      for (const t of currentT) if (t && t.id) mergedMap.set(t.id, t);
+      for (const t of mapped) if (t && t.id) mergedMap.set(t.id, t);
+      const reconciled = Array.from(mergedMap.values());
+      if (reconciled.length !== currentT.length || JSON.stringify(reconciled) !== JSON.stringify(currentT)) {
+        localStorage.setItem(STORAGE_KEYS.TESTIMONIALS, JSON.stringify(reconciled));
+        updated = true;
+      }
+      for (const t of reconciled) {
+        if (!backendT.some((bt: any) => bt.id === t.id)) {
+          ApiService.saveTestimonial(t).catch(() => {});
+        }
       }
     }
 
@@ -2293,6 +2861,60 @@ export const MockStorage = {
     return { allowed: true, plan, sub };
   },
 
+  checkPatientHasPendingBill(hospitalId: string, patientId?: string, email?: string): {
+    hasPendingBill: boolean;
+    pendingInvoices: Invoice[];
+    totalPendingAmount: number;
+    invoiceIds: string[];
+  } {
+    const invoices = this.getInvoices(hospitalId);
+    let matchedPatientIds: string[] = [];
+
+    if (patientId) {
+      matchedPatientIds.push(patientId);
+    }
+
+    if (email) {
+      const normalizedEmail = email.trim().toLowerCase();
+      const patients = this.getPatients(hospitalId);
+      for (const p of patients) {
+        if (p.email && p.email.trim().toLowerCase() === normalizedEmail) {
+          if (!matchedPatientIds.includes(p.id)) {
+            matchedPatientIds.push(p.id);
+          }
+        }
+      }
+    }
+
+    const pendingStatuses: Invoice['status'][] = ['Pending', 'Partially Paid', 'Overdue', 'Unpaid'];
+    const pendingInvoices = invoices.filter((inv) => {
+      const belongsToPatient =
+        matchedPatientIds.length > 0
+          ? matchedPatientIds.includes(inv.patientId)
+          : false;
+
+      if (!belongsToPatient) return false;
+
+      const isPendingStatus = pendingStatuses.includes(inv.status);
+      const remainingBalance = (inv.totalAmount || 0) - (inv.amountPaid || 0);
+      const hasUnpaidBalance = remainingBalance > 0.01 && inv.status !== 'Paid' && inv.status !== 'Cancelled';
+
+      return isPendingStatus || hasUnpaidBalance;
+    });
+
+    const totalPendingAmount = pendingInvoices.reduce((sum, inv) => {
+      const remaining = (inv.totalAmount || 0) - (inv.amountPaid || 0);
+      return sum + (remaining > 0 ? remaining : inv.totalAmount || 0);
+    }, 0);
+
+    return {
+      hasPendingBill: pendingInvoices.length > 0,
+      pendingInvoices,
+      totalPendingAmount,
+      invoiceIds: pendingInvoices.map((i) => i.id),
+    };
+  },
+
   isFeatureEnabledForHospital(hospitalId?: string, featureName?: string): boolean {
     if (!hospitalId || !featureName) return true;
     const hosp = this.getHospitalById(hospitalId);
@@ -2344,12 +2966,14 @@ export const MockStorage = {
       coupons.unshift(coupon);
     }
     setStored(STORAGE_KEYS.COUPONS, coupons);
+    ApiService.saveCoupon(coupon).catch(() => {});
     this.logActivity('Saved Coupon Code', `Code: ${coupon.code} (${coupon.discountPercentage}%)`, 'billing', 'Super Admin', 'Platform Admin');
   },
 
   deleteCoupon(id: string): void {
     const coupons = this.getCoupons().filter((c) => c.id !== id && c.code !== id);
     setStored(STORAGE_KEYS.COUPONS, coupons);
+    ApiService.deleteCoupon(id).catch(() => {});
     this.logActivity('Deleted Coupon Code', `Coupon ID: ${id}`, 'billing', 'Super Admin', 'Platform Admin');
   },
 
@@ -3242,6 +3866,7 @@ export const MockStorage = {
       list.unshift(req);
     }
     setStored(STORAGE_KEYS.FOLLOW_UP_REQUESTS, list);
+    ApiService.saveFollowUpRequest(req).catch(() => {});
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('pulse_storage_updated'));
     }
@@ -3262,9 +3887,94 @@ export const MockStorage = {
       if (scheduledDate) req.scheduledDate = scheduledDate;
       if (scheduledTime) req.scheduledTime = scheduledTime;
       setStored(STORAGE_KEYS.FOLLOW_UP_REQUESTS, list);
+      ApiService.saveFollowUpRequest(req).catch(() => {});
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('pulse_storage_updated'));
       }
+    }
+  },
+
+  // Patient Appointment Requests Management
+  getAppointmentRequests(hospitalId?: string, patientId?: string): PatientAppointmentRequest[] {
+    let list = getStored<PatientAppointmentRequest[]>(STORAGE_KEYS.APPOINTMENT_REQUESTS, initialAppointmentRequests);
+    if (hospitalId) {
+      list = list.filter((r) => this.matchHospitalId(r.hospitalId, hospitalId) || !r.hospitalId);
+    }
+    if (patientId) {
+      list = list.filter((r) => r.patientId === patientId);
+    }
+    return list;
+  },
+
+  saveAppointmentRequest(req: PatientAppointmentRequest): void {
+    const list = getStored<PatientAppointmentRequest[]>(STORAGE_KEYS.APPOINTMENT_REQUESTS, initialAppointmentRequests);
+    const idx = list.findIndex((r) => r.id === req.id);
+    if (idx >= 0) {
+      list[idx] = req;
+    } else {
+      list.unshift(req);
+    }
+    setStored(STORAGE_KEYS.APPOINTMENT_REQUESTS, list);
+    ApiService.saveAppointmentRequest(req).catch(() => {});
+    this.logActivity(
+      idx >= 0 ? 'Updated Appointment Request' : 'Patient Requested Appointment',
+      `${req.patientName} -> ${req.doctorName} (${req.preferredDate} ${req.preferredTime})`,
+      'clinical',
+      req.patientName,
+      'Patient',
+      req.hospitalId
+    );
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
+  },
+
+  updateAppointmentRequestStatus(
+    id: string,
+    status: AppointmentRequestStatus,
+    updates?: {
+      receptionistNote?: string;
+      scheduledAppointmentId?: string;
+      scheduledDate?: string;
+      scheduledTime?: string;
+      respondedBy?: string;
+      respondedAt?: string;
+    }
+  ): void {
+    const list = getStored<PatientAppointmentRequest[]>(STORAGE_KEYS.APPOINTMENT_REQUESTS, initialAppointmentRequests);
+    const req = list.find((r) => r.id === id);
+    if (req) {
+      req.status = status;
+      req.respondedAt = new Date().toISOString();
+      if (updates?.receptionistNote !== undefined) req.receptionistNote = updates.receptionistNote;
+      if (updates?.scheduledAppointmentId) req.scheduledAppointmentId = updates.scheduledAppointmentId;
+      if (updates?.scheduledDate) req.scheduledDate = updates.scheduledDate;
+      if (updates?.scheduledTime) req.scheduledTime = updates.scheduledTime;
+      if (updates?.respondedBy) req.respondedBy = updates.respondedBy;
+      if (updates?.respondedAt) req.respondedAt = updates.respondedAt;
+
+      setStored(STORAGE_KEYS.APPOINTMENT_REQUESTS, list);
+      ApiService.saveAppointmentRequest(req).catch(() => {});
+      this.logActivity(
+        status === 'Approved' ? 'Approved Appointment Request' : 'Slot Unavailable / Note Sent',
+        `Request ${req.id} for ${req.patientName} (${status})`,
+        'clinical',
+        updates?.respondedBy || 'Reception Desk',
+        'Receptionist',
+        req.hospitalId
+      );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('pulse_storage_updated'));
+      }
+    }
+  },
+
+  deleteAppointmentRequest(id: string): void {
+    const list = getStored<PatientAppointmentRequest[]>(STORAGE_KEYS.APPOINTMENT_REQUESTS, initialAppointmentRequests).filter((r) => r.id !== id);
+    setStored(STORAGE_KEYS.APPOINTMENT_REQUESTS, list);
+    ApiService.deleteAppointmentRequest(id).catch(() => {});
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
     }
   },
 
@@ -3289,6 +3999,7 @@ export const MockStorage = {
       list.unshift(req);
     }
     setStored(STORAGE_KEYS.ADMISSION_REQUESTS, list);
+    ApiService.saveAdmissionRequest(req).catch(() => {});
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('pulse_storage_updated'));
     }
@@ -3305,6 +4016,7 @@ export const MockStorage = {
       req.status = status;
       if (admittedAdmissionId) req.admittedAdmissionId = admittedAdmissionId;
       setStored(STORAGE_KEYS.ADMISSION_REQUESTS, list);
+      ApiService.saveAdmissionRequest(req).catch(() => {});
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('pulse_storage_updated'));
       }
@@ -5177,6 +5889,9 @@ export const MockStorage = {
         }));
         list = [...list, ...seeded];
         setStored(STORAGE_KEYS.LAB_CATALOG, list);
+        for (const test of seeded) {
+          ApiService.saveLabCatalogItem(test).catch(() => {});
+        }
         return seeded;
       }
       return hospTests;
@@ -5193,11 +5908,13 @@ export const MockStorage = {
       list.unshift(test);
     }
     setStored(STORAGE_KEYS.LAB_CATALOG, list);
+    ApiService.saveLabCatalogItem(test).catch(() => {});
   },
 
   deleteLabTestCatalog(id: string): void {
     const list = getStored<LabTestCatalog[]>(STORAGE_KEYS.LAB_CATALOG, initialLabCatalog).filter((t) => t.id !== id);
     setStored(STORAGE_KEYS.LAB_CATALOG, list);
+    ApiService.deleteLabCatalogItem(id).catch(() => {});
   },
 
   updateLabTestCatalogStatus(id: string, status: 'active' | 'inactive'): void {
@@ -5206,6 +5923,7 @@ export const MockStorage = {
     if (item) {
       item.status = status;
       setStored(STORAGE_KEYS.LAB_CATALOG, list);
+      ApiService.saveLabCatalogItem(item).catch(() => {});
     }
   },
 
@@ -5644,12 +6362,14 @@ export const MockStorage = {
       list.unshift(testimonial);
     }
     setStored(STORAGE_KEYS.TESTIMONIALS, list);
+    ApiService.saveTestimonial(testimonial).catch(() => {});
     this.logActivity(idx >= 0 ? 'Updated Patient Testimonial' : 'Added Patient Review', testimonial.patientName, 'clinical', 'Hospital Admin', 'Hospital User', testimonial.hospitalId);
   },
 
   deleteTestimonial(id: string): void {
     const list = getStored<PatientTestimonial[]>(STORAGE_KEYS.TESTIMONIALS, initialTestimonials).filter((t) => t.id !== id);
     setStored(STORAGE_KEYS.TESTIMONIALS, list);
+    ApiService.deleteTestimonial(id).catch(() => {});
   },
 
   // Settings
@@ -5659,6 +6379,7 @@ export const MockStorage = {
 
   savePlatformSettings(settings: PlatformSettings): void {
     setStored(STORAGE_KEYS.PLATFORM_SETTINGS, settings);
+    ApiService.savePlatformSettings(settings).catch(() => {});
     if (settings.allowTrialDays) {
       const plans = getStored<SubscriptionPlan[]>(STORAGE_KEYS.PLANS, initialPlans);
       const trialPlan = plans.find((p) => p.tier === 'trial');
@@ -5707,6 +6428,7 @@ export const MockStorage = {
     const normHospId = settings.hospitalId || 'HOSP-001';
     all[normHospId] = settings;
     setStored(STORAGE_KEYS.HOSPITAL_SETTINGS, all);
+    ApiService.saveHospitalSettings(normHospId, settings).catch(() => {});
     this.logActivity('Updated Hospital Settings Profile', settings.hospitalName, 'system', 'Admin', 'Hospital Admin', settings.hospitalId);
   },
 
@@ -5737,6 +6459,7 @@ export const MockStorage = {
       list.unshift(ambulance);
     }
     setStored(STORAGE_KEYS.AMBULANCES, list);
+    ApiService.saveAmbulance(ambulance).catch(() => {});
     this.logActivity(idx >= 0 ? 'Updated Ambulance Specs' : 'Enrolled Emergency Ambulance', `${ambulance.regNumber} (${ambulance.type})`, 'ambulance', 'Fleet Admin', 'Operations', ambulance.hospitalId);
   },
 
@@ -5744,6 +6467,7 @@ export const MockStorage = {
     const amb = this.getAmbulanceById(id);
     const list = getStored<Ambulance[]>(STORAGE_KEYS.AMBULANCES, initialAmbulances).filter((a) => a.id !== id);
     setStored(STORAGE_KEYS.AMBULANCES, list);
+    ApiService.deleteAmbulance(id).catch(() => {});
     if (amb) {
       this.logActivity('Decommissioned Ambulance', amb.regNumber, 'ambulance', 'Fleet Admin', 'Operations', amb.hospitalId);
     }
@@ -5862,6 +6586,23 @@ export const MockStorage = {
     this.logActivity(idx >= 0 ? 'Updated Emergency Request' : 'Emergency 911 Dispatch Request', `${request.patientName} (${request.emergencyType})`, 'ambulance', 'Dispatch Desk', 'Emergency Team', request.hospitalId);
   },
 
+  deleteEmergencyRequest(id: string): void {
+    const list = getStored<EmergencyRequest[]>(STORAGE_KEYS.EMERGENCY_REQUESTS, initialEmergencyRequests);
+    const updated = list.filter((r) => r.id !== id);
+    setStored(STORAGE_KEYS.EMERGENCY_REQUESTS, updated);
+    ApiService.deleteEmergencyRequest(id).catch(() => {});
+  },
+
+  clearCompletedEmergencyRequests(hospitalId?: string): void {
+    const list = getStored<EmergencyRequest[]>(STORAGE_KEYS.EMERGENCY_REQUESTS, initialEmergencyRequests);
+    const toDelete = list.filter((r) => r.status === 'Completed' && (!hospitalId || this.matchHospitalId(r.hospitalId, hospitalId)));
+    const remaining = list.filter((r) => !(r.status === 'Completed' && (!hospitalId || this.matchHospitalId(r.hospitalId, hospitalId))));
+    setStored(STORAGE_KEYS.EMERGENCY_REQUESTS, remaining);
+    for (const r of toDelete) {
+      ApiService.deleteEmergencyRequest(r.id).catch(() => {});
+    }
+  },
+
   dispatchEmergency(requestId: string, ambulanceId: string, driverId: string): void {
     const requests = getStored<EmergencyRequest[]>(STORAGE_KEYS.EMERGENCY_REQUESTS, initialEmergencyRequests);
     const req = requests.find((r) => r.id === requestId);
@@ -5910,6 +6651,7 @@ export const MockStorage = {
       };
       trips.unshift(newTrip);
       setStored(STORAGE_KEYS.AMBULANCE_TRIPS, trips);
+      ApiService.saveAmbulanceTrip(newTrip).catch(() => {});
     }
   },
 
@@ -5944,6 +6686,9 @@ export const MockStorage = {
       }
       setStored(STORAGE_KEYS.EMERGENCY_REQUESTS, requests);
 
+      // Persist status update to backend API so page refresh preserves status
+      ApiService.updateEmergencyStatus(requestId, status, notes).catch(() => {});
+
       // Synchronize active trip
       const trips = this.getAmbulanceTrips();
       const trip = trips.find((t) => t.requestId === requestId);
@@ -5954,6 +6699,7 @@ export const MockStorage = {
         if (status === 'Completed') trip.endTime = currentTime;
         if (notes) trip.paramedicNotes = notes;
         setStored(STORAGE_KEYS.AMBULANCE_TRIPS, trips);
+        ApiService.saveAmbulanceTrip(trip).catch(() => {});
       }
     }
   },
@@ -5970,6 +6716,18 @@ export const MockStorage = {
       list = list.filter((t) => t.driverId === driverId);
     }
     return list;
+  },
+
+  saveAmbulanceTrip(trip: AmbulanceTrip): void {
+    const list = getStored<AmbulanceTrip[]>(STORAGE_KEYS.AMBULANCE_TRIPS, initialAmbulanceTrips);
+    const idx = list.findIndex((t) => t.id === trip.id);
+    if (idx >= 0) {
+      list[idx] = trip;
+    } else {
+      list.unshift(trip);
+    }
+    setStored(STORAGE_KEYS.AMBULANCE_TRIPS, list);
+    ApiService.saveAmbulanceTrip(trip).catch(() => {});
   },
 
   // Ambulance Maintenance
@@ -5992,16 +6750,34 @@ export const MockStorage = {
       list.unshift(maintenance);
     }
     setStored(STORAGE_KEYS.AMBULANCE_MAINTENANCE, list);
+    ApiService.saveAmbulanceMaintenance(maintenance).catch(() => {});
+  },
+
+  deleteAmbulanceMaintenance(id: string): void {
+    const list = getStored<AmbulanceMaintenance[]>(STORAGE_KEYS.AMBULANCE_MAINTENANCE, initialAmbulanceMaintenance).filter((m) => m.id !== id);
+    setStored(STORAGE_KEYS.AMBULANCE_MAINTENANCE, list);
+    ApiService.deleteAmbulanceMaintenance(id).catch(() => {});
+    this.logActivity('Deleted Maintenance Record', 'Log ID ' + id, 'ambulance', 'Fleet Admin', 'Operations');
   },
 
   // CSV Export utility
   exportToCSV(filename: string, rows: Record<string, any>[]): void {
     if (!rows || !rows.length) {
-      alert('No data available to export in the current view.');
+      if (typeof window !== 'undefined') {
+        alert('No data available to export in the current view.');
+      }
       return;
     }
     const separator = ',';
-    const keys = Object.keys(rows[0]);
+    // Aggregate keys from all rows to prevent missing columns in sparse records
+    const keys = Array.from(new Set(rows.flatMap((r) => (r && typeof r === 'object' ? Object.keys(r) : []))));
+    if (!keys.length) {
+      if (typeof window !== 'undefined') {
+        alert('No printable columns found to export.');
+      }
+      return;
+    }
+
     const csvContent =
       keys.join(separator) +
       '\n' +
@@ -6010,11 +6786,15 @@ export const MockStorage = {
           return keys
             .map((k) => {
               let cell = row[k] === null || row[k] === undefined ? '' : row[k];
-              if (typeof cell === 'object') {
+              if (Array.isArray(cell)) {
+                cell = cell
+                  .map((item) => (typeof item === 'object' && item !== null ? JSON.stringify(item) : String(item)))
+                  .join('; ');
+              } else if (typeof cell === 'object') {
                 cell = JSON.stringify(cell);
               }
-              cell = cell.toString().replace(/"/g, '""');
-              if (cell.search(/("|,|\n)/g) >= 0) {
+              cell = String(cell).replace(/"/g, '""');
+              if (cell.search(/("|,|\n|\r)/g) >= 0) {
                 cell = `"${cell}"`;
               }
               return cell;
@@ -6023,7 +6803,8 @@ export const MockStorage = {
         })
         .join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    // Add \uFEFF UTF-8 BOM so Microsoft Excel & LibreOffice recognize UTF-8 encoding (rupee symbol, accents, etc.)
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
@@ -6032,6 +6813,7 @@ export const MockStorage = {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
   },
 
   // ===================================
@@ -6195,6 +6977,7 @@ export const MockStorage = {
       list.unshift(followUp);
     }
     setStored(STORAGE_KEYS.LEAD_FOLLOWUPS, list);
+    ApiService.saveLeadFollowUp(followUp).catch(() => {});
 
     // Update Lead's nextFollowUpDate
     const leads = this.getSalesLeads();
@@ -6211,6 +6994,7 @@ export const MockStorage = {
     if (item) {
       item.status = status;
       setStored(STORAGE_KEYS.LEAD_FOLLOWUPS, list);
+      ApiService.saveLeadFollowUp(item).catch(() => {});
     }
   },
 
@@ -6229,6 +7013,7 @@ export const MockStorage = {
     const list = getStored<LeadActivity[]>(STORAGE_KEYS.LEAD_ACTIVITIES, initialLeadActivities);
     list.unshift(activity);
     setStored(STORAGE_KEYS.LEAD_ACTIVITIES, list);
+    ApiService.saveLeadActivity(activity).catch(() => {});
   },
 
   // Converted Customers
@@ -6251,6 +7036,30 @@ export const MockStorage = {
       list.unshift(cust);
     }
     setStored(STORAGE_KEYS.CONVERTED_CUSTOMERS, list);
+    ApiService.saveConvertedCustomer(cust).catch(() => {});
+  },
+
+  getBranchRequests(organizationId?: string): BranchCreationRequest[] {
+    const list = getStored<BranchCreationRequest[]>(STORAGE_KEYS.BRANCH_REQUESTS, []);
+    if (organizationId) {
+      return list.filter((r) => r.organizationId === organizationId);
+    }
+    return list;
+  },
+
+  saveBranchRequest(req: BranchCreationRequest): void {
+    const list = getStored<BranchCreationRequest[]>(STORAGE_KEYS.BRANCH_REQUESTS, []);
+    const idx = list.findIndex((r) => r.id === req.id);
+    if (idx >= 0) {
+      list[idx] = req;
+    } else {
+      list.unshift(req);
+    }
+    setStored(STORAGE_KEYS.BRANCH_REQUESTS, list);
+    ApiService.saveBranchRequest(req).catch(() => {});
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
   },
 
   // Enterprise Health Network Organizations & Multi-Branch Management

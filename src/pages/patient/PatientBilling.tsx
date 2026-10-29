@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { MockStorage } from '../../services/mockStorage';
 import { Invoice } from '../../types';
+import { printInvoiceReceipt } from '../../utils/invoicePrint';
 import { Card } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -35,13 +36,6 @@ export const PatientBilling: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'All' | 'Paid' | 'Pending' | 'Partially Paid'>('All');
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [isPayModalOpen, setIsPayModalOpen] = useState(false);
-  const [payInvoice, setPayInvoice] = useState<Invoice | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'Credit Card' | 'Debit Card' | 'UPI' | 'Insurance'>('Credit Card');
-  const [cardNumber, setCardNumber] = useState('•••• •••• •••• 4242');
-  const [cardExpiry, setCardExpiry] = useState('12/28');
-  const [cardCvc, setCardCvc] = useState('•••');
-  const [isProcessing, setIsProcessing] = useState(false);
 
   const patientId = user?.patientId || 'PAT-1001';
 
@@ -69,25 +63,6 @@ export const PatientBilling: React.FC = () => {
     const matchesStatus = statusFilter === 'All' || inv.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const handleOpenPay = (invoice: Invoice) => {
-    setPayInvoice(invoice);
-    setIsPayModalOpen(true);
-  };
-
-  const handleProcessPayment = () => {
-    if (!payInvoice) return;
-    setIsProcessing(true);
-
-    setTimeout(() => {
-      const remaining = payInvoice.totalAmount - payInvoice.amountPaid;
-      MockStorage.recordPayment(payInvoice.id, remaining, paymentMethod);
-      setIsProcessing(false);
-      setIsPayModalOpen(false);
-      showToast('Payment Successful', `Successfully processed payment of $${remaining.toLocaleString()} for invoice ${payInvoice.id}.`, 'success');
-      setPayInvoice(null);
-    }, 800);
-  };
 
   const getStatusBadge = (status: Invoice['status']) => {
     switch (status) {
@@ -254,16 +229,6 @@ export const PatientBilling: React.FC = () => {
                       >
                         Receipt
                       </Button>
-                      {balanceDue > 0 && (
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          leftIcon={<CreditCard className="w-4 h-4" />}
-                          onClick={() => handleOpenPay(inv)}
-                        >
-                          Pay Now (₹{balanceDue})
-                        </Button>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -371,89 +336,49 @@ export const PatientBilling: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex justify-between items-center pt-3 border-t border-slate-100">
-              <Button variant="outline" size="sm" leftIcon={<Printer className="w-4 h-4" />} onClick={() => window.print()}>
-                Print Receipt
-              </Button>
+            <div className="flex justify-between items-center pt-3 border-t border-slate-100 gap-2">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  leftIcon={<Printer className="w-4 h-4" />}
+                  onClick={() =>
+                    printInvoiceReceipt(selectedInvoice, {
+                      hospitalName: 'PulseCore Super Specialty Hospital',
+                      hospitalAddress: 'Central Medical Boulevard, Healthcare City',
+                      taxRegistrationNumber: '29ABCDE1234F1Z5',
+                    })
+                  }
+                >
+                  Print / Save PDF
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  leftIcon={<Download className="w-4 h-4" />}
+                  onClick={() => {
+                    const rows = (selectedInvoice.items || []).map((it) => ({
+                      Invoice_ID: selectedInvoice.id,
+                      Item: it.description,
+                      Category: it.category,
+                      Quantity: it.quantity,
+                      Rate: it.unitPrice,
+                      Total: it.total,
+                      Tax: selectedInvoice.taxAmount,
+                      Grand_Total: selectedInvoice.totalAmount,
+                      Paid: selectedInvoice.amountPaid,
+                      Balance: Math.max(0, selectedInvoice.totalAmount - selectedInvoice.amountPaid),
+                      Date: selectedInvoice.issueDate,
+                    }));
+                    MockStorage.exportToCSV(`Invoice_${selectedInvoice.id}`, rows);
+                    showToast('Download Complete', `Invoice ${selectedInvoice.id} downloaded as CSV.`);
+                  }}
+                >
+                  Download CSV
+                </Button>
+              </div>
               <Button variant="primary" onClick={() => setIsDetailModalOpen(false)}>
                 Close
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* Checkout / Pay Online Modal */}
-      {payInvoice && (
-        <Modal
-          isOpen={isPayModalOpen}
-          onClose={() => setIsPayModalOpen(false)}
-          title="Secure Hospital Bill Settlement"
-          maxWidth="md"
-        >
-          <div className="space-y-5">
-            <div className="p-4 bg-teal-50 rounded-xl border border-teal-100 flex items-center justify-between">
-              <div>
-                <p className="text-xl font-black text-slate-900 mt-0.5">
-                  ₹{(payInvoice.totalAmount - payInvoice.amountPaid).toFixed(2)}
-                </p>
-              </div>
-              <ShieldCheck className="w-8 h-8 text-teal-600" />
-            </div>
-
-            {/* Payment method selector */}
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Select Payment Gateway</label>
-              <div className="grid grid-cols-2 gap-2">
-                {(['Credit Card', 'Debit Card', 'UPI', 'Insurance'] as const).map((method) => (
-                  <button
-                    key={method}
-                    type="button"
-                    onClick={() => setPaymentMethod(method)}
-                    className={`p-3 rounded-lg text-xs font-semibold border flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                      paymentMethod === method
-                        ? 'border-brand-600 bg-brand-50 text-brand-700 shadow-sm'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <CreditCard className="w-4 h-4" />
-                    {method}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Simulated Card form */}
-            {(paymentMethod === 'Credit Card' || paymentMethod === 'Debit Card') && (
-              <div className="space-y-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 mb-1">Card Number</label>
-                  <Input value={cardNumber} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCardNumber(e.target.value)} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">Expiry Date</label>
-                    <Input value={cardExpiry} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCardExpiry(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">CVV / CVC</label>
-                    <Input value={cardCvc} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCardCvc(e.target.value)} />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
-              <Button variant="outline" onClick={() => setIsPayModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                onClick={handleProcessPayment}
-                isLoading={isProcessing}
-                leftIcon={<ShieldCheck className="w-4 h-4" />}
-              >
-                Pay ₹{(payInvoice.totalAmount - payInvoice.amountPaid).toFixed(2)}
               </Button>
             </div>
           </div>

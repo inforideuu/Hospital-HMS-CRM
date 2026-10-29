@@ -39,6 +39,7 @@ import {
   ClipboardList,
   ShoppingCart,
   FileCheck,
+  MessageSquare,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { MockStorage } from '../../services/mockStorage';
@@ -112,6 +113,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <Calendar className="w-4 h-4" />,
       roles: ['hospital_admin', 'doctor', 'receptionist', 'nurse'],
       badge: 'Today',
+      featureKeyword: 'appointments_opd',
+    },
+    {
+      label: 'Patient Request Queue',
+      path: '/hospital/appointments?tab=patient-requests',
+      icon: <MessageSquare className="w-4 h-4 text-teal-400" />,
+      roles: ['hospital_admin', 'receptionist'],
+      badge: (() => {
+        const reqs = hospId ? MockStorage.getAppointmentRequests(hospId) : MockStorage.getAppointmentRequests();
+        const pending = reqs.filter((r) => r.status === 'Pending').length;
+        return pending > 0 ? `${pending} New` : undefined;
+      })(),
       featureKeyword: 'appointments_opd',
     },
     {
@@ -745,6 +758,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             const requiredPackage = accessCheck?.requiredTierName || 'Professional Hospital';
             const upgradeMessage = `Upgrade to ${requiredPackage} package to access`;
 
+            const isItemActive = item.path.includes('?')
+              ? `${location.pathname}${location.search}` === item.path
+              : location.pathname === item.path && (!location.search || !location.search.includes('tab='));
+
             return (
               <NavLink
                 key={item.path}
@@ -761,20 +778,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   }
                   onCloseMobile();
                 }}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-150 group relative ${
+                className={({ isActive }) => {
+                  const active = isItemActive || (isActive && !item.path.includes('?') && !location.search.includes('tab='));
+                  return `flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-150 group relative ${
                     isFeatureDisabled
                       ? 'text-slate-500 opacity-60 bg-slate-900/40 cursor-not-allowed border border-slate-800/40 hover:opacity-100 hover:border-amber-500/30'
-                      : isActive
+                      : active
                       ? 'bg-brand-600 text-white font-semibold shadow-md shadow-brand-600/30'
                       : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
-                  } ${isCollapsed ? 'justify-center px-0' : ''}`
-                }
+                  } ${isCollapsed ? 'justify-center px-0' : ''}`;
+                }}
                 title={isFeatureDisabled ? upgradeMessage : isCollapsed ? item.label : undefined}
               >
                 <div
                   className={`shrink-0 transition-transform duration-200 group-hover:scale-110 ${
-                    isFeatureDisabled ? 'text-slate-600 group-hover:text-amber-400' : isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-200'
+                    isFeatureDisabled
+                      ? 'text-slate-600 group-hover:text-amber-400'
+                      : (isItemActive || (!item.path.includes('?') && location.pathname === item.path && !location.search.includes('tab=')))
+                      ? 'text-white'
+                      : 'text-slate-400 group-hover:text-slate-200'
                   }`}
                 >
                   {isFeatureDisabled ? <Lock className="w-4 h-4 text-rose-400 group-hover:text-amber-400 transition-colors" /> : item.icon}

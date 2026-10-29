@@ -22,6 +22,7 @@ import {
   ArrowRight,
   ExternalLink,
   Pill,
+  Download,
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
@@ -464,6 +465,35 @@ export const DischargeInvoicingManagement: React.FC = () => {
         ]}
         actions={
           <div className="flex items-center gap-2.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const listToExport = filteredAdmissions.map((adm) => {
+                  const stay = calculateStayDays(adm.admissionDate, adm.dischargeDate || new Date().toISOString().split('T')[0]);
+                  return {
+                    Admission_ID: adm.id,
+                    Patient_Name: adm.patientName,
+                    UHID: adm.patientId,
+                    Ward: adm.wardType,
+                    Bed: adm.bedNumber,
+                    Admission_Date: adm.admissionDate,
+                    Discharge_Date: adm.dischargeDate || '',
+                    Stay_Days: stay,
+                    Doctor: adm.dischargeDoctorName || adm.doctorName,
+                    Initial_Deposit: adm.initialDeposit || 0,
+                    Invoice_Status: adm.invoiceId ? 'Invoiced' : 'Pending Invoice',
+                    Invoice_ID: adm.invoiceId || 'N/A',
+                  };
+                });
+                MockStorage.exportToCSV('Discharge_Invoicing_Queue', listToExport);
+                showToast('Export Successful', 'Discharge invoicing queue exported as CSV.');
+              }}
+              leftIcon={<Download className="w-4 h-4 text-slate-500" />}
+              className="font-medium"
+            >
+              Export CSV
+            </Button>
             <Link to="/hospital/billing">
               <Button
                 variant="outline"

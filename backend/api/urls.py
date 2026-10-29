@@ -29,6 +29,21 @@ from .views import (
     StaffViewSet,
     ActivityLogViewSet,
     SalesLeadViewSet,
+    AmbulanceViewSet,
+    AmbulanceMaintenanceViewSet,
+    AmbulanceTripViewSet,
+    PatientAppointmentRequestViewSet,
+    LabTestCatalogViewSet,
+    CouponCodeViewSet,
+    BranchCreationRequestViewSet,
+    AdmissionRequestViewSet,
+    FollowUpRequestViewSet,
+    LeadFollowUpViewSet,
+    LeadActivityViewSet,
+    ConvertedCustomerViewSet,
+    PatientTestimonialViewSet,
+    HospitalSettingViewSet,
+    PlatformSettingViewSet,
     auth_login,
 )
 
@@ -61,6 +76,21 @@ router.register(r'beds', BedViewSet)
 router.register(r'staff', StaffViewSet)
 router.register(r'activity-logs', ActivityLogViewSet)
 router.register(r'sales-leads', SalesLeadViewSet)
+router.register(r'ambulances', AmbulanceViewSet)
+router.register(r'ambulance-maintenance', AmbulanceMaintenanceViewSet)
+router.register(r'ambulance-trips', AmbulanceTripViewSet)
+router.register(r'appointment-requests', PatientAppointmentRequestViewSet)
+router.register(r'lab-catalog', LabTestCatalogViewSet)
+router.register(r'coupons', CouponCodeViewSet)
+router.register(r'branch-requests', BranchCreationRequestViewSet)
+router.register(r'admission-requests', AdmissionRequestViewSet)
+router.register(r'follow-up-requests', FollowUpRequestViewSet)
+router.register(r'lead-followups', LeadFollowUpViewSet)
+router.register(r'lead-activities', LeadActivityViewSet)
+router.register(r'converted-customers', ConvertedCustomerViewSet)
+router.register(r'testimonials', PatientTestimonialViewSet)
+router.register(r'hospital-settings', HospitalSettingViewSet)
+router.register(r'platform-settings', PlatformSettingViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

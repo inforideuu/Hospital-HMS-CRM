@@ -39,7 +39,9 @@ import {
   Send,
   Navigation,
   Check,
-  X
+  X,
+  Edit,
+  Trash2
 } from 'lucide-react';
 
 export const AmbulanceManagement: React.FC = () => {
@@ -60,6 +62,13 @@ export const AmbulanceManagement: React.FC = () => {
   const [selectedRequestForDispatch, setSelectedRequestForDispatch] = useState<EmergencyRequest | null>(null);
   const [selectedAmbulanceId, setSelectedAmbulanceId] = useState('');
   const [selectedDriverId, setSelectedDriverId] = useState('');
+
+  const [editingAmbulance, setEditingAmbulance] = useState<Ambulance | null>(null);
+  const [ambulanceToDelete, setAmbulanceToDelete] = useState<Ambulance | null>(null);
+  const [editingDriver, setEditingDriver] = useState<AmbulanceDriver | null>(null);
+  const [driverToDelete, setDriverToDelete] = useState<AmbulanceDriver | null>(null);
+  const [editingMaintenance, setEditingMaintenance] = useState<AmbulanceMaintenance | null>(null);
+  const [maintenanceToDelete, setMaintenanceToDelete] = useState<AmbulanceMaintenance | null>(null);
 
   const [isAddAmbulanceModalOpen, setIsAddAmbulanceModalOpen] = useState(false);
   const [newAmbulance, setNewAmbulance] = useState({
@@ -133,8 +142,63 @@ export const AmbulanceManagement: React.FC = () => {
     showToast('Trip Status Updated', `Emergency request ${requestId} updated to ${status}.`, 'info');
   };
 
+  const handleOpenAddAmbulance = () => {
+    setEditingAmbulance(null);
+    setNewAmbulance({
+      regNumber: '',
+      type: 'Advanced Life Support (ALS)',
+      model: '',
+      equipmentCategory: 'Class A (Critical Telemetry)',
+      currentLocation: 'Base Station Alpha',
+      fuelLevel: 100,
+      mileageKm: 12000,
+    });
+    setIsAddAmbulanceModalOpen(true);
+  };
+
+  const handleOpenEditAmbulance = (amb: Ambulance) => {
+    setEditingAmbulance(amb);
+    setNewAmbulance({
+      regNumber: amb.regNumber || '',
+      type: amb.type,
+      model: amb.model,
+      equipmentCategory: amb.equipmentCategory || 'Class A (Critical Telemetry)',
+      currentLocation: amb.currentLocation || 'Base Station Alpha',
+      fuelLevel: amb.fuelLevel,
+      mileageKm: amb.mileageKm,
+    });
+    setIsAddAmbulanceModalOpen(true);
+  };
+
+  const handleConfirmDeleteAmbulance = () => {
+    if (!ambulanceToDelete) return;
+    MockStorage.deleteAmbulance(ambulanceToDelete.id);
+    loadData();
+    showToast('Ambulance Deleted', `Unit ${ambulanceToDelete.regNumber} removed from fleet.`, 'success');
+    setAmbulanceToDelete(null);
+  };
+
   const handleAddAmbulance = (e: React.FormEvent) => {
     e.preventDefault();
+    if (editingAmbulance) {
+      const amb: Ambulance = {
+        ...editingAmbulance,
+        regNumber: newAmbulance.regNumber,
+        type: newAmbulance.type,
+        model: newAmbulance.model,
+        equipmentCategory: newAmbulance.equipmentCategory,
+        currentLocation: newAmbulance.currentLocation,
+        fuelLevel: newAmbulance.fuelLevel,
+        mileageKm: newAmbulance.mileageKm,
+      };
+      MockStorage.saveAmbulance(amb);
+      loadData();
+      showToast('Ambulance Updated', `Unit ${amb.regNumber} updated successfully.`, 'success');
+      setIsAddAmbulanceModalOpen(false);
+      setEditingAmbulance(null);
+      return;
+    }
+
     const amb: Ambulance = {
       id: `AMB-${Date.now().toString().slice(-3)}`,
       hospitalId,
@@ -152,6 +216,7 @@ export const AmbulanceManagement: React.FC = () => {
     };
 
     MockStorage.saveAmbulance(amb);
+    loadData();
     showToast('Ambulance Registered', `Unit ${amb.regNumber} has been added to the fleet.`, 'success');
     setIsAddAmbulanceModalOpen(false);
     setNewAmbulance({
@@ -165,8 +230,60 @@ export const AmbulanceManagement: React.FC = () => {
     });
   };
 
+  const handleOpenAddDriver = () => {
+    setEditingDriver(null);
+    setNewDriver({
+      name: '',
+      email: '',
+      phone: '',
+      licenseNumber: '',
+      licenseExpiry: '2028-12-31',
+      emergencyExperienceYears: 5,
+    });
+    setIsAddDriverModalOpen(true);
+  };
+
+  const handleOpenEditDriver = (drv: AmbulanceDriver) => {
+    setEditingDriver(drv);
+    setNewDriver({
+      name: drv.name,
+      email: drv.email || '',
+      phone: drv.phone,
+      licenseNumber: drv.licenseNumber,
+      licenseExpiry: drv.licenseExpiry,
+      emergencyExperienceYears: drv.emergencyExperienceYears || 0,
+    });
+    setIsAddDriverModalOpen(true);
+  };
+
+  const handleConfirmDeleteDriver = () => {
+    if (!driverToDelete) return;
+    MockStorage.deleteAmbulanceDriver(driverToDelete.id);
+    loadData();
+    showToast('Driver Removed', `${driverToDelete.name} removed from roster.`, 'success');
+    setDriverToDelete(null);
+  };
+
   const handleAddDriver = (e: React.FormEvent) => {
     e.preventDefault();
+    if (editingDriver) {
+      const drv: AmbulanceDriver = {
+        ...editingDriver,
+        name: newDriver.name,
+        email: newDriver.email,
+        phone: newDriver.phone,
+        licenseNumber: newDriver.licenseNumber,
+        licenseExpiry: newDriver.licenseExpiry,
+        emergencyExperienceYears: Number(newDriver.emergencyExperienceYears),
+      };
+      MockStorage.saveAmbulanceDriver(drv);
+      loadData();
+      showToast('Driver Updated', `${drv.name} details updated.`, 'success');
+      setIsAddDriverModalOpen(false);
+      setEditingDriver(null);
+      return;
+    }
+
     const drv: AmbulanceDriver = {
       id: `DRV-${Date.now().toString().slice(-3)}`,
       hospitalId,
@@ -183,6 +300,7 @@ export const AmbulanceManagement: React.FC = () => {
     };
 
     MockStorage.saveAmbulanceDriver(drv);
+    loadData();
     showToast('Paramedic Driver Onboarded', `${drv.name} has been added to the emergency team roster.`, 'success');
     setIsAddDriverModalOpen(false);
     setNewDriver({
@@ -195,9 +313,60 @@ export const AmbulanceManagement: React.FC = () => {
     });
   };
 
+  const handleOpenAddMaintenance = () => {
+    setEditingMaintenance(null);
+    setNewMaintenance({
+      ambulanceId: ambulances.length > 0 ? ambulances[0].id : '',
+      serviceType: 'Routine Inspection',
+      description: '',
+      cost: 450,
+      servicedBy: 'Metro Fleet Services Inc.',
+    });
+    setIsAddMaintenanceModalOpen(true);
+  };
+
+  const handleOpenEditMaintenance = (rec: AmbulanceMaintenance) => {
+    setEditingMaintenance(rec);
+    setNewMaintenance({
+      ambulanceId: rec.ambulanceId,
+      serviceType: rec.serviceType,
+      description: rec.description,
+      cost: rec.cost,
+      servicedBy: rec.servicedBy,
+    });
+    setIsAddMaintenanceModalOpen(true);
+  };
+
+  const handleConfirmDeleteMaintenance = () => {
+    if (!maintenanceToDelete) return;
+    MockStorage.deleteAmbulanceMaintenance(maintenanceToDelete.id);
+    loadData();
+    showToast('Record Deleted', `Maintenance log for ${maintenanceToDelete.ambulanceReg} deleted.`, 'success');
+    setMaintenanceToDelete(null);
+  };
+
   const handleAddMaintenance = (e: React.FormEvent) => {
     e.preventDefault();
     const amb = ambulances.find((a) => a.id === newMaintenance.ambulanceId);
+
+    if (editingMaintenance) {
+      const mnt: AmbulanceMaintenance = {
+        ...editingMaintenance,
+        ambulanceId: newMaintenance.ambulanceId,
+        ambulanceReg: amb ? amb.regNumber : editingMaintenance.ambulanceReg,
+        serviceType: newMaintenance.serviceType,
+        description: newMaintenance.description,
+        cost: Number(newMaintenance.cost),
+        servicedBy: newMaintenance.servicedBy,
+      };
+      MockStorage.saveAmbulanceMaintenance(mnt);
+      loadData();
+      showToast('Maintenance Updated', `Record updated for ${mnt.ambulanceReg}.`, 'success');
+      setIsAddMaintenanceModalOpen(false);
+      setEditingMaintenance(null);
+      return;
+    }
+
     if (!amb) return;
 
     const mnt: AmbulanceMaintenance = {
@@ -214,8 +383,16 @@ export const AmbulanceManagement: React.FC = () => {
     };
 
     MockStorage.saveAmbulanceMaintenance(mnt);
+    loadData();
     showToast('Maintenance Logged', `Service record logged for unit ${amb.regNumber}.`, 'success');
     setIsAddMaintenanceModalOpen(false);
+    setNewMaintenance({
+      ambulanceId: '',
+      serviceType: 'Routine Inspection',
+      description: '',
+      cost: 450,
+      servicedBy: 'Metro Fleet Services Inc.',
+    });
   };
 
   const handleExportCSV = () => {
@@ -248,7 +425,7 @@ export const AmbulanceManagement: React.FC = () => {
             variant="primary"
             size="sm"
             leftIcon={<Plus className="w-4 h-4" />}
-            onClick={() => setIsAddAmbulanceModalOpen(true)}
+            onClick={handleOpenAddAmbulance}
           >
             Add Ambulance
           </Button>
@@ -458,7 +635,7 @@ export const AmbulanceManagement: React.FC = () => {
               variant="primary"
               size="sm"
               leftIcon={<Plus className="w-4 h-4" />}
-              onClick={() => setIsAddAmbulanceModalOpen(true)}
+              onClick={handleOpenAddAmbulance}
             >
               Add New Unit
             </Button>
@@ -527,8 +704,32 @@ export const AmbulanceManagement: React.FC = () => {
                   </div>
 
                   <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                    <span>Odometer: {amb.mileageKm.toLocaleString()} km</span>
-                    <span>Next Service: {amb.nextMaintenanceDate}</span>
+                    <div>
+                      <p>Odometer: {amb.mileageKm.toLocaleString()} km</p>
+                      <p className="text-[10px] text-slate-400">Next: {amb.nextMaintenanceDate}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-brand-600 hover:text-brand-700 hover:bg-brand-50"
+                        leftIcon={<Edit className="w-3.5 h-3.5" />}
+                        onClick={() => handleOpenEditAmbulance(amb)}
+                        title="Edit Ambulance"
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200"
+                        leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                        onClick={() => setAmbulanceToDelete(amb)}
+                        title="Delete Ambulance"
+                      >
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 </Card>
               ))}
@@ -551,7 +752,7 @@ export const AmbulanceManagement: React.FC = () => {
               variant="primary"
               size="sm"
               leftIcon={<Plus className="w-4 h-4" />}
-              onClick={() => setIsAddDriverModalOpen(true)}
+              onClick={handleOpenAddDriver}
             >
               Add Paramedic Driver
             </Button>
@@ -606,6 +807,28 @@ export const AmbulanceManagement: React.FC = () => {
                       </div>
                     )}
                   </div>
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-brand-600 hover:text-brand-700 hover:bg-brand-50"
+                      leftIcon={<Edit className="w-3.5 h-3.5" />}
+                      onClick={() => handleOpenEditDriver(drv)}
+                      title="Edit Driver"
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200"
+                      leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                      onClick={() => setDriverToDelete(drv)}
+                      title="Delete Driver"
+                    >
+                      Delete
+                    </Button>
+                  </div>
                 </Card>
               ))}
           </div>
@@ -621,12 +844,7 @@ export const AmbulanceManagement: React.FC = () => {
               variant="primary"
               size="sm"
               leftIcon={<Plus className="w-4 h-4" />}
-              onClick={() => {
-                if (ambulances.length > 0) {
-                  setNewMaintenance((prev) => ({ ...prev, ambulanceId: ambulances[0].id }));
-                }
-                setIsAddMaintenanceModalOpen(true);
-              }}
+              onClick={handleOpenAddMaintenance}
             >
               Log Service Record
             </Button>
@@ -730,8 +948,8 @@ export const AmbulanceManagement: React.FC = () => {
       {/* Add Ambulance Modal */}
       <Modal
         isOpen={isAddAmbulanceModalOpen}
-        onClose={() => setIsAddAmbulanceModalOpen(false)}
-        title="Register New Ambulance to Fleet"
+        onClose={() => { setIsAddAmbulanceModalOpen(false); setEditingAmbulance(null); }}
+        title={editingAmbulance ? `Edit Ambulance (${editingAmbulance.regNumber})` : "Register New Ambulance to Fleet"}
         maxWidth="md"
       >
         <form onSubmit={handleAddAmbulance} className="space-y-4">
@@ -788,7 +1006,7 @@ export const AmbulanceManagement: React.FC = () => {
               Cancel
             </Button>
             <Button variant="primary" type="submit">
-              Save Vehicle
+              {editingAmbulance ? "Update Vehicle" : "Save Vehicle"}
             </Button>
           </div>
         </form>
@@ -797,8 +1015,8 @@ export const AmbulanceManagement: React.FC = () => {
       {/* Add Driver Modal */}
       <Modal
         isOpen={isAddDriverModalOpen}
-        onClose={() => setIsAddDriverModalOpen(false)}
-        title="Onboard Paramedic Driver"
+        onClose={() => { setIsAddDriverModalOpen(false); setEditingDriver(null); }}
+        title={editingDriver ? `Edit Paramedic Driver (${editingDriver.name})` : "Onboard Paramedic Driver"}
         maxWidth="md"
       >
         <form onSubmit={handleAddDriver} className="space-y-4">
@@ -859,7 +1077,7 @@ export const AmbulanceManagement: React.FC = () => {
               Cancel
             </Button>
             <Button variant="primary" type="submit">
-              Add Driver
+              {editingDriver ? "Update Driver" : "Add Driver"}
             </Button>
           </div>
         </form>
@@ -868,8 +1086,8 @@ export const AmbulanceManagement: React.FC = () => {
       {/* Add Maintenance Modal */}
       <Modal
         isOpen={isAddMaintenanceModalOpen}
-        onClose={() => setIsAddMaintenanceModalOpen(false)}
-        title="Log Vehicle Maintenance"
+        onClose={() => { setIsAddMaintenanceModalOpen(false); setEditingMaintenance(null); }}
+        title={editingMaintenance ? `Edit Vehicle Maintenance (${editingMaintenance.ambulanceReg})` : "Log Vehicle Maintenance"}
         maxWidth="md"
       >
         <form onSubmit={handleAddMaintenance} className="space-y-4">
@@ -928,11 +1146,71 @@ export const AmbulanceManagement: React.FC = () => {
               Cancel
             </Button>
             <Button variant="primary" type="submit">
-              Save Record
+              {editingMaintenance ? "Update Record" : "Save Record"}
             </Button>
           </div>
         </form>
       </Modal>
+
+      {/* Delete Ambulance Confirmation */}
+      {ambulanceToDelete && (
+        <Modal
+          isOpen={!!ambulanceToDelete}
+          onClose={() => setAmbulanceToDelete(null)}
+          title="Confirm Delete Ambulance"
+          maxWidth="sm"
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-slate-600">
+              Are you sure you want to delete unit <span className="font-bold text-slate-900">{ambulanceToDelete.regNumber}</span>?
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setAmbulanceToDelete(null)}>Cancel</Button>
+              <Button variant="primary" size="sm" className="bg-rose-600 text-white" onClick={handleConfirmDeleteAmbulance}>Delete</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Delete Driver Confirmation */}
+      {driverToDelete && (
+        <Modal
+          isOpen={!!driverToDelete}
+          onClose={() => setDriverToDelete(null)}
+          title="Confirm Delete Driver"
+          maxWidth="sm"
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-slate-600">
+              Are you sure you want to remove <span className="font-bold text-slate-900">{driverToDelete.name}</span> from the roster?
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setDriverToDelete(null)}>Cancel</Button>
+              <Button variant="primary" size="sm" className="bg-rose-600 text-white" onClick={handleConfirmDeleteDriver}>Delete</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Delete Maintenance Confirmation */}
+      {maintenanceToDelete && (
+        <Modal
+          isOpen={!!maintenanceToDelete}
+          onClose={() => setMaintenanceToDelete(null)}
+          title="Confirm Delete Maintenance Log"
+          maxWidth="sm"
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-slate-600">
+              Are you sure you want to delete maintenance record for <span className="font-bold text-slate-900">{maintenanceToDelete.ambulanceReg}</span>?
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setMaintenanceToDelete(null)}>Cancel</Button>
+              <Button variant="primary" size="sm" className="bg-rose-600 text-white" onClick={handleConfirmDeleteMaintenance}>Delete</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

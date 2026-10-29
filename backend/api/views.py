@@ -57,6 +57,21 @@ from .models import (
     Staff,
     ActivityLog,
     SalesLead,
+    Ambulance,
+    AmbulanceMaintenance,
+    AmbulanceTrip,
+    PatientAppointmentRequest,
+    LabTestCatalog,
+    CouponCode,
+    BranchCreationRequest,
+    AdmissionRequest,
+    FollowUpRequest,
+    LeadFollowUp,
+    LeadActivity,
+    ConvertedCustomer,
+    PatientTestimonial,
+    HospitalSetting,
+    PlatformSetting,
 )
 from .serializers import (
     OrganizationSerializer,
@@ -87,6 +102,21 @@ from .serializers import (
     StaffSerializer,
     ActivityLogSerializer,
     SalesLeadSerializer,
+    AmbulanceSerializer,
+    AmbulanceMaintenanceSerializer,
+    AmbulanceTripSerializer,
+    PatientAppointmentRequestSerializer,
+    LabTestCatalogSerializer,
+    CouponCodeSerializer,
+    BranchCreationRequestSerializer,
+    AdmissionRequestSerializer,
+    FollowUpRequestSerializer,
+    LeadFollowUpSerializer,
+    LeadActivitySerializer,
+    ConvertedCustomerSerializer,
+    PatientTestimonialSerializer,
+    HospitalSettingSerializer,
+    PlatformSettingSerializer,
 )
 
 class UpsertModelViewSetMixin:
@@ -1050,6 +1080,32 @@ def auth_login(request):
                 'message': 'Account is inactive or suspended. Please contact hospital administrator.'
             }, status=status.HTTP_403_FORBIDDEN)
 
+        # Check if patient has any pending bills at this hospital
+        if user.role == 'patient':
+            patient_ids = []
+            if user.patient_id:
+                patient_ids.append(user.patient_id)
+            matched_pats = Patient.objects.filter(hospital=hospital, email__iexact=user.email)
+            for mp in matched_pats:
+                patient_ids.append(mp.id)
+
+            pending_invoices = BillingInvoice.objects.filter(
+                hospital=hospital,
+                status__in=['Pending', 'Partially Paid', 'Overdue', 'Unpaid']
+            )
+            if patient_ids:
+                pending_invoices = pending_invoices.filter(patient_id__in=patient_ids)
+            else:
+                pending_invoices = pending_invoices.none()
+
+            if pending_invoices.exists():
+                first_inv = pending_invoices.first()
+                balance = float(first_inv.total_amount - first_inv.paid_amount) if (first_inv.total_amount - first_inv.paid_amount) > 0 else float(first_inv.total_amount)
+                return Response({
+                    'success': False,
+                    'message': f'Access Denied: You have an outstanding pending bill (${balance:.2f}) at {hospital.name}. Please settle your pending dues at the hospital billing desk to regain portal access.'
+                }, status=status.HTTP_403_FORBIDDEN)
+
         serializer = UserProfileSerializer(user)
         token_payload = f"token-{user.id}-{hospital.id}"
         return Response({
@@ -1102,6 +1158,31 @@ def auth_login(request):
                 'success': False,
                 'message': 'Account is inactive or suspended.'
             }, status=status.HTTP_403_FORBIDDEN)
+
+        if user.role == 'patient' and user.hospital:
+            patient_ids = []
+            if user.patient_id:
+                patient_ids.append(user.patient_id)
+            matched_pats = Patient.objects.filter(hospital=user.hospital, email__iexact=user.email)
+            for mp in matched_pats:
+                patient_ids.append(mp.id)
+
+            pending_invoices = BillingInvoice.objects.filter(
+                hospital=user.hospital,
+                status__in=['Pending', 'Partially Paid', 'Overdue', 'Unpaid']
+            )
+            if patient_ids:
+                pending_invoices = pending_invoices.filter(patient_id__in=patient_ids)
+            else:
+                pending_invoices = pending_invoices.none()
+
+            if pending_invoices.exists():
+                first_inv = pending_invoices.first()
+                balance = float(first_inv.total_amount - first_inv.paid_amount) if (first_inv.total_amount - first_inv.paid_amount) > 0 else float(first_inv.total_amount)
+                return Response({
+                    'success': False,
+                    'message': f'Access Denied: You have an outstanding pending bill (${balance:.2f}) at {user.hospital.name}. Please settle your pending dues at the hospital billing desk to regain portal access.'
+                }, status=status.HTTP_403_FORBIDDEN)
 
         serializer = UserProfileSerializer(user)
         hospital_data = None
@@ -1297,4 +1378,195 @@ class SalesLeadViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
         if status_param and status_param != 'all':
             queryset = queryset.filter(status=status_param)
         return queryset
+
+
+class AmbulanceViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = Ambulance.objects.all().order_by('-created_at')
+    serializer_class = AmbulanceSerializer
+
+    def get_queryset(self):
+        queryset = Ambulance.objects.all().order_by('-created_at')
+        hospital_id = self.request.query_params.get('hospital_id')
+        if hospital_id:
+            queryset = queryset.filter(hospital_id=hospital_id)
+        return queryset
+
+
+class AmbulanceMaintenanceViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = AmbulanceMaintenance.objects.all().order_by('-created_at')
+    serializer_class = AmbulanceMaintenanceSerializer
+
+    def get_queryset(self):
+        queryset = AmbulanceMaintenance.objects.all().order_by('-created_at')
+        hospital_id = self.request.query_params.get('hospital_id')
+        ambulance_id = self.request.query_params.get('ambulance_id')
+        if hospital_id:
+            queryset = queryset.filter(hospital_id=hospital_id)
+        if ambulance_id:
+            queryset = queryset.filter(ambulance_id=ambulance_id)
+        return queryset
+
+
+class AmbulanceTripViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = AmbulanceTrip.objects.all().order_by('-created_at')
+    serializer_class = AmbulanceTripSerializer
+
+    def get_queryset(self):
+        queryset = AmbulanceTrip.objects.all().order_by('-created_at')
+        hospital_id = self.request.query_params.get('hospital_id')
+        ambulance_id = self.request.query_params.get('ambulance_id')
+        if hospital_id:
+            queryset = queryset.filter(hospital_id=hospital_id)
+        if ambulance_id:
+            queryset = queryset.filter(ambulance_id=ambulance_id)
+        return queryset
+
+
+class PatientAppointmentRequestViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = PatientAppointmentRequest.objects.all().order_by('-created_at')
+    serializer_class = PatientAppointmentRequestSerializer
+
+    def get_queryset(self):
+        queryset = PatientAppointmentRequest.objects.all().order_by('-created_at')
+        hospital_id = self.request.query_params.get('hospital_id')
+        patient_id = self.request.query_params.get('patient_id')
+        doctor_id = self.request.query_params.get('doctor_id')
+        status_param = self.request.query_params.get('status')
+        if hospital_id:
+            queryset = queryset.filter(hospital_id=hospital_id)
+        if patient_id:
+            queryset = queryset.filter(patient_id=patient_id)
+        if doctor_id:
+            queryset = queryset.filter(doctor_id=doctor_id)
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+        return queryset
+
+
+class LabTestCatalogViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = LabTestCatalog.objects.all().order_by('test_name')
+    serializer_class = LabTestCatalogSerializer
+
+    def get_queryset(self):
+        queryset = LabTestCatalog.objects.all().order_by('test_name')
+        hospital_id = self.request.query_params.get('hospital_id')
+        category = self.request.query_params.get('category')
+        status_param = self.request.query_params.get('status')
+        if hospital_id:
+            queryset = queryset.filter(hospital_id=hospital_id)
+        if category:
+            queryset = queryset.filter(category=category)
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+        return queryset
+
+
+class CouponCodeViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = CouponCode.objects.all().order_by('-created_at')
+    serializer_class = CouponCodeSerializer
+
+
+class BranchCreationRequestViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = BranchCreationRequest.objects.all().order_by('-created_at')
+    serializer_class = BranchCreationRequestSerializer
+
+    def get_queryset(self):
+        queryset = BranchCreationRequest.objects.all().order_by('-created_at')
+        org_id = self.request.query_params.get('organization_id')
+        if org_id:
+            queryset = queryset.filter(organization_id=org_id)
+        return queryset
+
+
+class AdmissionRequestViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = AdmissionRequest.objects.all().order_by('-created_at')
+    serializer_class = AdmissionRequestSerializer
+
+    def get_queryset(self):
+        queryset = AdmissionRequest.objects.all().order_by('-created_at')
+        hospital_id = self.request.query_params.get('hospital_id')
+        patient_id = self.request.query_params.get('patient_id')
+        if hospital_id:
+            queryset = queryset.filter(hospital_id=hospital_id)
+        if patient_id:
+            queryset = queryset.filter(patient_id=patient_id)
+        return queryset
+
+
+class FollowUpRequestViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = FollowUpRequest.objects.all().order_by('-created_at')
+    serializer_class = FollowUpRequestSerializer
+
+    def get_queryset(self):
+        queryset = FollowUpRequest.objects.all().order_by('-created_at')
+        hospital_id = self.request.query_params.get('hospital_id')
+        patient_id = self.request.query_params.get('patient_id')
+        doctor_id = self.request.query_params.get('doctor_id')
+        if hospital_id:
+            queryset = queryset.filter(hospital_id=hospital_id)
+        if patient_id:
+            queryset = queryset.filter(patient_id=patient_id)
+        if doctor_id:
+            queryset = queryset.filter(doctor_id=doctor_id)
+        return queryset
+
+
+class LeadFollowUpViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = LeadFollowUp.objects.all().order_by('-date')
+    serializer_class = LeadFollowUpSerializer
+
+    def get_queryset(self):
+        queryset = LeadFollowUp.objects.all().order_by('-date')
+        lead_id = self.request.query_params.get('lead_id')
+        if lead_id:
+            queryset = queryset.filter(lead_id=lead_id)
+        return queryset
+
+
+class LeadActivityViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = LeadActivity.objects.all().order_by('-created_at')
+    serializer_class = LeadActivitySerializer
+
+    def get_queryset(self):
+        queryset = LeadActivity.objects.all().order_by('-created_at')
+        lead_id = self.request.query_params.get('lead_id')
+        if lead_id:
+            queryset = queryset.filter(lead_id=lead_id)
+        return queryset
+
+
+class ConvertedCustomerViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = ConvertedCustomer.objects.all().order_by('-created_at')
+    serializer_class = ConvertedCustomerSerializer
+
+
+class PatientTestimonialViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = PatientTestimonial.objects.all().order_by('-created_at')
+    serializer_class = PatientTestimonialSerializer
+
+    def get_queryset(self):
+        queryset = PatientTestimonial.objects.all().order_by('-created_at')
+        hospital_id = self.request.query_params.get('hospital_id')
+        if hospital_id:
+            queryset = queryset.filter(hospital_id=hospital_id)
+        return queryset
+
+
+class HospitalSettingViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = HospitalSetting.objects.all()
+    serializer_class = HospitalSettingSerializer
+
+    def get_queryset(self):
+        queryset = HospitalSetting.objects.all()
+        hospital_id = self.request.query_params.get('hospital_id')
+        if hospital_id:
+            queryset = queryset.filter(hospital_id=hospital_id)
+        return queryset
+
+
+class PlatformSettingViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = PlatformSetting.objects.all()
+    serializer_class = PlatformSettingSerializer
+
+
 

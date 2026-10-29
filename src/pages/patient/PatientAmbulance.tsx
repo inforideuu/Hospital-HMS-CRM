@@ -32,15 +32,16 @@ export const PatientAmbulance: React.FC = () => {
   const [requests, setRequests] = useState<EmergencyRequest[]>([]);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
 
-  // Form states
-  const [pickupLocation, setPickupLocation] = useState('742 Evergreen Terrace, Springfield, OR');
-  const [emergencyType, setEmergencyType] = useState<EmergencyRequest['emergencyType']>('Cardiac Arrest / Chest Pain');
-  const [priority, setPriority] = useState<EmergencyPriority>('Critical / Code Blue');
-  const [chiefComplaint, setChiefComplaint] = useState('');
-  const [contactPhone, setContactPhone] = useState(user?.phone || '+1 (555) 234-5678');
-
   const patientId = user?.patientId || 'PAT-1001';
   const hospitalId = user?.hospitalId || 'HOSP-001';
+  const patient = MockStorage.getPatientById(patientId);
+
+  // Form states
+  const [pickupLocation, setPickupLocation] = useState(
+    patient?.address || '450 Park Avenue, Apt 12B, New York, NY'
+  );
+  const [chiefComplaint, setChiefComplaint] = useState('');
+  const [contactPhone, setContactPhone] = useState(patient?.phone || user?.phone || '+1 (555) 234-5678');
 
   const loadData = () => {
     const list = MockStorage.getEmergencyRequests(hospitalId, patientId);
@@ -60,26 +61,31 @@ export const PatientAmbulance: React.FC = () => {
   const handleCreateRequest = (e: React.FormEvent) => {
     e.preventDefault();
 
+    const hosp = MockStorage.getHospitalById(hospitalId);
     const newRequest: EmergencyRequest = {
       id: `EMR-${Date.now().toString().slice(-4)}`,
       hospitalId,
-      hospitalName: 'Apex Medical Center',
+      hospitalName: hosp?.name || 'Hospital Medical Center',
       patientId,
-      patientName: user?.name || 'Eleanor Vance',
+      patientName: patient?.name || user?.name || 'Eleanor Vance',
       patientPhone: contactPhone,
       pickupLocation,
-      destinationHospital: 'Apex Medical Center Emergency Trauma Bay',
-      emergencyType,
-      priority,
+      destinationHospital: `${hosp?.name || 'Hospital'} Emergency Trauma Bay`,
+      emergencyType: chiefComplaint ? `Emergency: ${chiefComplaint}` : 'Urgent Medical Assistance',
+      priority: 'Critical / Code Blue',
       requestDate: new Date().toISOString().split('T')[0],
       requestTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       status: 'Requested',
-      chiefComplaint,
+      chiefComplaint: chiefComplaint || 'Ambulance requested by patient online',
       fareEstimate: 120,
     };
 
     MockStorage.saveEmergencyRequest(newRequest);
-    showToast('Emergency Request Dispatched', 'Your 911 Ambulance request has been logged. Emergency dispatchers are assigning the nearest unit.', 'success');
+    showToast(
+      'Ambulance Request Dispatched',
+      'Your request has been sent to the ambulance manager and is now active in Emergency 911 Dispatch.',
+      'success'
+    );
     setIsRequestModalOpen(false);
     setChiefComplaint('');
   };
@@ -117,55 +123,52 @@ export const PatientAmbulance: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header with SOS Hotline Callout */}
+      {/* Header with Request Ambulance Action */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Emergency Ambulance Services</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Ambulance Services</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Request instant ALS/BLS ambulance dispatch with real-time GPS telemetry and hospital triage.
+            Request instant hospital emergency ambulance dispatch to your location.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Button
-            variant="danger"
-            size="lg"
-            leftIcon={<Flame className="w-5 h-5 animate-pulse" />}
-            onClick={() => setIsRequestModalOpen(true)}
-          >
-            Request Emergency Ambulance
-          </Button>
-        </div>
+        {!activeRequest && (
+          <div className="flex items-center gap-3">
+            <Button
+              variant="danger"
+              size="lg"
+              leftIcon={<Ambulance className="w-5 h-5 animate-pulse" />}
+              onClick={() => setIsRequestModalOpen(true)}
+              className="font-bold shadow-lg shadow-rose-600/20"
+            >
+              Request Ambulance
+            </Button>
+          </div>
+        )}
       </div>
 
-      {/* 911 Hotline Banner */}
-      <div className="p-4 rounded-xl bg-gradient-to-r from-rose-500 to-rose-600 text-white shadow-lg flex flex-col md:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0">
-            <Radio className="w-6 h-6 text-white animate-pulse" />
+      {/* Prominent Quick Request Card if no active trip */}
+      {!activeRequest && (
+        <Card className="p-8 text-center bg-gradient-to-b from-white to-rose-50/40 border-rose-200/80 shadow-sm flex flex-col items-center justify-center space-y-4">
+          <div className="w-16 h-16 rounded-3xl bg-rose-100 text-rose-600 flex items-center justify-center shadow-inner">
+            <Ambulance className="w-8 h-8" />
           </div>
-          <div>
-            <h3 className="text-base font-bold">24/7 Rapid Emergency Response Command Center</h3>
-            <p className="text-xs text-rose-100">
-              For life-threatening cardiac arrests, severe trauma, or acute respiratory distress, call immediately.
+          <div className="max-w-md space-y-1">
+            <h3 className="text-lg font-bold text-slate-900">Need an Emergency Ambulance?</h3>
+            <p className="text-xs text-slate-500">
+              Click the button below to request an ambulance. When you confirm, your request will immediately be sent to the hospital ambulance manager and appear in the Emergency 911 Dispatch queue.
             </p>
           </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <a
-            href="tel:911"
-            className="px-4 py-2 rounded-lg bg-white text-rose-700 font-black text-sm flex items-center gap-2 hover:bg-rose-50 shadow-md transition-all"
+          <Button
+            variant="danger"
+            size="md"
+            leftIcon={<Ambulance className="w-4 h-4" />}
+            onClick={() => setIsRequestModalOpen(true)}
+            className="font-bold shadow-md shadow-rose-600/30"
           >
-            <PhoneCall className="w-4 h-4" />
-            Call 911 Hotline
-          </a>
-          <a
-            href="tel:+18005559999"
-            className="px-4 py-2 rounded-lg bg-rose-700 text-white font-semibold text-xs flex items-center gap-2 hover:bg-rose-800 transition-all border border-white/20"
-          >
-            Hospital Triage: +1 (800) 555-9999
-          </a>
-        </div>
-      </div>
+            Request Ambulance
+          </Button>
+        </Card>
+      )}
 
       {/* Active Request Live Tracking Card */}
       {activeRequest ? (
@@ -331,90 +334,62 @@ export const PatientAmbulance: React.FC = () => {
         )}
       </div>
 
-      {/* Emergency Request Modal */}
+      {/* Confirm Ambulance Dispatch Modal */}
       <Modal
         isOpen={isRequestModalOpen}
         onClose={() => setIsRequestModalOpen(false)}
-        title="Request Immediate Emergency Ambulance"
-        maxWidth="lg"
+        title="Confirm Emergency Ambulance Request"
+        maxWidth="md"
       >
-        <form onSubmit={handleCreateRequest} className="space-y-5">
-          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-xs text-rose-800">
-            <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
-            <span>
-              <strong>Immediate Dispatch Notice:</strong> Submitting this request sends an alert directly to the Apex Medical Emergency Dispatch Desk. Please remain in place until the ambulance arrives.
-            </span>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Pickup Address / GPS Coordinates</label>
-            <Input
-              required
-              value={pickupLocation}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPickupLocation(e.target.value)}
-              leftIcon={<MapPin className="w-4 h-4 text-slate-400" />}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <form onSubmit={handleCreateRequest} className="space-y-4">
+          <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-xs text-rose-900">
+            <AlertTriangle className="w-5 h-5 text-rose-600 mt-0.5 shrink-0" />
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Emergency Category</label>
-              <select
-                value={emergencyType}
-                onChange={(e) => setEmergencyType(e.target.value as any)}
-                className="w-full text-xs rounded-lg border-slate-300 focus:border-brand-500 focus:ring-brand-500 p-2.5 border bg-white"
-              >
-                <option value="Cardiac Arrest / Chest Pain">Cardiac Arrest / Severe Chest Pain</option>
-                <option value="Trauma / Accident">Trauma / High-Velocity Injury</option>
-                <option value="Respiratory Distress">Respiratory Distress / Suffocation</option>
-                <option value="Maternity / Labor">Maternity / Active Labor</option>
-                <option value="Stroke Code">Stroke Symptoms / Code Stroke</option>
-                <option value="General Emergency Transfer">General Emergency Transfer</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Emergency Triage Priority</label>
-              <select
-                value={priority}
-                onChange={(e) => setPriority(e.target.value as any)}
-                className="w-full text-xs rounded-lg border-slate-300 focus:border-brand-500 focus:ring-brand-500 p-2.5 border bg-white"
-              >
-                <option value="Critical / Code Blue">Critical / Code Blue (Immediate sirens & ALS)</option>
-                <option value="High">High Priority (Within 5-10 mins)</option>
-                <option value="Medium">Medium Priority (Standard urgency)</option>
-                <option value="Low">Low / Non-emergency transport</option>
-              </select>
+              <p className="font-bold">Are you sure you want to request an ambulance?</p>
+              <p className="text-rose-700 mt-0.5 text-[11px]">
+                Confirming will immediately send your dispatch request to the ambulance manager and appear in the Emergency 911 Dispatch queue.
+              </p>
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Contact Callback Number</label>
-            <Input
-              required
-              value={contactPhone}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setContactPhone(e.target.value)}
-              leftIcon={<PhoneCall className="w-4 h-4 text-slate-400" />}
-            />
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Pickup Address / Location *</label>
+              <Input
+                required
+                value={pickupLocation}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPickupLocation(e.target.value)}
+                leftIcon={<MapPin className="w-4 h-4 text-slate-400" />}
+                placeholder="Enter current address or location"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Contact Phone Number *</label>
+              <Input
+                required
+                value={contactPhone}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setContactPhone(e.target.value)}
+                leftIcon={<PhoneCall className="w-4 h-4 text-slate-400" />}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Emergency Condition / Reason (Optional)</label>
+              <Input
+                value={chiefComplaint}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setChiefComplaint(e.target.value)}
+                placeholder="e.g. Chest pain, acute trauma, breathing difficulty"
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5">Chief Complaint / Condition Summary</label>
-            <textarea
-              value={chiefComplaint}
-              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setChiefComplaint(e.target.value)}
-              rows={3}
-              placeholder="Describe symptoms, patient consciousness, breathing condition, etc."
-              className="w-full text-xs rounded-lg border-slate-300 focus:border-brand-500 focus:ring-brand-500 p-2.5 border"
-            />
-          </div>
-
-          <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+          <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
             <Button variant="outline" type="button" onClick={() => setIsRequestModalOpen(false)}>
               Cancel
             </Button>
-            <Button variant="danger" type="submit" leftIcon={<Flame className="w-4 h-4" />}>
-              Confirm & Dispatch Ambulance
+            <Button variant="danger" type="submit" leftIcon={<Ambulance className="w-4 h-4" />}>
+              Confirm & Send Request
             </Button>
           </div>
         </form>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Calendar,
   Calendar as CalendarIcon,
@@ -34,6 +34,8 @@ import {
   HeartPulse,
   Activity,
   RotateCw,
+  MessageSquare,
+  Send,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { ApiService } from '../../../services/apiService';
@@ -53,6 +55,8 @@ import {
   UnavailabilityType,
   Patient,
   FollowUpRequest,
+  PatientAppointmentRequest,
+  AppointmentRequestStatus,
 } from '../../../types';
 import {
   generateDoctorTimeSlots,
@@ -209,8 +213,16 @@ export const AppointmentManagement: React.FC = () => {
   }, [hospId]);
 
   // Navigation & Filtering
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState('all');
+  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') || 'all');
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam && tabParam !== activeTab) {
+      setActiveTab(tabParam);
+    }
+  }, [searchParams]);
   const [selectedDoctorFilter, setSelectedDoctorFilter] = useState('all');
   const [schedulesSearchQuery, setSchedulesSearchQuery] = useState('');
   const [schedulesDeptFilter, setSchedulesDeptFilter] = useState('all');
@@ -223,6 +235,14 @@ export const AppointmentManagement: React.FC = () => {
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [isAddLeaveModalOpen, setIsAddLeaveModalOpen] = useState(false);
   const [confirmDeleteAppointmentId, setConfirmDeleteAppointmentId] = useState<string | null>(null);
+
+  // Step: Patient Online Appointment Requests State
+  const [patientRequests, setPatientRequests] = useState<PatientAppointmentRequest[]>(() =>
+    MockStorage.getAppointmentRequests(hospId)
+  );
+  const [activeAppointmentRequestId, setActiveAppointmentRequestId] = useState<string | null>(null);
+  const [declineModalRequest, setDeclineModalRequest] = useState<PatientAppointmentRequest | null>(null);
+  const [declineNoteText, setDeclineNoteText] = useState('');
 
   // Step 2 & 5: Doctor Follow-Up Requests & Reschedule States
   const [followUpRequests, setFollowUpRequests] = useState<FollowUpRequest[]>(() => MockStorage.getFollowUpRequests(hospId));
@@ -277,6 +297,7 @@ export const AppointmentManagement: React.FC = () => {
     setSchedules(MockStorage.getDoctorSchedules(hospId));
     setUnavailabilities(MockStorage.getDoctorUnavailability(hospId));
     setFollowUpRequests(MockStorage.getFollowUpRequests(hospId));
+    setPatientRequests(MockStorage.getAppointmentRequests(hospId));
     const newSettings = MockStorage.getAppointmentSettings(hospId);
     setSettings(newSettings);
     setSettingsForm({ ...newSettings });
@@ -673,6 +694,89 @@ export const AppointmentManagement: React.FC = () => {
     setIsBookModalOpen(true);
   };
 
+  // Receptionist Approves and Schedules Patient-Requested Appointment
+  const handleApproveAndBookRequest = (req: PatientAppointmentRequest) => {
+    setActiveAppointmentRequestId(req.id);
+    setActiveFollowUpRequestId(null);
+    const targetPatient = MockStorage.getPatientById(req.patientId) || patients.find((p) => p.id === req.patientId);
+    const targetDoctor = doctors.find((d) => d.id === req.doctorId) || doctors[0];
+    const targetDept = departments.find((d) => d.id === req.departmentId || d.id === targetDoctor?.departmentId) || departments[0];
+    const deptRooms = opdRooms.filter((r) => r.departmentId === targetDoctor?.departmentId);
+    const targetRoom = deptRooms.find((r) => r.id === targetDoctor?.opdRoomId) || deptRooms[0];
+
+    const docSched = schedules.find((s) => s.doctorId === targetDoctor?.id && s.isActive !== false);
+    const constraints = getScheduleDateConstraints(docSched, settings, hospitalTimezone);
+
+    let chosenDate = req.preferredDate;
+    if (!chosenDate || chosenDate < constraints.minDate) {
+      chosenDate = findNextConsultingDate(docSched, constraints.minDate, constraints.maxDate, unavailabilities) || constraints.minDate;
+    }
+
+    const gen = generateDoctorTimeSlots(
+      docSched,
+      chosenDate,
+      appointments,
+      unavailabilities,
+      targetRoom?.id,
+      settings,
+      hospitalTimezone
+    );
+    const exactMatch = gen.slots.find((s) => s.isAvailable && s.time === req.preferredTime);
+    const firstAvail = exactMatch?.time || gen.slots.find((s) => s.isAvailable)?.time || req.preferredTime || '';
+
+    if (targetPatient) {
+      setSelectedBookingPatient(targetPatient);
+    }
+    setPatientBookingError('');
+    setAvailabilityRefreshTimestamp(Date.now());
+    setFormData({
+      patientId: req.patientId,
+      departmentId: targetDept?.id || '',
+      doctorId: targetDoctor?.id || '',
+      opdRoomId: targetRoom?.id || '',
+      appointmentDate: chosenDate,
+      appointmentTime: firstAvail,
+      type: req.type || 'Consultation',
+      reason: req.reason || 'Patient Requested Consultation',
+      notes: req.notes ? `Patient Note: ${req.notes}` : '',
+      fee: targetDoctor?.consultationFee || 150,
+    });
+    setIsBookModalOpen(true);
+  };
+
+  const handleOpenDeclineModal = (req: PatientAppointmentRequest) => {
+    setDeclineModalRequest(req);
+    setDeclineNoteText(req.receptionistNote || '');
+  };
+
+  const handleConfirmDeclineWithNote = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!declineModalRequest) return;
+    if (!declineNoteText.trim()) {
+      showToast('Note Required', 'Please enter an explanatory note or suggested alternative slot for the patient.', 'warning');
+      return;
+    }
+
+    MockStorage.updateAppointmentRequestStatus(
+      declineModalRequest.id,
+      'Declined',
+      {
+        receptionistNote: declineNoteText.trim(),
+        respondedBy: user?.name || 'Hospital Reception Desk',
+        respondedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
+      }
+    );
+
+    showToast(
+      'Note Dispatched to Patient',
+      `Patient ${declineModalRequest.patientName} has been informed of slot unavailability with your note.`,
+      'info'
+    );
+    setDeclineModalRequest(null);
+    setDeclineNoteText('');
+    refreshData();
+  };
+
   // Step 2: Receptionist Schedules Follow-Up Appointment
   const handleScheduleFollowUp = (req: FollowUpRequest) => {
     setActiveFollowUpRequestId(req.id);
@@ -825,6 +929,22 @@ export const AppointmentManagement: React.FC = () => {
         newApt.appointmentTime
       );
       setActiveFollowUpRequestId(null);
+    }
+
+    // If booked from a Patient Appointment Request, mark request as Approved
+    if (activeAppointmentRequestId) {
+      MockStorage.updateAppointmentRequestStatus(
+        activeAppointmentRequestId,
+        'Approved',
+        {
+          scheduledAppointmentId: newApt.id,
+          scheduledDate: newApt.appointmentDate,
+          scheduledTime: newApt.appointmentTime,
+          respondedBy: user?.name || 'Hospital Reception Desk',
+          respondedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
+        }
+      );
+      setActiveAppointmentRequestId(null);
     }
 
     // Asynchronously sync with Django REST Framework backend
@@ -1280,10 +1400,21 @@ export const AppointmentManagement: React.FC = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => MockStorage.exportToCSV('OPD_Appointments', filtered)}
+              onClick={() => {
+                if (activeTab === 'patient-requests') {
+                  MockStorage.exportToCSV('Patient_Appointment_Requests', patientRequests);
+                  showToast('Export Successful', 'Patient requested appointment queue exported as CSV.', 'success');
+                } else if (activeTab === 'schedules') {
+                  MockStorage.exportToCSV('Doctor_OPD_Schedules', schedules);
+                  showToast('Export Successful', 'Doctor OPD consulting schedules exported as CSV.', 'success');
+                } else {
+                  MockStorage.exportToCSV('OPD_Appointments_Roster', filtered);
+                  showToast('Export Successful', 'OPD appointments roster exported as CSV.', 'success');
+                }
+              }}
               leftIcon={<Download className="w-3.5 h-3.5" />}
             >
-              Export Schedule
+              Export {activeTab === 'patient-requests' ? 'Requests' : activeTab === 'schedules' ? 'Schedules' : 'Schedule'}
             </Button>
             <Button
               variant="primary"
@@ -1321,6 +1452,11 @@ export const AppointmentManagement: React.FC = () => {
                 count: appointments.filter((a) => a.status === 'Completed').length,
               },
               {
+                id: 'patient-requests',
+                label: 'Patient Booking Requests',
+                count: patientRequests.filter((r) => r.status === 'Pending').length,
+              },
+              {
                 id: 'follow-ups',
                 label: 'Doctor Follow-Ups (Pending)',
                 count: followUpRequests.filter((f) => f.status === 'Pending').length,
@@ -1343,12 +1479,13 @@ export const AppointmentManagement: React.FC = () => {
             onChange={(t) => {
               setActiveTab(t);
               setCurrentPage(1);
+              setSearchParams(t === 'all' ? {} : { tab: t }, { replace: true });
             }}
             variant="pills"
           />
 
           {/* Quick Search and Specialist Filter (for Appointment List Tabs) */}
-          {activeTab !== 'schedules' && activeTab !== 'settings' && activeTab !== 'all-schedules' && activeTab !== 'follow-ups' && (
+          {activeTab !== 'schedules' && activeTab !== 'settings' && activeTab !== 'all-schedules' && activeTab !== 'follow-ups' && activeTab !== 'patient-requests' && (
             <div className="flex items-center gap-2 w-full md:w-auto">
               <div className="relative w-full md:w-64">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -1587,6 +1724,183 @@ export const AppointmentManagement: React.FC = () => {
               onPageChange={(page) => setCurrentPage(page)}
             />
           </>
+        )}
+
+        {/* TAB: PATIENT BOOKING REQUESTS (PATIENT ASKS DATE/TIME -> RECEPTIONIST CONFIRMS OR WRITES NOTE) */}
+        {activeTab === 'patient-requests' && (
+          <div className="p-6 space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-teal-50 text-teal-700">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Patient-Requested Appointment Queue</h3>
+                  <p className="text-xs text-slate-500">
+                    Online consultation requests submitted by patients. If requested date & time slot is open, book the appointment. If unavailable, send an explanatory note.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <span className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800 font-semibold border border-amber-200">
+                  {patientRequests.filter((r) => r.status === 'Pending').length} Pending Action
+                </span>
+                <span className="px-3 py-1.5 rounded-lg bg-teal-50 text-teal-800 font-semibold border border-teal-200">
+                  {patientRequests.filter((r) => r.status === 'Approved').length} Booked
+                </span>
+                <span className="px-3 py-1.5 rounded-lg bg-slate-50 text-slate-700 font-semibold border border-slate-200">
+                  {patientRequests.filter((r) => r.status === 'Declined').length} Notes Sent
+                </span>
+              </div>
+            </div>
+
+            {patientRequests.length === 0 ? (
+              <EmptyState
+                title="No Patient Appointment Requests"
+                description="When patients request their next appointment date and time from the Patient Portal, their requests will appear here for review."
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-500 font-semibold uppercase tracking-wider">
+                      <th className="px-5 py-3.5">Patient Details</th>
+                      <th className="px-4 py-3.5">Requested Specialist</th>
+                      <th className="px-4 py-3.5">Requested Date & Slot</th>
+                      <th className="px-4 py-3.5">Symptoms / Notes</th>
+                      <th className="px-4 py-3.5">Status / Notes Sent</th>
+                      <th className="px-5 py-3.5 text-right">Reception Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {patientRequests.map((req) => (
+                      <tr key={req.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="px-5 py-3.5">
+                          <p className="font-bold text-slate-900">{req.patientName}</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            <span className="font-mono font-semibold text-teal-700">{req.patientId}</span> • {req.patientPhone}
+                          </p>
+                          {(req.patientAge || req.patientGender) && (
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              {req.patientAge ? `${req.patientAge} yrs` : ''} {req.patientGender ? `• ${req.patientGender}` : ''}
+                            </p>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3.5">
+                          <p className="font-bold text-slate-900">{req.doctorName}</p>
+                          <p className="text-[11px] text-slate-500">{req.departmentName}</p>
+                          {req.doctorSpecialization && (
+                            <p className="text-[10px] text-indigo-600 font-medium">{req.doctorSpecialization}</p>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3.5">
+                          <p className="font-bold text-slate-900 flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-teal-600" />
+                            {req.preferredDate}
+                          </p>
+                          <p className="text-[11px] text-teal-800 font-semibold flex items-center gap-1.5 mt-0.5">
+                            <Clock className="w-3.5 h-3.5 text-teal-600" />
+                            {req.preferredTime}
+                          </p>
+                          <span className="inline-block px-1.5 py-0.5 mt-1 rounded bg-slate-100 text-[10px] font-medium text-slate-600">
+                            {req.type}
+                          </span>
+                        </td>
+
+                        <td className="px-4 py-3.5 text-slate-700 max-w-[220px]">
+                          <p className="font-semibold text-teal-950">{req.reason || 'Consultation'}</p>
+                          {req.notes && (
+                            <p className="text-[11px] text-slate-500 mt-1 italic line-clamp-2">
+                              "{req.notes}"
+                            </p>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3.5 max-w-[260px]">
+                          {req.status === 'Pending' && (
+                            <Badge variant="warning" dot>Pending Review</Badge>
+                          )}
+                          {req.status === 'Approved' && (
+                            <div className="space-y-1">
+                              <Badge variant="success" dot>Booked & Confirmed</Badge>
+                              {req.scheduledDate && (
+                                <p className="text-[11px] text-teal-800 font-mono font-semibold">
+                                  {req.scheduledDate} at {req.scheduledTime}
+                                </p>
+                              )}
+                              <p className="text-[10px] text-slate-400">By {req.respondedBy || 'Reception'}</p>
+                            </div>
+                          )}
+                          {req.status === 'Declined' && (
+                            <div className="space-y-1">
+                              <Badge variant="error" dot>Slot Unavailable</Badge>
+                              {req.receptionistNote && (
+                                <div className="p-2 rounded bg-amber-50/80 border border-amber-200 text-[11px] text-amber-950 mt-1">
+                                  <span className="font-semibold text-amber-800 block text-[10px]">Note Sent to Patient:</span>
+                                  "{req.receptionistNote}"
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {req.status === 'Cancelled' && (
+                            <Badge variant="error" dot>Cancelled</Badge>
+                          )}
+                        </td>
+
+                        <td className="px-5 py-3.5 text-right space-y-1.5">
+                          {req.status === 'Pending' ? (
+                            <div className="flex flex-col sm:flex-row items-end sm:items-center justify-end gap-1.5">
+                              <Button
+                                variant="primary"
+                                size="xs"
+                                className="bg-teal-600 hover:bg-teal-700 text-white font-semibold"
+                                onClick={() => handleApproveAndBookRequest(req)}
+                                leftIcon={<CalendarCheck className="w-3.5 h-3.5" />}
+                              >
+                                Book Appointment
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="xs"
+                                className="text-amber-800 hover:bg-amber-50 border-amber-300 font-semibold"
+                                onClick={() => handleOpenDeclineModal(req)}
+                                leftIcon={<MessageSquare className="w-3.5 h-3.5" />}
+                              >
+                                Slot Unavailable / Note
+                              </Button>
+                            </div>
+                          ) : req.status === 'Approved' && req.scheduledAppointmentId ? (
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              onClick={() => {
+                                const matched = appointments.find((a) => a.id === req.scheduledAppointmentId);
+                                if (matched) handleViewDetail(matched);
+                              }}
+                            >
+                              View Booking
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="text-slate-600 hover:text-slate-900"
+                              onClick={() => handleOpenDeclineModal(req)}
+                            >
+                              Edit Note
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         )}
 
         {/* TAB: DOCTOR FOLLOW-UP REQUESTS (STEP 2: RECEPTIONIST SCHEDULES) */}
@@ -3866,6 +4180,112 @@ export const AppointmentManagement: React.FC = () => {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal: Slot Unavailable / Write Note to Patient */}
+      <Modal
+        isOpen={!!declineModalRequest}
+        onClose={() => {
+          setDeclineModalRequest(null);
+          setDeclineNoteText('');
+        }}
+        title="Slot Unavailable • Write Note to Patient"
+        maxWidth="lg"
+      >
+        {declineModalRequest && (
+          <form onSubmit={handleConfirmDeclineWithNote} className="space-y-4">
+            <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200 text-xs space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-amber-950">Requested Appointment Details</span>
+                <span className="px-2 py-0.5 rounded-full bg-amber-200/80 text-amber-900 font-semibold text-[10px]">
+                  {declineModalRequest.type}
+                </span>
+              </div>
+              <p className="text-amber-900">
+                <span className="font-semibold">Patient:</span> {declineModalRequest.patientName} (<span className="font-mono">{declineModalRequest.patientId}</span>)
+              </p>
+              <p className="text-amber-900">
+                <span className="font-semibold">Specialist:</span> Dr. {declineModalRequest.doctorName} • {declineModalRequest.departmentName}
+              </p>
+              <p className="text-amber-900">
+                <span className="font-semibold">Requested Slot:</span> {declineModalRequest.preferredDate} at {declineModalRequest.preferredTime}
+              </p>
+              {declineModalRequest.reason && (
+                <p className="text-amber-800 text-[11px]">
+                  <span className="font-semibold">Patient Reason:</span> {declineModalRequest.reason}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-800">
+                Receptionist Explanation Note for Patient <span className="text-rose-500">*</span>
+              </label>
+              <p className="text-[11px] text-slate-500">
+                Explain why the slot is unavailable and suggest alternative dates, times, or attending doctors.
+              </p>
+              <Textarea
+                rows={3}
+                value={declineNoteText}
+                onChange={(e) => setDeclineNoteText(e.target.value)}
+                placeholder="e.g. Dr. Sarah Jenkins is fully booked on this date. Next available slot is tomorrow at 10:00 AM, or Dr. Michael Chang is available today at 2:00 PM."
+                required
+              />
+            </div>
+
+            {/* Quick Note Templates */}
+            <div>
+              <p className="text-[11px] font-semibold text-slate-600 mb-1.5">Quick Note Suggestions:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  'Doctor is fully booked on requested date. Suggested alternative: Tomorrow 10:00 AM.',
+                  'Doctor is performing emergency surgery during this window. Next open slot: Next Monday 11:30 AM.',
+                  'OPD clinic closed for holiday. Earliest consulting day available: Next Tuesday morning.',
+                  'Requested slot is already taken. Please choose another afternoon slot or alternate date.',
+                ].map((template, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setDeclineNoteText(template)}
+                    className="text-[10px] text-left px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    + {template}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-[11px] flex items-start gap-2">
+              <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <span>
+                When sent, this note immediately appears on the patient's dashboard with an option to request an alternative slot.
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setDeclineModalRequest(null);
+                  setDeclineNoteText('');
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                size="sm"
+                className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
+                leftIcon={<Send className="w-3.5 h-3.5" />}
+              >
+                Send Note to Patient
+              </Button>
+            </div>
+          </form>
+        )}
       </Modal>
     </div>
   );

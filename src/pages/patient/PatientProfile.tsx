@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   User,
   Phone,
@@ -7,70 +7,70 @@ import {
   HeartPulse,
   Droplet,
   ShieldCheck,
-  Save,
+  Lock,
   AlertTriangle,
 } from 'lucide-react';
 import { MockStorage } from '../../services/mockStorage';
 import { useAuth } from '../../context/AuthContext';
-import { useNotification } from '../../context/NotificationContext';
 import { Patient } from '../../types';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../../components/ui/Card';
-import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 
 export const PatientProfile: React.FC = () => {
   const { user } = useAuth();
-  const { showToast } = useNotification();
   const patientId = user?.patientId || 'PAT-1001';
 
-  const [patient, setPatient] = useState<Patient>(() => {
-    return (
-      MockStorage.getPatientById(patientId) || {
-        id: patientId,
-        hospitalId: 'HOSP-001',
-        name: user?.name || 'Eleanor Vance',
-        email: user?.email || 'patient@apexmedical.org',
-        phone: '+1 (555) 301-4492',
-        dateOfBirth: '1978-04-14',
-        age: 48,
-        gender: 'Female',
-        bloodGroup: 'O+',
-        address: '450 Park Avenue, Apt 12B, New York, NY',
-        emergencyContactName: 'Robert Vance (Spouse)',
-        emergencyContactPhone: '+1 (555) 301-4490',
-        emergencyContactRelation: 'Spouse',
-        status: 'Outpatient',
-        allergies: ['Penicillin', 'Sulfa Drugs'],
-        medicalHistory: ['Hypertension', 'Type 2 Diabetes'],
-        registeredDate: '2024-03-12',
-      }
-    );
-  });
-
-  const [allergiesText, setAllergiesText] = useState(patient.allergies.join(', '));
-
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    const updated: Patient = {
-      ...patient,
-      allergies: allergiesText.split(',').map((s) => s.trim()).filter(Boolean),
-    };
-    MockStorage.savePatient(updated);
-    setPatient(updated);
-    showToast('Profile Saved', 'Your medical demographics & emergency contacts have been updated.');
+  const patient: Patient = MockStorage.getPatientById(patientId) || {
+    id: patientId,
+    hospitalId: 'HOSP-001',
+    name: user?.name || 'Eleanor Vance',
+    email: user?.email || 'patient@apexmedical.org',
+    phone: '+1 (555) 301-4492',
+    dateOfBirth: '1978-04-14',
+    age: 48,
+    gender: 'Female',
+    bloodGroup: 'O+',
+    address: '450 Park Avenue, Apt 12B, New York, NY',
+    emergencyContactName: 'Robert Vance (Spouse)',
+    emergencyContactPhone: '+1 (555) 301-4490',
+    emergencyContactRelation: 'Spouse',
+    status: 'Outpatient',
+    allergies: ['Penicillin', 'Sulfa Drugs'],
+    medicalHistory: ['Hypertension', 'Type 2 Diabetes'],
+    registeredDate: '2024-03-12',
   };
+
+  const allergiesText = Array.isArray(patient.allergies) ? patient.allergies.join(', ') : '';
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
         title="My Patient Health Profile & Demographics"
-        subtitle="Manage your personal contact info, emergency contacts, and declared drug allergies."
+        subtitle="Official hospital EHR identification, emergency contacts, and declared allergies."
         breadcrumbs={[{ label: 'Patient Portal', href: '/patient/dashboard' }, { label: 'My Profile' }]}
       />
 
-      <form onSubmit={handleSave} className="space-y-6 max-w-4xl">
+      {/* Locked Record Compliance Notice */}
+      <div className="p-4 rounded-2xl bg-slate-900 text-white flex items-center justify-between gap-4 shadow-sm border border-slate-800">
+        <div className="flex items-start sm:items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-400 flex items-center justify-center shrink-0 border border-teal-500/30">
+            <Lock className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold flex items-center gap-2">
+              Verified Electronic Health Record (EHR)
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-500/20 text-teal-300 border border-teal-500/30">Locked</span>
+            </h4>
+            <p className="text-xs text-slate-300 mt-0.5">
+              To ensure clinical safety, HIPAA compliance, and medical chart integrity, patient demographic and clinical records are locked and cannot be edited online. To request demographic adjustments, please contact hospital reception.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-6 max-w-4xl">
         {/* Personal Details */}
         <Card>
           <CardHeader
@@ -82,8 +82,7 @@ export const PatientProfile: React.FC = () => {
               <Input
                 label="Full Legal Name"
                 value={patient.name}
-                onChange={(e) => setPatient({ ...patient, name: e.target.value })}
-                required
+                disabled
               />
               <Input
                 label="EHR Patient ID"
@@ -98,18 +97,18 @@ export const PatientProfile: React.FC = () => {
                 label="Date of Birth"
                 type="date"
                 value={patient.dateOfBirth}
-                onChange={(e) => setPatient({ ...patient, dateOfBirth: e.target.value })}
+                disabled
               />
               <Input
                 label="Age (Years)"
                 type="number"
                 value={patient.age}
-                onChange={(e) => setPatient({ ...patient, age: Number(e.target.value) })}
+                disabled
               />
               <Select
                 label="Gender"
                 value={patient.gender}
-                onChange={(e) => setPatient({ ...patient, gender: e.target.value as any })}
+                disabled
               >
                 <option value="Male">Male</option>
                 <option value="Female">Female</option>
@@ -119,24 +118,22 @@ export const PatientProfile: React.FC = () => {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
-                label="Contact Phone *"
+                label="Contact Phone"
                 value={patient.phone}
-                onChange={(e) => setPatient({ ...patient, phone: e.target.value })}
-                required
+                disabled
               />
               <Input
-                label="Email Address *"
+                label="Email Address"
                 type="email"
                 value={patient.email}
-                onChange={(e) => setPatient({ ...patient, email: e.target.value })}
-                required
+                disabled
               />
             </div>
 
             <Input
               label="Primary Residential Address"
               value={patient.address}
-              onChange={(e) => setPatient({ ...patient, address: e.target.value })}
+              disabled
             />
           </CardContent>
         </Card>
@@ -152,17 +149,17 @@ export const PatientProfile: React.FC = () => {
               <Input
                 label="Contact Name"
                 value={patient.emergencyContactName}
-                onChange={(e) => setPatient({ ...patient, emergencyContactName: e.target.value })}
+                disabled
               />
               <Input
                 label="Emergency Phone"
                 value={patient.emergencyContactPhone}
-                onChange={(e) => setPatient({ ...patient, emergencyContactPhone: e.target.value })}
+                disabled
               />
               <Input
                 label="Relationship"
                 value={patient.emergencyContactRelation}
-                onChange={(e) => setPatient({ ...patient, emergencyContactRelation: e.target.value })}
+                disabled
               />
             </div>
           </CardContent>
@@ -176,23 +173,18 @@ export const PatientProfile: React.FC = () => {
           />
           <CardContent className="space-y-3">
             <Input
-              label="Declared Drug / Food Allergies (Comma separated)"
-              value={allergiesText}
-              onChange={(e) => setAllergiesText(e.target.value)}
-              placeholder="e.g. Penicillin, Sulfa, Peanuts"
+              label="Declared Drug / Food Allergies"
+              value={allergiesText || 'No known drug allergies on record'}
+              disabled
             />
             <p className="text-xs text-slate-500">
               ⚠️ Allergies are automatically transmitted to attending physicians, surgeons, and pharmacists prior to dispensing.
             </p>
           </CardContent>
         </Card>
-
-        <div className="flex items-center justify-end gap-3">
-          <Button type="submit" variant="primary" size="md" leftIcon={<Save className="w-4 h-4" />}>
-            Save Profile Changes
-          </Button>
-        </div>
-      </form>
+      </div>
     </div>
   );
 };
+
+export default PatientProfile;

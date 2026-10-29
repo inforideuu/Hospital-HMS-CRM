@@ -121,9 +121,36 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     }
 
+    // 3. Pending Bill Check for Patient in this Hospital
+    if (foundUser.role === 'patient' && foundUser.hospitalId) {
+      const pendingBillCheck = MockStorage.checkPatientHasPendingBill(
+        foundUser.hospitalId,
+        foundUser.patientId,
+        foundUser.email
+      );
+      if (pendingBillCheck.hasPendingBill) {
+        const hosp = MockStorage.getHospitalById(foundUser.hospitalId);
+        const amountMsg =
+          pendingBillCheck.totalPendingAmount > 0
+            ? ` with an outstanding balance of ₹${pendingBillCheck.totalPendingAmount.toFixed(2)}`
+            : '';
+        return {
+          success: false,
+          error: `Access Denied: You have an outstanding pending bill${amountMsg} at ${hosp?.name || 'this hospital'}. Please settle your pending dues at the hospital billing desk to regain portal access.`,
+        };
+      }
+    }
+
     MockStorage.setAuthUser(foundUser);
     setUser(foundUser);
     if (foundUser.hospitalId) {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        try {
+          sessionStorage.setItem('pulse_active_hospital_target', foundUser.hospitalId);
+        } catch {
+          // ignore
+        }
+      }
       const hosp = MockStorage.getHospitalById(foundUser.hospitalId);
       setCurrentHospital(hosp || null);
     } else {
@@ -155,6 +182,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const switchHospital = (hospitalId: string) => {
     const hosp = MockStorage.getHospitalById(hospitalId);
     if (hosp) {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        try {
+          sessionStorage.setItem('pulse_active_hospital_target', hosp.id);
+        } catch {
+          // ignore
+        }
+      }
       setCurrentHospital(hosp);
       if (user && user.portal === 'hospital') {
         const updatedUser = { ...user, hospitalId: hosp.id, hospitalName: hosp.name };

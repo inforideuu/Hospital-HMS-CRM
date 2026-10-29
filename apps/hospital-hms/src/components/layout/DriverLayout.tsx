@@ -51,8 +51,17 @@ export const DriverLayout: React.FC = () => {
             </Button>
             <button
               onClick={() => {
+                const targetHospitalId =
+                  user?.hospitalId ||
+                  (typeof window !== 'undefined' && window.sessionStorage
+                    ? sessionStorage.getItem('pulse_active_hospital_target')
+                    : null);
                 logout();
-                navigate('/login');
+                if (targetHospitalId) {
+                  navigate(`/login?targetHospital=${encodeURIComponent(targetHospitalId)}`);
+                } else {
+                  navigate('/login');
+                }
               }}
               className="p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-rose-400 hover:bg-slate-700 transition-colors cursor-pointer"
               title="Sign Out"

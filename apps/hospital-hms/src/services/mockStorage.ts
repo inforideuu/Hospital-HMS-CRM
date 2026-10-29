@@ -1995,6 +1995,11 @@ export const MockStorage = {
     setStored(STORAGE_KEYS.AMBULANCE_MAINTENANCE, list);
   },
 
+  deleteAmbulanceMaintenance(id: string): void {
+    const list = getStored<AmbulanceMaintenance[]>(STORAGE_KEYS.AMBULANCE_MAINTENANCE, initialAmbulanceMaintenance).filter((m) => m.id !== id);
+    setStored(STORAGE_KEYS.AMBULANCE_MAINTENANCE, list);
+  },
+
   // CSV Export utility
   exportToCSV(filename: string, rows: Record<string, any>[]): void {
     if (!rows || !rows.length) return;

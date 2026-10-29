@@ -31,12 +31,9 @@ export const PatientPrescriptions: React.FC = () => {
   const { showToast } = useNotification();
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Completed' | 'Refill Requested'>('All');
+  const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Completed'>('All');
   const [selectedPrescription, setSelectedPrescription] = useState<Prescription | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [isRefillModalOpen, setIsRefillModalOpen] = useState(false);
-  const [refillPrescription, setRefillPrescription] = useState<Prescription | null>(null);
-  const [refillNotes, setRefillNotes] = useState('');
 
   const patientId = user?.patientId || 'PAT-1001';
 
@@ -59,27 +56,6 @@ export const PatientPrescriptions: React.FC = () => {
     const matchesStatus = statusFilter === 'All' || p.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
-
-  const handleOpenRefill = (prescription: Prescription) => {
-    setRefillPrescription(prescription);
-    setRefillNotes('');
-    setIsRefillModalOpen(true);
-  };
-
-  const handleConfirmRefill = () => {
-    if (!refillPrescription) return;
-
-    const updated: Prescription = {
-      ...refillPrescription,
-      status: 'Refill Requested',
-      notes: refillNotes ? `${refillPrescription.notes || ''}\n[Refill Request Note]: ${refillNotes}` : refillPrescription.notes,
-    };
-
-    MockStorage.savePrescription(updated);
-    showToast('Refill Request Sent', `Your refill request for prescription ${refillPrescription.id} has been submitted to Dr. ${refillPrescription.doctorName}.`, 'success');
-    setIsRefillModalOpen(false);
-    setRefillPrescription(null);
-  };
 
   const handlePrint = (p: Prescription) => {
     printPrescription(p, {
@@ -107,7 +83,7 @@ export const PatientPrescriptions: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">My Prescriptions & Medications</h1>
           <p className="text-sm text-slate-500 mt-1">
-            View active treatments, daily dosages, physician guidance, and request pharmacy refills.
+            View active treatments, daily dosages, and physician guidance.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -148,7 +124,7 @@ export const PatientPrescriptions: React.FC = () => {
             />
           </div>
           <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto">
-            {(['All', 'Active', 'Refill Requested', 'Completed'] as const).map((st) => (
+            {(['All', 'Active', 'Completed'] as const).map((st) => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
@@ -272,16 +248,6 @@ export const PatientPrescriptions: React.FC = () => {
                   >
                     Print
                   </Button>
-                  {prescription.status === 'Active' && (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
-                      onClick={() => handleOpenRefill(prescription)}
-                    >
-                      Request Refill
-                    </Button>
-                  )}
                 </div>
               </div>
             </Card>
@@ -352,62 +318,37 @@ export const PatientPrescriptions: React.FC = () => {
               </div>
             )}
 
-            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
-              <Button variant="outline" onClick={() => handlePrint(selectedPrescription)} leftIcon={<Printer className="w-4 h-4" />}>
-                Print Prescription
-              </Button>
+            <div className="flex justify-between items-center gap-3 pt-3 border-t border-slate-100">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const rows = (selectedPrescription.medications || []).map((m, idx) => ({
+                      Prescription_ID: selectedPrescription.id,
+                      Item: idx + 1,
+                      Patient: selectedPrescription.patientName,
+                      Doctor: selectedPrescription.doctorName,
+                      Date: selectedPrescription.date,
+                      Medicine: m.medicineName,
+                      Dosage: m.dosage,
+                      Frequency: m.frequency,
+                      Duration: m.duration,
+                      Instructions: m.instructions || 'As directed',
+                      Diagnosis: selectedPrescription.diagnosis,
+                    }));
+                    MockStorage.exportToCSV(`Prescription_${selectedPrescription.id}`, rows);
+                    showToast('Prescription Downloaded', `Prescription ${selectedPrescription.id} downloaded successfully.`);
+                  }}
+                  leftIcon={<Download className="w-4 h-4" />}
+                >
+                  Download CSV
+                </Button>
+                <Button variant="outline" onClick={() => handlePrint(selectedPrescription)} leftIcon={<Printer className="w-4 h-4" />}>
+                  Print / Save PDF
+                </Button>
+              </div>
               <Button variant="primary" onClick={() => setIsDetailModalOpen(false)}>
                 Close
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* Refill Request Modal */}
-      {refillPrescription && (
-        <Modal
-          isOpen={isRefillModalOpen}
-          onClose={() => setIsRefillModalOpen(false)}
-          title="Submit Medication Refill Request"
-          maxWidth="md"
-        >
-          <div className="space-y-4">
-            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-800">
-              You are requesting a renewal for <strong>{refillPrescription.diagnosis}</strong> prescribed by{' '}
-              <strong>{refillPrescription.doctorName}</strong>. The pharmacy team and your doctor will review this request.
-            </div>
-
-            <div>
-              <p className="text-xs font-semibold text-slate-700 mb-2">Medications included in this refill:</p>
-              <ul className="text-xs text-slate-600 space-y-1 list-disc list-inside bg-slate-50 p-3 rounded-lg">
-                {refillPrescription.medications.map((m, i) => (
-                  <li key={i}>
-                    <strong>{m.medicineName}</strong> ({m.dosage} - {m.frequency})
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                Additional Notes or Symptoms (Optional)
-              </label>
-              <textarea
-                value={refillNotes}
-                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setRefillNotes(e.target.value)}
-                rows={3}
-                placeholder="e.g., Requesting a 30-day refill as current supply ends in 4 days..."
-                className="w-full text-xs rounded-lg border-slate-300 focus:border-brand-500 focus:ring-brand-500 p-2.5 border"
-              />
-            </div>
-
-            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
-              <Button variant="outline" onClick={() => setIsRefillModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button variant="primary" onClick={handleConfirmRefill} leftIcon={<CheckCircle2 className="w-4 h-4" />}>
-                Confirm & Submit Refill
               </Button>
             </div>
           </div>

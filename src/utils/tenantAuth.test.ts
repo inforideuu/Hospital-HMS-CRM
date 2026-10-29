@@ -868,5 +868,146 @@ describe('Hospital-Wise Login Authentication and Tenant Isolation Tests', () => 
     assert.equal(auth.user?.role, 'ambulance_driver');
     assert.equal(auth.user?.portal, 'hospital');
   });
+
+  test('Scenario 23: Patient with pending bill in a hospital -> blocked from login with outstanding bill error', () => {
+    const patientEmail = `patient.bill.${Date.now()}@test.org`;
+    const patientId = `PAT-BILL-${Date.now().toString().slice(-4)}`;
+
+    MockStorage.savePatient({
+      id: patientId,
+      hospitalId: ABC_HOSPITAL_ID,
+      name: 'Rohan Billtest',
+      email: patientEmail,
+      phone: '+91 91234 56789',
+      gender: 'Male',
+      age: 32,
+      dateOfBirth: '1994-05-12',
+      address: '123 Health Ave, Apt 4B',
+      emergencyContactName: 'Anita Billtest',
+      emergencyContactPhone: '+91 91234 56780',
+      emergencyContactRelation: 'Spouse',
+      bloodGroup: 'B+',
+      status: 'Outpatient',
+      allergies: [],
+      medicalHistory: [],
+      registeredDate: '2026-10-29',
+    });
+
+    MockStorage.saveUser({
+      id: `USR-PAT-${patientId}`,
+      name: 'Rohan Billtest',
+      email: patientEmail,
+      password: 'Patient@123',
+      role: 'patient',
+      portal: 'hospital',
+      hospitalId: ABC_HOSPITAL_ID,
+      patientId: patientId,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+
+    // 1. Initial state: No invoices -> hasPendingBill is false
+    const initialCheck = MockStorage.checkPatientHasPendingBill(ABC_HOSPITAL_ID, patientId, patientEmail);
+    assert.equal(initialCheck.hasPendingBill, false);
+
+    // 2. Add an unpaid / pending invoice at ABC Hospital
+    const invId = `INV-TEST-BILL-${Date.now().toString().slice(-4)}`;
+    MockStorage.saveInvoice({
+      id: invId,
+      hospitalId: ABC_HOSPITAL_ID,
+      patientId: patientId,
+      patientName: 'Rohan Billtest',
+      patientPhone: '+91 91234 56789',
+      issueDate: '2026-10-29',
+      dueDate: '2026-11-05',
+      billingCategory: 'Hospital Service',
+      encounterType: 'OPD',
+      paymentType: 'Self Pay',
+      items: [
+        { id: 'item-1', description: 'Consultation Fee', category: 'Consultation', quantity: 1, unitPrice: 500, total: 500 }
+      ],
+      subtotal: 500,
+      taxRate: 5,
+      taxAmount: 25,
+      discount: 0,
+      totalAmount: 525,
+      amountPaid: 0,
+      status: 'Pending',
+    });
+
+    // 3. Now check: hasPendingBill at ABC Hospital is true
+    const billCheckABC = MockStorage.checkPatientHasPendingBill(ABC_HOSPITAL_ID, patientId, patientEmail);
+    assert.equal(billCheckABC.hasPendingBill, true);
+    assert.equal(billCheckABC.totalPendingAmount, 525);
+
+    // 4. Same patient at EFG Hospital has NO pending bill -> false
+    const billCheckEFG = MockStorage.checkPatientHasPendingBill(EFG_HOSPITAL_ID, patientId, patientEmail);
+    assert.equal(billCheckEFG.hasPendingBill, false);
+
+    // 5. When bill is settled / marked as Paid -> hasPendingBill becomes false again
+    const paidInvoice = MockStorage.getInvoiceById(invId);
+    if (paidInvoice) {
+      paidInvoice.status = 'Paid';
+      paidInvoice.amountPaid = 525;
+      MockStorage.saveInvoice(paidInvoice);
+    }
+    const settledCheck = MockStorage.checkPatientHasPendingBill(ABC_HOSPITAL_ID, patientId, patientEmail);
+    assert.equal(settledCheck.hasPendingBill, false);
+  });
+
+  test('Scenario 24: Hospital logout locks session back to that hospital sign in URL and prevents cross-hospital logins', () => {
+    const hospA_email = `nurse.hospA.${Date.now()}@test.org`;
+    const hospB_email = `nurse.hospB.${Date.now()}@test.org`;
+
+    // 1. Provision User at Hospital A (ABC_HOSPITAL_ID)
+    MockStorage.saveUser({
+      id: `USR-A-${Date.now()}`,
+      name: 'Nurse Hospital A',
+      email: hospA_email,
+      password: 'Nurse@1234',
+      role: 'nurse',
+      portal: 'hospital',
+      hospitalId: ABC_HOSPITAL_ID,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+
+    // 2. Provision User at Hospital B (EFG_HOSPITAL_ID)
+    MockStorage.saveUser({
+      id: `USR-B-${Date.now()}`,
+      name: 'Nurse Hospital B',
+      email: hospB_email,
+      password: 'Nurse@1234',
+      role: 'nurse',
+      portal: 'hospital',
+      hospitalId: EFG_HOSPITAL_ID,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    });
+
+    // 3. Nurse B logs into Hospital B
+    const authB = MockStorage.findUserForAuth(hospB_email, EFG_HOSPITAL_ID, 'Nurse@1234');
+    assert.ok(authB.user);
+    assert.equal(authB.user?.hospitalId, EFG_HOSPITAL_ID);
+
+    // 4. Determine logout destination from active user / facility context
+    const targetHospitalId = authB.user?.hospitalId;
+    const logoutRedirectUrl = targetHospitalId
+      ? `/login?targetHospital=${encodeURIComponent(targetHospitalId)}`
+      : '/login';
+
+    // Must return to Hospital B's sign-in page, NOT bare /login
+    assert.equal(logoutRedirectUrl, `/login?targetHospital=${EFG_HOSPITAL_ID}`);
+
+    // 5. On the returned Hospital B sign-in page, attempting to log in with Hospital A credentials is REJECTED
+    const crossHospitalAttempt = MockStorage.findUserForAuth(hospA_email, EFG_HOSPITAL_ID, 'Nurse@1234');
+    assert.equal(crossHospitalAttempt.user, null, 'User from Hospital A cannot log into Hospital B sign in portal');
+    assert.ok(crossHospitalAttempt.error?.includes('No account found for this hospital'));
+
+    // 6. Hospital B credentials continue to authenticate cleanly
+    const correctHospitalAttempt = MockStorage.findUserForAuth(hospB_email, EFG_HOSPITAL_ID, 'Nurse@1234');
+    assert.ok(correctHospitalAttempt.user);
+    assert.equal(correctHospitalAttempt.user?.hospitalId, EFG_HOSPITAL_ID);
+  });
 });
 

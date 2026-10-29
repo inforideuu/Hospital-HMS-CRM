@@ -198,11 +198,58 @@ export const ReportsAnalytics: React.FC = () => {
 
   const handleExportComprehensiveReport = () => {
     if (isPlatformScope) {
-      MockStorage.exportToCSV('SuperAdmin_SaaS_Telemetry', hospitals);
-      showToast('Report Exported', 'Platform multi-tenant analytics CSV generated.');
+      const summaryRows = hospitals.map((h) => ({
+        Hospital_ID: h.id,
+        Hospital_Name: h.name,
+        Registration_Number: h.regNumber,
+        Status: h.status,
+        Tier_Plan: h.planTier || 'Standard',
+        City: h.city || '',
+        State: h.state || '',
+        Beds: h.totalBeds || 0,
+        Created_At: h.createdAt || '',
+      }));
+      MockStorage.exportToCSV('SuperAdmin_SaaS_Telemetry', summaryRows);
+      showToast('Report Exported', 'Platform multi-tenant analytics CSV generated.', 'success');
     } else {
-      MockStorage.exportToCSV(`Hospital_Analytics_${currentHospitalId}`, hospitalPatients);
-      showToast('Report Exported', 'Hospital operational & clinical analytics CSV generated.');
+      const summaryReport = [
+        {
+          Category: 'Clinical Census',
+          Metric: 'Total Registered Patients',
+          Value: totalPatientsCount,
+          Details: 'Active EHR medical records',
+        },
+        {
+          Category: 'OPD Throughput',
+          Metric: 'Total OPD Consultations',
+          Value: totalConsultationsCount,
+          Details: `Completed consultations: ${completedConsultations}`,
+        },
+        ...(hasBedFacility
+          ? [
+              {
+                Category: 'Inpatient Census',
+                Metric: 'Total Hospital Beds',
+                Value: totalBedsCount,
+                Details: `Occupied: ${occupiedBedsCount} (${occupancyRate}% occupancy)`,
+              },
+            ]
+          : []),
+        {
+          Category: 'OPD Chamber Capacity',
+          Metric: 'Total Consultation Chambers',
+          Value: totalOpdRoomsCount,
+          Details: `Active/Occupied: ${occupiedOpdRooms} (${opdChamberOccupancyRate}% chamber utilization)`,
+        },
+        ...hospitalAppointments.map((a) => ({
+          Category: 'Consultation Pipeline',
+          Metric: `Appointment ${a.id}`,
+          Value: `${a.appointmentDate} ${a.appointmentTime}`,
+          Details: `Patient: ${a.patientName} | Doctor: ${a.doctorName} | Status: ${a.status}`,
+        })),
+      ];
+      MockStorage.exportToCSV(`Hospital_Analytics_${currentHospitalId}`, summaryReport);
+      showToast('Report Exported', 'Hospital operational & clinical analytics CSV generated.', 'success');
     }
   };
 

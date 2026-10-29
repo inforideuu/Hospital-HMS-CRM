@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams, useParams } from 'react-router-dom';
 import {
   Activity,
@@ -48,6 +48,12 @@ export const Login: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [matchedAccounts, setMatchedAccounts] = useState<AuthUser[] | null>(null);
+
+  useEffect(() => {
+    if (rawTarget && typeof window !== 'undefined' && window.sessionStorage) {
+      sessionStorage.setItem('pulse_active_hospital_target', rawTarget);
+    }
+  }, [rawTarget]);
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,7 +145,12 @@ export const Login: React.FC = () => {
       <div className="absolute top-6 left-6 z-30">
         <button
           type="button"
-          onClick={() => navigate('/select-hospital')}
+          onClick={() => {
+            if (typeof window !== 'undefined' && window.sessionStorage) {
+              sessionStorage.removeItem('pulse_active_hospital_target');
+            }
+            navigate('/select-hospital');
+          }}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/90 hover:bg-white text-slate-700 hover:text-slate-900 border border-slate-200 text-xs font-bold shadow-md hover:shadow-lg transition-all cursor-pointer backdrop-blur-md"
         >
           <ArrowLeft className="w-4 h-4 text-teal-600" />
@@ -207,9 +218,26 @@ export const Login: React.FC = () => {
             </div>
 
             {error && (
-              <div className="mb-5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium flex items-start gap-2">
-                <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <span>{error}</span>
+              <div
+                className={`mb-5 p-3.5 rounded-xl border text-xs font-medium flex items-start gap-2.5 ${
+                  error.toLowerCase().includes('pending bill')
+                    ? 'bg-amber-50 border-amber-300 text-amber-900 shadow-sm'
+                    : 'bg-rose-50 border-rose-200 text-rose-700'
+                }`}
+              >
+                <ShieldAlert
+                  className={`w-4 h-4 shrink-0 mt-0.5 ${
+                    error.toLowerCase().includes('pending bill') ? 'text-amber-600' : 'text-rose-600'
+                  }`}
+                />
+                <div className="space-y-1 leading-relaxed">
+                  <p className="font-bold">{error}</p>
+                  {error.toLowerCase().includes('pending bill') && (
+                    <p className="text-[11px] text-amber-800">
+                      Please settle your outstanding balance at the hospital billing / cashier desk to reactivate your portal access.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 

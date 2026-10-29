@@ -32,6 +32,7 @@ import {
   UserCheck,
   Activity,
   CheckSquare,
+  Download,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
@@ -978,26 +979,52 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
         ]}
         actions={
           activeTab === 'orders' ? (
-            <Button
-              variant="primary"
-              size="md"
-              onClick={() => {
-                setActiveTab('new-order');
-                navigate('/hospital/laboratory/new-order');
-              }}
-              leftIcon={<Plus className="w-4 h-4" />}
-            >
-              Place Lab Order
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="md"
+                onClick={() => {
+                  MockStorage.exportToCSV('Diagnostic_Work_Orders', filteredOrders);
+                  showToast('Export Successful', 'Laboratory work orders downloaded as CSV.');
+                }}
+                leftIcon={<Download className="w-4 h-4" />}
+              >
+                Export CSV
+              </Button>
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => {
+                  setActiveTab('new-order');
+                  navigate('/hospital/laboratory/new-order');
+                }}
+                leftIcon={<Plus className="w-4 h-4" />}
+              >
+                Place Lab Order
+              </Button>
+            </div>
           ) : activeTab === 'catalog' ? (
-            <Button
-              variant="primary"
-              size="md"
-              onClick={handleOpenAddTest}
-              leftIcon={<Plus className="w-4 h-4" />}
-            >
-              Add Diagnostic Test
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="md"
+                onClick={() => {
+                  MockStorage.exportToCSV('Diagnostic_Test_Catalog', labCatalog);
+                  showToast('Export Successful', 'Diagnostic test catalog downloaded as CSV.');
+                }}
+                leftIcon={<Download className="w-4 h-4" />}
+              >
+                Export Catalog
+              </Button>
+              <Button
+                variant="primary"
+                size="md"
+                onClick={handleOpenAddTest}
+                leftIcon={<Plus className="w-4 h-4" />}
+              >
+                Add Diagnostic Test
+              </Button>
+            </div>
           ) : (
             <Button
               variant="outline"
@@ -3146,6 +3173,32 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" onClick={() => setIsPrintModalOpen(false)}>
                   Close
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    MockStorage.exportToCSV(`Lab_Report_${selectedOrder.id}`, [
+                      {
+                        Order_ID: selectedOrder.id,
+                        Test_Name: selectedOrder.testName,
+                        Category: selectedOrder.category,
+                        Patient_Name: selectedOrder.patientName,
+                        UHID: selectedOrder.patientId,
+                        Doctor: selectedOrder.doctorName,
+                        Status: selectedOrder.status,
+                        Sample_Type: selectedOrder.sampleType,
+                        Result_Value: selectedOrder.resultValue || 'Pending',
+                        Reference_Range: selectedOrder.referenceRange || 'N/A',
+                        Notes: selectedOrder.labTechnicianNotes || 'None',
+                        Date: selectedOrder.orderDate,
+                      },
+                    ]);
+                    showToast('Report Downloaded', `Lab report ${selectedOrder.id} downloaded as CSV.`);
+                  }}
+                  leftIcon={<Download className="w-4 h-4" />}
+                >
+                  Download CSV
                 </Button>
                 <Button
                   variant="primary"

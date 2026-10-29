@@ -28,6 +28,21 @@ from .models import (
     Staff,
     ActivityLog,
     SalesLead,
+    Ambulance,
+    AmbulanceMaintenance,
+    AmbulanceTrip,
+    PatientAppointmentRequest,
+    LabTestCatalog,
+    CouponCode,
+    BranchCreationRequest,
+    AdmissionRequest,
+    FollowUpRequest,
+    LeadFollowUp,
+    LeadActivity,
+    ConvertedCustomer,
+    PatientTestimonial,
+    HospitalSetting,
+    PlatformSetting,
 )
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -753,6 +768,610 @@ class SalesLeadSerializer(serializers.ModelSerializer):
         data['expectedDecisionDate'] = str(instance.expected_decision_date) if instance.expected_decision_date else ''
         data['createdAt'] = instance.created_at.strftime('%Y-%m-%d %H:%M') if instance.created_at else ''
         return data
+
+
+class AmbulanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Ambulance
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        data = resolve_hospital_fk(data)
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'regNumber' in data and 'reg_number' not in data:
+                data['reg_number'] = data['regNumber']
+            if 'mileageKm' in data and 'mileage_km' not in data:
+                data['mileage_km'] = data['mileageKm']
+            if 'fuelLevel' in data and 'fuel_level' not in data:
+                data['fuel_level'] = data['fuelLevel']
+            if 'equipmentCategory' in data and 'equipment_category' not in data:
+                data['equipment_category'] = data['equipmentCategory']
+            if 'currentLocation' in data and 'current_location' not in data:
+                data['current_location'] = data['currentLocation']
+            if 'assignedDriverId' in data and 'assigned_driver' not in data:
+                data['assigned_driver'] = data['assignedDriverId']
+            if 'assignedDriverName' in data and 'assigned_driver_name' not in data:
+                data['assigned_driver_name'] = data['assignedDriverName']
+            if 'driverPhone' in data and 'driver_phone' not in data:
+                data['driver_phone'] = data['driverPhone']
+            if 'lastMaintenanceDate' in data and 'last_maintenance_date' not in data:
+                data['last_maintenance_date'] = data['lastMaintenanceDate']
+            if 'nextMaintenanceDate' in data and 'next_maintenance_date' not in data:
+                data['next_maintenance_date'] = data['nextMaintenanceDate']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['regNumber'] = instance.reg_number
+        data['mileageKm'] = instance.mileage_km
+        data['fuelLevel'] = instance.fuel_level
+        data['equipmentCategory'] = instance.equipment_category
+        data['currentLocation'] = instance.current_location
+        data['assignedDriverId'] = instance.assigned_driver_id
+        data['assignedDriverName'] = instance.assigned_driver_name
+        data['driverPhone'] = instance.driver_phone
+        data['lastMaintenanceDate'] = str(instance.last_maintenance_date) if instance.last_maintenance_date else ''
+        data['nextMaintenanceDate'] = str(instance.next_maintenance_date) if instance.next_maintenance_date else ''
+        return data
+
+
+class AmbulanceMaintenanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AmbulanceMaintenance
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        data = resolve_hospital_fk(data)
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'ambulanceId' in data and 'ambulance' not in data:
+                data['ambulance'] = data['ambulanceId']
+            if 'ambulanceReg' in data and 'ambulance_reg' not in data:
+                data['ambulance_reg'] = data['ambulanceReg']
+            if 'serviceDate' in data and 'service_date' not in data:
+                data['service_date'] = data['serviceDate']
+            if 'maintenanceStatus' in data and 'maintenance_status' not in data:
+                data['maintenance_status'] = data['maintenanceStatus']
+            if 'serviceType' in data and 'service_type' not in data:
+                data['service_type'] = data['serviceType']
+            if 'servicedBy' in data and 'serviced_by' not in data:
+                data['serviced_by'] = data['servicedBy']
+            if 'partsCost' in data and 'parts_cost' not in data:
+                data['parts_cost'] = data['partsCost']
+            if 'labourCost' in data and 'labour_cost' not in data:
+                data['labour_cost'] = data['labourCost']
+            if 'otherCharges' in data and 'other_charges' not in data:
+                data['other_charges'] = data['otherCharges']
+            if 'reportedIssue' in data and 'reported_issue' not in data:
+                data['reported_issue'] = data['reportedIssue']
+            if 'partsReplaced' in data and 'parts_replaced' not in data:
+                data['parts_replaced'] = data['partsReplaced']
+            if 'technicianName' in data and 'technician_name' not in data:
+                data['technician_name'] = data['technicianName']
+            if 'nextServiceDate' in data and 'next_service_date' not in data:
+                data['next_service_date'] = data['nextServiceDate']
+            if 'vehicleAvailability' in data and 'vehicle_availability' not in data:
+                data['vehicle_availability'] = data['vehicleAvailability']
+            if 'safetyInspectionResult' in data and 'safety_inspection_result' not in data:
+                data['safety_inspection_result'] = data['safetyInspectionResult']
+            if 'returnToServiceDate' in data and 'return_to_service_date' not in data:
+                data['return_to_service_date'] = data['returnToServiceDate']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['ambulanceId'] = instance.ambulance_id
+        data['ambulanceReg'] = instance.ambulance_reg
+        data['serviceDate'] = str(instance.service_date) if instance.service_date else ''
+        data['maintenanceStatus'] = instance.maintenance_status
+        data['serviceType'] = instance.service_type
+        data['servicedBy'] = instance.serviced_by
+        data['partsCost'] = float(instance.parts_cost)
+        data['labourCost'] = float(instance.labour_cost)
+        data['otherCharges'] = float(instance.other_charges)
+        data['cost'] = float(instance.cost)
+        data['reportedIssue'] = instance.reported_issue
+        data['partsReplaced'] = instance.parts_replaced
+        data['technicianName'] = instance.technician_name
+        data['nextServiceDate'] = str(instance.next_service_date) if instance.next_service_date else ''
+        data['vehicleAvailability'] = instance.vehicle_availability
+        data['safetyInspectionResult'] = instance.safety_inspection_result
+        data['returnToServiceDate'] = str(instance.return_to_service_date) if instance.return_to_service_date else ''
+        return data
+
+
+class AmbulanceTripSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AmbulanceTrip
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        data = resolve_hospital_fk(data)
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'requestId' in data and 'request_id' not in data:
+                data['request_id'] = data['requestId']
+            if 'ambulanceId' in data and 'ambulance_id' not in data:
+                data['ambulance_id'] = data['ambulanceId']
+            if 'ambulanceReg' in data and 'ambulance_reg' not in data:
+                data['ambulance_reg'] = data['ambulanceReg']
+            if 'driverId' in data and 'driver_id' not in data:
+                data['driver_id'] = data['driverId']
+            if 'driverName' in data and 'driver_name' not in data:
+                data['driver_name'] = data['driverName']
+            if 'patientName' in data and 'patient_name' not in data:
+                data['patient_name'] = data['patientName']
+            if 'patientPhone' in data and 'patient_phone' not in data:
+                data['patient_phone'] = data['patientPhone']
+            if 'pickupAddress' in data and 'pickup_address' not in data:
+                data['pickup_address'] = data['pickupAddress']
+            if 'startTime' in data and 'start_time' not in data:
+                data['start_time'] = data['startTime']
+            if 'pickupTime' in data and 'pickup_time' not in data:
+                data['pickup_time'] = data['pickupTime']
+            if 'hospitalArrivalTime' in data and 'hospital_arrival_time' not in data:
+                data['hospital_arrival_time'] = data['hospitalArrivalTime']
+            if 'endTime' in data and 'end_time' not in data:
+                data['end_time'] = data['endTime']
+            if 'distanceKm' in data and 'distance_km' not in data:
+                data['distance_km'] = data['distanceKm']
+            if 'paramedicNotes' in data and 'paramedic_notes' not in data:
+                data['paramedic_notes'] = data['paramedicNotes']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['requestId'] = instance.request_id
+        data['ambulanceId'] = instance.ambulance_id
+        data['ambulanceReg'] = instance.ambulance_reg
+        data['driverId'] = instance.driver_id
+        data['driverName'] = instance.driver_name
+        data['patientName'] = instance.patient_name
+        data['patientPhone'] = instance.patient_phone
+        data['pickupAddress'] = instance.pickup_address
+        data['startTime'] = instance.start_time
+        data['pickupTime'] = instance.pickup_time
+        data['hospitalArrivalTime'] = instance.hospital_arrival_time
+        data['endTime'] = instance.end_time
+        data['distanceKm'] = float(instance.distance_km)
+        data['paramedicNotes'] = instance.paramedic_notes
+        return data
+
+
+class PatientAppointmentRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PatientAppointmentRequest
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        data = resolve_hospital_fk(data)
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'patientId' in data and 'patient' not in data:
+                data['patient'] = data['patientId']
+            if 'patientName' in data and 'patient_name' not in data:
+                data['patient_name'] = data['patientName']
+            if 'patientPhone' in data and 'patient_phone' not in data:
+                data['patient_phone'] = data['patientPhone']
+            if 'patientAge' in data and 'patient_age' not in data:
+                data['patient_age'] = data['patientAge']
+            if 'patientGender' in data and 'patient_gender' not in data:
+                data['patient_gender'] = data['patientGender']
+            if 'doctorId' in data and 'doctor' not in data:
+                data['doctor'] = data['doctorId']
+            if 'doctorName' in data and 'doctor_name' not in data:
+                data['doctor_name'] = data['doctorName']
+            if 'doctorSpecialization' in data and 'doctor_specialization' not in data:
+                data['doctor_specialization'] = data['doctorSpecialization']
+            if 'departmentId' in data and 'department' not in data:
+                data['department'] = data['departmentId']
+            if 'departmentName' in data and 'department_name' not in data:
+                data['department_name'] = data['departmentName']
+            if 'preferredDate' in data and 'preferred_date' not in data:
+                data['preferred_date'] = data['preferredDate']
+            if 'preferredTime' in data and 'preferred_time' not in data:
+                data['preferred_time'] = data['preferredTime']
+            if 'receptionistNote' in data and 'receptionist_note' not in data:
+                data['receptionist_note'] = data['receptionistNote']
+            if 'respondedBy' in data and 'responded_by' not in data:
+                data['responded_by'] = data['respondedBy']
+            if 'respondedAt' in data and 'responded_at' not in data:
+                data['responded_at'] = data['respondedAt']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['patientId'] = instance.patient_id
+        data['patientName'] = instance.patient_name
+        data['patientPhone'] = instance.patient_phone
+        data['patientAge'] = instance.patient_age
+        data['patientGender'] = instance.patient_gender
+        data['doctorId'] = instance.doctor_id
+        data['doctorName'] = instance.doctor_name
+        data['doctorSpecialization'] = instance.doctor_specialization
+        data['departmentId'] = instance.department_id
+        data['departmentName'] = instance.department_name
+        data['preferredDate'] = str(instance.preferred_date) if instance.preferred_date else ''
+        data['preferredTime'] = instance.preferred_time
+        data['receptionistNote'] = instance.receptionist_note
+        data['respondedBy'] = instance.responded_by
+        data['respondedAt'] = instance.responded_at.strftime('%Y-%m-%d %H:%M') if instance.responded_at else ''
+        data['createdAt'] = instance.created_at.strftime('%Y-%m-%d %H:%M') if instance.created_at else ''
+        return data
+
+
+class LabTestCatalogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LabTestCatalog
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        data = resolve_hospital_fk(data)
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'testName' in data and 'test_name' not in data:
+                data['test_name'] = data['testName']
+            if 'turnaroundHours' in data and 'turnaround_hours' not in data:
+                data['turnaround_hours'] = data['turnaroundHours']
+            if 'sampleType' in data and 'sample_type' not in data:
+                data['sample_type'] = data['sampleType']
+            if 'tubeColor' in data and 'tube_color' not in data:
+                data['tube_color'] = data['tubeColor']
+            if 'normalRange' in data and 'normal_range' not in data:
+                data['normal_range'] = data['normalRange']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['testName'] = instance.test_name
+        data['turnaroundHours'] = instance.turnaround_hours
+        data['sampleType'] = instance.sample_type
+        data['tubeColor'] = instance.tube_color
+        data['normalRange'] = instance.normal_range
+        data['price'] = float(instance.price)
+        return data
+
+
+class CouponCodeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CouponCode
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'discountPercentage' in data and 'discount_percentage' not in data:
+                data['discount_percentage'] = data['discountPercentage']
+            if 'isActive' in data and 'is_active' not in data:
+                data['is_active'] = data['isActive']
+            if 'validUntil' in data and 'valid_until' not in data:
+                data['valid_until'] = data['validUntil']
+            if 'maxUses' in data and 'max_uses' not in data:
+                data['max_uses'] = data['maxUses']
+            if 'usedCount' in data and 'used_count' not in data:
+                data['used_count'] = data['usedCount']
+            if 'usedByHospitals' in data and 'used_by_hospitals' not in data:
+                data['used_by_hospitals'] = data['usedByHospitals']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['discountPercentage'] = float(instance.discount_percentage)
+        data['isActive'] = instance.is_active
+        data['validUntil'] = str(instance.valid_until) if instance.valid_until else ''
+        data['maxUses'] = instance.max_uses
+        data['usedCount'] = instance.used_count
+        data['usedByHospitals'] = instance.used_by_hospitals or []
+        data['createdAt'] = instance.created_at.strftime('%Y-%m-%d %H:%M') if instance.created_at else ''
+        return data
+
+
+class BranchCreationRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BranchCreationRequest
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'organizationId' in data and 'organization_id' not in data:
+                data['organization_id'] = data['organizationId']
+            if 'organizationName' in data and 'organization_name' not in data:
+                data['organization_name'] = data['organizationName']
+            if 'branchName' in data and 'branch_name' not in data:
+                data['branch_name'] = data['branchName']
+            if 'branchCode' in data and 'branch_code' not in data:
+                data['branch_code'] = data['branchCode']
+            if 'contactPerson' in data and 'contact_person' not in data:
+                data['contact_person'] = data['contactPerson']
+            if 'contactPhone' in data and 'contact_phone' not in data:
+                data['contact_phone'] = data['contactPhone']
+            if 'contactEmail' in data and 'contact_email' not in data:
+                data['contact_email'] = data['contactEmail']
+            if 'branchAdminName' in data and 'branch_admin_name' not in data:
+                data['branch_admin_name'] = data['branchAdminName']
+            if 'branchAdminEmail' in data and 'branch_admin_email' not in data:
+                data['branch_admin_email'] = data['branchAdminEmail']
+            if 'branchAdminPhone' in data and 'branch_admin_phone' not in data:
+                data['branch_admin_phone'] = data['branchAdminPhone']
+            if 'createdHospitalId' in data and 'created_hospital_id' not in data:
+                data['created_hospital_id'] = data['createdHospitalId']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['organizationId'] = instance.organization_id
+        data['organizationName'] = instance.organization_name
+        data['branchName'] = instance.branch_name
+        data['branchCode'] = instance.branch_code
+        data['contactPerson'] = instance.contact_person
+        data['contactPhone'] = instance.contact_phone
+        data['contactEmail'] = instance.contact_email
+        data['branchAdminName'] = instance.branch_admin_name
+        data['branchAdminEmail'] = instance.branch_admin_email
+        data['branchAdminPhone'] = instance.branch_admin_phone
+        data['createdHospitalId'] = instance.created_hospital_id
+        data['createdAt'] = instance.created_at.strftime('%Y-%m-%d %H:%M') if instance.created_at else ''
+        return data
+
+
+class AdmissionRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AdmissionRequest
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        data = resolve_hospital_fk(data)
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'consultationId' in data and 'consultation_id' not in data:
+                data['consultation_id'] = data['consultationId']
+            if 'appointmentId' in data and 'appointment_id' not in data:
+                data['appointment_id'] = data['appointmentId']
+            if 'patientId' in data and 'patient_id' not in data:
+                data['patient_id'] = data['patientId']
+            if 'patientName' in data and 'patient_name' not in data:
+                data['patient_name'] = data['patientName']
+            if 'patientPhone' in data and 'patient_phone' not in data:
+                data['patient_phone'] = data['patientPhone']
+            if 'patientAge' in data and 'patient_age' not in data:
+                data['patient_age'] = data['patientAge']
+            if 'patientGender' in data and 'patient_gender' not in data:
+                data['patient_gender'] = data['patientGender']
+            if 'doctorId' in data and 'doctor_id' not in data:
+                data['doctor_id'] = data['doctorId']
+            if 'doctorName' in data and 'doctor_name' not in data:
+                data['doctor_name'] = data['doctorName']
+            if 'departmentName' in data and 'department_name' not in data:
+                data['department_name'] = data['departmentName']
+            if 'recommendedWardType' in data and 'recommended_ward_type' not in data:
+                data['recommended_ward_type'] = data['recommendedWardType']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['hospitalId'] = str(instance.hospital_id or '')
+        data['consultationId'] = instance.consultation_id
+        data['appointmentId'] = instance.appointment_id
+        data['patientId'] = instance.patient_id
+        data['patientName'] = instance.patient_name
+        data['patientPhone'] = instance.patient_phone
+        data['patientAge'] = instance.patient_age
+        data['patientGender'] = instance.patient_gender
+        data['doctorId'] = instance.doctor_id
+        data['doctorName'] = instance.doctor_name
+        data['departmentName'] = instance.department_name
+        data['recommendedWardType'] = instance.recommended_ward_type
+        data['createdAt'] = instance.created_at.strftime('%Y-%m-%d %H:%M') if instance.created_at else ''
+        return data
+
+
+class FollowUpRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FollowUpRequest
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        data = resolve_hospital_fk(data)
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'consultationId' in data and 'consultation_id' not in data:
+                data['consultation_id'] = data['consultationId']
+            if 'originalAppointmentId' in data and 'original_appointment_id' not in data:
+                data['original_appointment_id'] = data['originalAppointmentId']
+            if 'patientId' in data and 'patient_id' not in data:
+                data['patient_id'] = data['patientId']
+            if 'patientName' in data and 'patient_name' not in data:
+                data['patient_name'] = data['patientName']
+            if 'patientPhone' in data and 'patient_phone' not in data:
+                data['patient_phone'] = data['patientPhone']
+            if 'patientAge' in data and 'patient_age' not in data:
+                data['patient_age'] = data['patientAge']
+            if 'patientGender' in data and 'patient_gender' not in data:
+                data['patient_gender'] = data['patientGender']
+            if 'doctorId' in data and 'doctor_id' not in data:
+                data['doctor_id'] = data['doctorId']
+            if 'doctorName' in data and 'doctor_name' not in data:
+                data['doctor_name'] = data['doctorName']
+            if 'departmentId' in data and 'department_id' not in data:
+                data['department_id'] = data['departmentId']
+            if 'departmentName' in data and 'department_name' not in data:
+                data['department_name'] = data['departmentName']
+            if 'suggestedDate' in data and 'suggested_date' not in data:
+                data['suggested_date'] = data['suggestedDate']
+            if 'intervalDays' in data and 'interval_days' not in data:
+                data['interval_days'] = data['intervalDays']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['hospitalId'] = str(instance.hospital_id or '')
+        data['consultationId'] = instance.consultation_id
+        data['originalAppointmentId'] = instance.original_appointment_id
+        data['patientId'] = instance.patient_id
+        data['patientName'] = instance.patient_name
+        data['patientPhone'] = instance.patient_phone
+        data['patientAge'] = instance.patient_age
+        data['patientGender'] = instance.patient_gender
+        data['doctorId'] = instance.doctor_id
+        data['doctorName'] = instance.doctor_name
+        data['departmentId'] = instance.department_id
+        data['departmentName'] = instance.department_name
+        data['suggestedDate'] = str(instance.suggested_date) if instance.suggested_date else ''
+        data['intervalDays'] = instance.interval_days
+        data['createdAt'] = instance.created_at.strftime('%Y-%m-%d %H:%M') if instance.created_at else ''
+        return data
+
+
+class LeadFollowUpSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LeadFollowUp
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'leadId' in data and 'lead_id' not in data:
+                data['lead_id'] = data['leadId']
+            if 'leadHospitalName' in data and 'lead_hospital_name' not in data:
+                data['lead_hospital_name'] = data['leadHospitalName']
+            if 'leadContactPerson' in data and 'lead_contact_person' not in data:
+                data['lead_contact_person'] = data['leadContactPerson']
+            if 'assignedTo' in data and 'assigned_to' not in data:
+                data['assigned_to'] = data['assignedTo']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['leadId'] = instance.lead_id
+        data['leadHospitalName'] = instance.lead_hospital_name
+        data['leadContactPerson'] = instance.lead_contact_person
+        data['assignedTo'] = instance.assigned_to
+        data['date'] = str(instance.date) if instance.date else ''
+        return data
+
+
+class LeadActivitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LeadActivity
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'leadId' in data and 'lead_id' not in data:
+                data['lead_id'] = data['leadId']
+            if 'createdBy' in data and 'created_by' not in data:
+                data['created_by'] = data['createdBy']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['leadId'] = instance.lead_id
+        data['createdBy'] = instance.created_by
+        data['createdAt'] = instance.created_at.strftime('%Y-%m-%d %H:%M') if instance.created_at else ''
+        return data
+
+
+class ConvertedCustomerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ConvertedCustomer
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'leadId' in data and 'lead_id' not in data:
+                data['lead_id'] = data['leadId']
+            if 'hospitalId' in data and 'hospital_id' not in data:
+                data['hospital_id'] = data['hospitalId']
+            if 'hospitalName' in data and 'hospital_name' not in data:
+                data['hospital_name'] = data['hospitalName']
+            if 'contactPerson' in data and 'contact_person' not in data:
+                data['contact_person'] = data['contactPerson']
+            if 'convertedBy' in data and 'converted_by' not in data:
+                data['converted_by'] = data['convertedBy']
+            if 'convertedByName' in data and 'converted_by_name' not in data:
+                data['converted_by_name'] = data['convertedByName']
+            if 'convertedAt' in data and 'converted_at' not in data:
+                data['converted_at'] = data['convertedAt']
+            if 'interestedPlan' in data and 'interested_plan' not in data:
+                data['interested_plan'] = data['interestedPlan']
+            if 'subscriptionStatus' in data and 'subscription_status' not in data:
+                data['subscription_status'] = data['subscriptionStatus']
+            if 'hospitalAdminStatus' in data and 'hospital_admin_status' not in data:
+                data['hospital_admin_status'] = data['hospitalAdminStatus']
+            if 'onboardingStatus' in data and 'onboarding_status' not in data:
+                data['onboarding_status'] = data['onboardingStatus']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['leadId'] = instance.lead_id
+        data['hospitalId'] = instance.hospital_id
+        data['hospitalName'] = instance.hospital_name
+        data['contactPerson'] = instance.contact_person
+        data['convertedBy'] = instance.converted_by
+        data['convertedByName'] = instance.converted_by_name
+        data['convertedAt'] = instance.converted_at.strftime('%Y-%m-%d %H:%M') if instance.converted_at else ''
+        data['interestedPlan'] = instance.interested_plan
+        data['subscriptionStatus'] = instance.subscription_status
+        data['hospitalAdminStatus'] = instance.hospital_admin_status
+        data['onboardingStatus'] = instance.onboarding_status
+        data['createdAt'] = instance.created_at.strftime('%Y-%m-%d %H:%M') if instance.created_at else ''
+        return data
+
+
+class PatientTestimonialSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PatientTestimonial
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        data = resolve_hospital_fk(data)
+        if hasattr(data, 'copy') or isinstance(data, dict):
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            if 'patientName' in data and 'patient_name' not in data:
+                data['patient_name'] = data['patientName']
+            if 'patientRole' in data and 'patient_role' not in data:
+                data['patient_role'] = data['patientRole']
+            if 'avatarUrl' in data and 'avatar_url' not in data:
+                data['avatar_url'] = data['avatarUrl']
+            if 'reviewText' in data and 'review_text' not in data:
+                data['review_text'] = data['reviewText']
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['hospitalId'] = str(instance.hospital_id or '')
+        data['patientName'] = instance.patient_name
+        data['patientRole'] = instance.patient_role
+        data['avatarUrl'] = instance.avatar_url
+        data['reviewText'] = instance.review_text
+        return data
+
+
+class HospitalSettingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HospitalSetting
+        fields = '__all__'
+
+    def to_internal_value(self, data):
+        return resolve_hospital_fk(data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['hospitalId'] = str(instance.hospital_id or '')
+        return data
+
+
+class PlatformSettingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PlatformSetting
+        fields = '__all__'
+
+
 
 
 

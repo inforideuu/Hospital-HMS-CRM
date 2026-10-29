@@ -419,6 +419,36 @@ export interface FollowUpRequest {
   createdAt: string;
 }
 
+export type AppointmentRequestStatus = 'Pending' | 'Approved' | 'Declined' | 'Cancelled';
+
+export interface PatientAppointmentRequest {
+  id: string; // e.g. "REQ-1001"
+  hospitalId: string;
+  patientId: string;
+  patientName: string;
+  patientPhone: string;
+  patientAge?: number;
+  patientGender?: Gender;
+  doctorId: string;
+  doctorName: string;
+  doctorSpecialization?: string;
+  departmentId: string;
+  departmentName: string;
+  preferredDate: string; // YYYY-MM-DD
+  preferredTime: string; // e.g. "10:30 AM" or "Morning (09:00 AM - 12:00 PM)"
+  type: AppointmentType;
+  reason: string;
+  notes?: string;
+  status: AppointmentRequestStatus;
+  receptionistNote?: string;
+  scheduledAppointmentId?: string;
+  scheduledDate?: string;
+  scheduledTime?: string;
+  respondedBy?: string;
+  respondedAt?: string;
+  createdAt: string;
+}
+
 export interface DoctorBreak {
   id: string;
   name: string; // e.g. "Lunch Break", "Tea Break"

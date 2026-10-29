@@ -591,4 +591,307 @@ class SalesLead(models.Model):
         return f"{self.hospital_name} ({self.status})"
 
 
+class Ambulance(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='ambulances')
+    reg_number = models.CharField(max_length=50)
+    type = models.CharField(max_length=50, default='Advanced Life Support (ALS)')
+    model = models.CharField(max_length=100)
+    status = models.CharField(max_length=50, default='Available')
+    mileage_km = models.IntegerField(default=0)
+    fuel_level = models.IntegerField(default=100)
+    equipment_category = models.CharField(max_length=100, default='Class A (Critical Telemetry)')
+    current_location = models.CharField(max_length=255, default='Base Station')
+    assigned_driver = models.ForeignKey('AmbulanceDriver', on_delete=models.SET_NULL, null=True, blank=True, related_name='ambulances')
+    assigned_driver_name = models.CharField(max_length=100, blank=True, null=True)
+    driver_phone = models.CharField(max_length=50, blank=True, null=True)
+    last_maintenance_date = models.DateField(null=True, blank=True)
+    next_maintenance_date = models.DateField(null=True, blank=True)
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.reg_number} ({self.model})"
+
+
+class AmbulanceMaintenance(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='ambulance_maintenances')
+    ambulance = models.ForeignKey(Ambulance, on_delete=models.CASCADE, related_name='maintenances', null=True, blank=True)
+    ambulance_reg = models.CharField(max_length=50)
+    service_date = models.DateField()
+    category = models.CharField(max_length=50, default='Preventive')
+    maintenance_status = models.CharField(max_length=50, default='Scheduled')
+    service_type = models.CharField(max_length=100)
+    serviced_by = models.CharField(max_length=100)
+    cost = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    parts_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    labour_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    other_charges = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    reported_issue = models.TextField(blank=True, null=True)
+    parts_replaced = models.TextField(blank=True, null=True)
+    technician_name = models.CharField(max_length=100, blank=True, null=True)
+    next_service_date = models.DateField(null=True, blank=True)
+    vehicle_availability = models.CharField(max_length=50, default='Available')
+    safety_inspection_result = models.CharField(max_length=50, default='Passed')
+    return_to_service_date = models.DateField(null=True, blank=True)
+    description = models.TextField(blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.id} - {self.ambulance_reg}"
+
+
+class AmbulanceTrip(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='ambulance_trips')
+    request_id = models.CharField(max_length=50, blank=True, null=True)
+    ambulance_id = models.CharField(max_length=50, blank=True, null=True)
+    ambulance_reg = models.CharField(max_length=50, blank=True, null=True)
+    driver_id = models.CharField(max_length=50, blank=True, null=True)
+    driver_name = models.CharField(max_length=100, blank=True, null=True)
+    patient_name = models.CharField(max_length=100)
+    patient_phone = models.CharField(max_length=50, blank=True, null=True)
+    pickup_address = models.TextField()
+    destination = models.TextField()
+    status = models.CharField(max_length=50, default='Dispatched')
+    start_time = models.CharField(max_length=50, blank=True, null=True)
+    pickup_time = models.CharField(max_length=50, blank=True, null=True)
+    hospital_arrival_time = models.CharField(max_length=50, blank=True, null=True)
+    end_time = models.CharField(max_length=50, blank=True, null=True)
+    distance_km = models.DecimalField(max_digits=8, decimal_places=2, default=0.00)
+    paramedic_notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.id} - {self.patient_name}"
+
+
+class PatientAppointmentRequest(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='appointment_requests')
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='appointment_requests', null=True, blank=True)
+    patient_name = models.CharField(max_length=100)
+    patient_phone = models.CharField(max_length=50)
+    patient_age = models.IntegerField(null=True, blank=True)
+    patient_gender = models.CharField(max_length=20, blank=True, null=True)
+    doctor = models.ForeignKey(Doctor, on_delete=models.SET_NULL, null=True, blank=True, related_name='patient_requests')
+    doctor_name = models.CharField(max_length=100)
+    doctor_specialization = models.CharField(max_length=100, blank=True, null=True)
+    department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointment_requests')
+    department_name = models.CharField(max_length=100, blank=True, null=True)
+    preferred_date = models.DateField()
+    preferred_time = models.CharField(max_length=50)
+    type = models.CharField(max_length=50, default='Consultation')
+    reason = models.TextField()
+    notes = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=50, default='Pending')
+    receptionist_note = models.TextField(blank=True, null=True)
+    responded_by = models.CharField(max_length=100, blank=True, null=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.id} - {self.patient_name} -> {self.doctor_name}"
+
+
+class LabTestCatalog(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='lab_test_catalog')
+    test_name = models.CharField(max_length=255)
+    code = models.CharField(max_length=50)
+    category = models.CharField(max_length=100, default='Biochemistry')
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    turnaround_hours = models.IntegerField(default=24)
+    sample_type = models.CharField(max_length=100, default='Blood')
+    tube_color = models.CharField(max_length=100, blank=True, null=True)
+    normal_range = models.CharField(max_length=255, blank=True, null=True)
+    parameters = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=20, default='active')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.test_name} ({self.code})"
+
+
+class CouponCode(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    code = models.CharField(max_length=50, unique=True)
+    discount_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=10.00)
+    description = models.TextField(blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    valid_until = models.DateField(null=True, blank=True)
+    max_uses = models.IntegerField(null=True, blank=True)
+    used_count = models.IntegerField(default=0)
+    used_by_hospitals = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.code} ({self.discount_percentage}%)"
+
+
+class BranchCreationRequest(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    organization_id = models.CharField(max_length=50)
+    organization_name = models.CharField(max_length=255)
+    branch_name = models.CharField(max_length=255)
+    branch_code = models.CharField(max_length=50)
+    address = models.TextField(blank=True, default='')
+    city = models.CharField(max_length=100, blank=True, default='')
+    state = models.CharField(max_length=100, blank=True, default='')
+    country = models.CharField(max_length=100, blank=True, default='')
+    contact_person = models.CharField(max_length=255)
+    contact_phone = models.CharField(max_length=50)
+    contact_email = models.EmailField()
+    description = models.TextField(blank=True, default='')
+    branch_admin_name = models.CharField(max_length=255)
+    branch_admin_email = models.EmailField()
+    branch_admin_phone = models.CharField(max_length=50, blank=True, default='')
+    status = models.CharField(max_length=50, default='pending')
+    created_hospital_id = models.CharField(max_length=50, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.branch_name} ({self.status})"
+
+
+class AdmissionRequest(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='admission_requests')
+    consultation_id = models.CharField(max_length=50, blank=True, null=True)
+    appointment_id = models.CharField(max_length=50, blank=True, null=True)
+    patient_id = models.CharField(max_length=50)
+    patient_name = models.CharField(max_length=255)
+    patient_phone = models.CharField(max_length=50, blank=True, default='')
+    patient_age = models.IntegerField(null=True, blank=True)
+    patient_gender = models.CharField(max_length=20, blank=True, null=True)
+    doctor_id = models.CharField(max_length=50)
+    doctor_name = models.CharField(max_length=255)
+    department_name = models.CharField(max_length=100, blank=True, default='')
+    recommended_ward_type = models.CharField(max_length=100, default='General Ward')
+    priority = models.CharField(max_length=50, default='Normal')
+    reason = models.TextField(blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=50, default='Pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.id} - {self.patient_name} ({self.status})"
+
+
+class FollowUpRequest(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='follow_up_requests')
+    consultation_id = models.CharField(max_length=50)
+    original_appointment_id = models.CharField(max_length=50)
+    patient_id = models.CharField(max_length=50)
+    patient_name = models.CharField(max_length=255)
+    patient_phone = models.CharField(max_length=50)
+    patient_age = models.IntegerField(null=True, blank=True)
+    patient_gender = models.CharField(max_length=20, blank=True, null=True)
+    doctor_id = models.CharField(max_length=50)
+    doctor_name = models.CharField(max_length=255)
+    department_id = models.CharField(max_length=50, blank=True, null=True)
+    department_name = models.CharField(max_length=100)
+    suggested_date = models.DateField()
+    interval_days = models.IntegerField(null=True, blank=True)
+    reason = models.TextField(blank=True, default='')
+    instructions = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=50, default='Scheduled')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.id} - {self.patient_name} -> {self.doctor_name}"
+
+
+class LeadFollowUp(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    lead_id = models.CharField(max_length=50)
+    lead_hospital_name = models.CharField(max_length=255, blank=True, default='')
+    lead_contact_person = models.CharField(max_length=255, blank=True, default='')
+    assigned_to = models.CharField(max_length=50)
+    date = models.DateField()
+    time = models.CharField(max_length=50, blank=True, null=True)
+    type = models.CharField(max_length=50, default='Call')
+    notes = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=50, default='Pending')
+    reminder = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.id} - Lead {self.lead_id} ({self.status})"
+
+
+class LeadActivity(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    lead_id = models.CharField(max_length=50)
+    type = models.CharField(max_length=50, default='Note')
+    description = models.TextField(blank=True, default='')
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.id} - {self.lead_id}: {self.type}"
+
+
+class ConvertedCustomer(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    lead_id = models.CharField(max_length=50)
+    hospital_id = models.CharField(max_length=50)
+    hospital_name = models.CharField(max_length=255)
+    contact_person = models.CharField(max_length=255)
+    email = models.EmailField()
+    phone = models.CharField(max_length=50)
+    converted_by = models.CharField(max_length=255)
+    converted_by_name = models.CharField(max_length=255, blank=True, default='')
+    converted_at = models.DateTimeField(null=True, blank=True)
+    interested_plan = models.CharField(max_length=100, default='basic')
+    subscription_status = models.CharField(max_length=50, default='Trial')
+    hospital_admin_status = models.CharField(max_length=50, default='Created')
+    onboarding_status = models.CharField(max_length=50, default='Pending Onboarding')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.hospital_name} ({self.onboarding_status})"
+
+
+class PatientTestimonial(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='testimonials')
+    patient_name = models.CharField(max_length=255)
+    patient_role = models.CharField(max_length=100, blank=True, default='')
+    avatar_url = models.TextField(blank=True, null=True)
+    rating = models.IntegerField(default=5)
+    headline = models.CharField(max_length=255, blank=True, default='')
+    review_text = models.TextField()
+    verified = models.BooleanField(default=True)
+    date = models.CharField(max_length=50, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.patient_name} - {self.rating} stars"
+
+
+class HospitalSetting(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='custom_settings')
+    data = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Settings for {self.hospital_id}"
+
+
+class PlatformSetting(models.Model):
+    id = models.CharField(max_length=50, primary_key=True, default='global')
+    data = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Platform Settings ({self.id})"
+
+
+
+
 

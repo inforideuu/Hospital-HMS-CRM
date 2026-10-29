@@ -318,8 +318,18 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenMobileMenu, portalType }) 
               <div className="border-t border-slate-100 pt-1">
                 <button
                   onClick={() => {
+                    const targetHospitalId =
+                      user?.hospitalId ||
+                      currentHospital?.id ||
+                      (typeof window !== 'undefined' && window.sessionStorage
+                        ? sessionStorage.getItem('pulse_active_hospital_target')
+                        : null);
                     logout();
-                    navigate('/login');
+                    if (targetHospitalId) {
+                      navigate(`/login?targetHospital=${encodeURIComponent(targetHospitalId)}`);
+                    } else {
+                      navigate('/login');
+                    }
                   }}
                   className="w-full text-left px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 flex items-center gap-2.5 font-semibold transition-colors"
                 >

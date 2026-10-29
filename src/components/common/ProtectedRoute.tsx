@@ -23,7 +23,19 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
       requiredPortal === 'sales' ||
       location.pathname.startsWith('/platform') ||
       location.pathname.startsWith('/sales');
-    return <Navigate to={isPlatformOrSales ? '/superadmin-login' : '/login'} state={{ from: location }} replace />;
+
+    const storedHospital =
+      typeof window !== 'undefined' && window.sessionStorage
+        ? sessionStorage.getItem('pulse_active_hospital_target')
+        : null;
+
+    const targetLoginUrl = isPlatformOrSales
+      ? '/superadmin-login'
+      : storedHospital
+      ? `/login?targetHospital=${encodeURIComponent(storedHospital)}`
+      : '/login';
+
+    return <Navigate to={targetLoginUrl} state={{ from: location }} replace />;
   }
 
   if (requiredPortal && user.portal !== requiredPortal) {

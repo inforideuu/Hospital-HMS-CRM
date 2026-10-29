@@ -445,6 +445,35 @@ export const ApiService = {
     }
   },
 
+  async updateEmergencyStatus(id: string, status: string, notes?: string, additionalFields?: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/emergency-requests/${id}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status,
+          ...(notes ? { notes, chief_complaint: notes } : {}),
+          ...(additionalFields || {}),
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to update emergency request');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async deleteEmergencyRequest(id: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/emergency-requests/${id}/`, {
+        method: 'DELETE',
+      });
+      return res.ok;
+    } catch (err) {
+      return false;
+    }
+  },
+
   async getAmbulanceDrivers(hospitalId?: string) {
     try {
       const url = hospitalId ? `${API_BASE_URL}/drivers/?hospital_id=${encodeURIComponent(hospitalId)}` : `${API_BASE_URL}/drivers/`;
@@ -1002,6 +1031,487 @@ export const ApiService = {
         body: JSON.stringify(data),
       });
       if (!res.ok) throw new Error('Failed to save lab order');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  // Ambulances
+  async getAmbulances(hospitalId?: string) {
+    try {
+      const url = hospitalId
+        ? `${API_BASE_URL}/ambulances/?hospital_id=${encodeURIComponent(hospitalId)}`
+        : `${API_BASE_URL}/ambulances/`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch ambulances');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveAmbulance(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/ambulances/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save ambulance');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async deleteAmbulance(id: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/ambulances/${encodeURIComponent(id)}/`, {
+        method: 'DELETE',
+      });
+      return res.ok;
+    } catch (err) {
+      return false;
+    }
+  },
+
+  // Ambulance Maintenance
+  async getAmbulanceMaintenance(hospitalId?: string) {
+    try {
+      const url = hospitalId
+        ? `${API_BASE_URL}/ambulance-maintenance/?hospital_id=${encodeURIComponent(hospitalId)}`
+        : `${API_BASE_URL}/ambulance-maintenance/`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch ambulance maintenance');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveAmbulanceMaintenance(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/ambulance-maintenance/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save ambulance maintenance');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async deleteAmbulanceMaintenance(id: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/ambulance-maintenance/${encodeURIComponent(id)}/`, {
+        method: 'DELETE',
+      });
+      return res.ok;
+    } catch (err) {
+      return false;
+    }
+  },
+
+  // Ambulance Trips
+  async getAmbulanceTrips(hospitalId?: string) {
+    try {
+      const url = hospitalId
+        ? `${API_BASE_URL}/ambulance-trips/?hospital_id=${encodeURIComponent(hospitalId)}`
+        : `${API_BASE_URL}/ambulance-trips/`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch ambulance trips');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveAmbulanceTrip(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/ambulance-trips/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save ambulance trip');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  // Patient Appointment Requests
+  async getAppointmentRequests(hospitalId?: string, patientId?: string) {
+    try {
+      const params = new URLSearchParams();
+      if (hospitalId) params.append('hospital_id', hospitalId);
+      if (patientId) params.append('patient_id', patientId);
+      const url = `${API_BASE_URL}/appointment-requests/?${params.toString()}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch appointment requests');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveAppointmentRequest(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/appointment-requests/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save appointment request');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async deleteAppointmentRequest(id: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/appointment-requests/${encodeURIComponent(id)}/`, {
+        method: 'DELETE',
+      });
+      return res.ok;
+    } catch (err) {
+      return false;
+    }
+  },
+
+  // Lab Catalog
+  async getLabCatalog(hospitalId?: string) {
+    try {
+      const url = hospitalId
+        ? `${API_BASE_URL}/lab-catalog/?hospital_id=${encodeURIComponent(hospitalId)}`
+        : `${API_BASE_URL}/lab-catalog/`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch lab catalog');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveLabCatalogItem(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/lab-catalog/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save lab catalog item');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async deleteLabCatalogItem(id: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/lab-catalog/${encodeURIComponent(id)}/`, {
+        method: 'DELETE',
+      });
+      return res.ok;
+    } catch (err) {
+      return false;
+    }
+  },
+
+  // Coupons
+  async getCoupons() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/coupons/`);
+      if (!res.ok) throw new Error('Failed to fetch coupons');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveCoupon(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/coupons/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save coupon');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async deleteCoupon(id: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/coupons/${encodeURIComponent(id)}/`, { method: 'DELETE' });
+      return res.ok;
+    } catch (err) {
+      return false;
+    }
+  },
+
+  // Branch Requests
+  async getBranchRequests(orgId?: string) {
+    try {
+      const url = orgId
+        ? `${API_BASE_URL}/branch-requests/?organization_id=${encodeURIComponent(orgId)}`
+        : `${API_BASE_URL}/branch-requests/`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch branch requests');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveBranchRequest(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/branch-requests/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save branch request');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  // Admission Requests
+  async getAdmissionRequests(hospitalId?: string, patientId?: string) {
+    try {
+      const params = new URLSearchParams();
+      if (hospitalId) params.append('hospital_id', hospitalId);
+      if (patientId) params.append('patient_id', patientId);
+      const res = await fetch(`${API_BASE_URL}/admission-requests/?${params.toString()}`);
+      if (!res.ok) throw new Error('Failed to fetch admission requests');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveAdmissionRequest(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/admission-requests/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save admission request');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async deleteAdmissionRequest(id: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/admission-requests/${encodeURIComponent(id)}/`, { method: 'DELETE' });
+      return res.ok;
+    } catch (err) {
+      return false;
+    }
+  },
+
+  // Follow-Up Requests
+  async getFollowUpRequests(hospitalId?: string, patientId?: string) {
+    try {
+      const params = new URLSearchParams();
+      if (hospitalId) params.append('hospital_id', hospitalId);
+      if (patientId) params.append('patient_id', patientId);
+      const res = await fetch(`${API_BASE_URL}/follow-up-requests/?${params.toString()}`);
+      if (!res.ok) throw new Error('Failed to fetch follow-up requests');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveFollowUpRequest(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/follow-up-requests/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save follow-up request');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async deleteFollowUpRequest(id: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/follow-up-requests/${encodeURIComponent(id)}/`, { method: 'DELETE' });
+      return res.ok;
+    } catch (err) {
+      return false;
+    }
+  },
+
+  // Lead Follow-Ups & Activities
+  async getLeadFollowUps(leadId?: string) {
+    try {
+      const url = leadId ? `${API_BASE_URL}/lead-followups/?lead_id=${encodeURIComponent(leadId)}` : `${API_BASE_URL}/lead-followups/`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch lead follow-ups');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveLeadFollowUp(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/lead-followups/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save lead follow-up');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async getLeadActivities(leadId?: string) {
+    try {
+      const url = leadId ? `${API_BASE_URL}/lead-activities/?lead_id=${encodeURIComponent(leadId)}` : `${API_BASE_URL}/lead-activities/`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch lead activities');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveLeadActivity(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/lead-activities/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save lead activity');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  // Converted Customers
+  async getConvertedCustomers() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/converted-customers/`);
+      if (!res.ok) throw new Error('Failed to fetch converted customers');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveConvertedCustomer(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/converted-customers/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save converted customer');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  // Testimonials
+  async getTestimonials(hospitalId?: string) {
+    try {
+      const url = hospitalId ? `${API_BASE_URL}/testimonials/?hospital_id=${encodeURIComponent(hospitalId)}` : `${API_BASE_URL}/testimonials/`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch testimonials');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveTestimonial(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/testimonials/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to save testimonial');
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async deleteTestimonial(id: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/testimonials/${encodeURIComponent(id)}/`, { method: 'DELETE' });
+      return res.ok;
+    } catch (err) {
+      return false;
+    }
+  },
+
+  // Hospital & Platform Settings
+  async getHospitalSettings(hospitalId: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/hospital-settings/${encodeURIComponent(hospitalId)}/`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async saveHospitalSettings(hospitalId: string, data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/hospital-settings/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: hospitalId, hospital: hospitalId, data }),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async getPlatformSettings() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/platform-settings/global/`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async savePlatformSettings(data: any) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/platform-settings/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'global', data }),
+      });
+      if (!res.ok) return null;
       return await res.json();
     } catch (err) {
       return null;

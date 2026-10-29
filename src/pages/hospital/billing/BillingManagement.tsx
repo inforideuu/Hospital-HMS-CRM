@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { calculateStayDays, formatStayDuration } from '../../../utils/admissionStay';
 import { calculateItemizedDepartmentalGST, getDepartmentalGSTRate } from '../../../utils/gstCalculation';
+import { printInvoiceReceipt } from '../../../utils/invoicePrint';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
@@ -2533,8 +2534,55 @@ export const BillingManagement: React.FC = () => {
               </div>
             </div>
 
-            <div className="pt-4 border-t border-slate-100 text-center text-[10px] text-slate-400">
-              This is a computer-generated simulated receipt from PulseCore Health Operating System.
+            <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <span className="text-[10px] text-slate-400">
+                Official computer-generated Tax Invoice / Bill of Supply from PulseCore Health OS.
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  leftIcon={<Download className="w-3.5 h-3.5" />}
+                  onClick={() => {
+                    const rows = (selectedInvoice.items || []).map((it) => ({
+                      Invoice_ID: selectedInvoice.id,
+                      Patient_Name: selectedInvoice.patientName,
+                      UHID: selectedInvoice.patientId,
+                      Item_Description: it.description,
+                      Category: it.category,
+                      Quantity: it.quantity,
+                      Unit_Price: it.unitPrice,
+                      Item_Total: it.total,
+                      Tax_Rate: `${selectedInvoice.taxRate}%`,
+                      Tax_Amount: selectedInvoice.taxAmount,
+                      Grand_Total: selectedInvoice.totalAmount,
+                      Amount_Paid: selectedInvoice.amountPaid,
+                      Balance_Due: Math.max(0, selectedInvoice.totalAmount - selectedInvoice.amountPaid),
+                      Issue_Date: selectedInvoice.issueDate,
+                      Status: selectedInvoice.status,
+                    }));
+                    MockStorage.exportToCSV(`Invoice_${selectedInvoice.id}`, rows);
+                    showToast('Exported', `Invoice ${selectedInvoice.id} downloaded as CSV.`);
+                  }}
+                >
+                  Download CSV
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  leftIcon={<Printer className="w-4 h-4" />}
+                  onClick={() =>
+                    printInvoiceReceipt(selectedInvoice, {
+                      hospitalName: settings.hospitalName || currentHospital?.name,
+                      hospitalAddress: settings.address,
+                      taxRegistrationNumber: settings.taxRegistrationNumber,
+                      hospitalPhone: settings.receptionPhone || currentHospital?.phone,
+                    })
+                  }
+                >
+                  Print / Save PDF
+                </Button>
+              </div>
             </div>
           </div>
           );

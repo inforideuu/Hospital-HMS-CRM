@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   HeartPulse,
@@ -16,6 +16,7 @@ import {
   Plus,
   Activity,
   FileText,
+  MessageSquare,
 } from 'lucide-react';
 import { MockStorage } from '../../services/mockStorage';
 import { useAuth } from '../../context/AuthContext';
@@ -29,10 +30,31 @@ export const PatientDashboard: React.FC = () => {
   const { user } = useAuth();
   const { showToast } = useNotification();
   const navigate = useNavigate();
+  const [dataVersion, setDataVersion] = useState(0);
+
+  useEffect(() => {
+    const handleUpdate = () => setDataVersion((v) => v + 1);
+    window.addEventListener('pulse_storage_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
 
   const patientId = user?.patientId || 'PAT-1001';
   const patient = MockStorage.getPatientById(patientId);
   const appointments = MockStorage.getAppointments(undefined, patientId);
+  const followUpRequests = MockStorage.getFollowUpRequests();
+  const pendingFollowUp = followUpRequests.find(
+    (f) => (f.patientId === patientId || (user?.phone && f.patientPhone === user.phone)) && f.status === 'Pending'
+  );
+  const appointmentRequests = MockStorage.getAppointmentRequests(undefined, patientId);
+  const myRequests = appointmentRequests.filter(
+    (r) => r.patientId === patientId || (user?.phone && r.patientPhone === user.phone)
+  );
+  const declinedRequest = myRequests.find((r) => r.status === 'Declined' && r.receptionistNote);
+  const pendingRequest = myRequests.find((r) => r.status === 'Pending');
   const prescriptions = MockStorage.getPrescriptions(patientId);
   const labOrders = MockStorage.getLabOrders(undefined, patientId);
   const invoices = MockStorage.getInvoices(undefined, patientId);
@@ -76,11 +98,11 @@ export const PatientDashboard: React.FC = () => {
             <Button
               variant="white"
               size="sm"
-              onClick={() => navigate('/patient/appointments')}
+              onClick={() => navigate('/patient/appointments?action=request')}
               leftIcon={<Calendar className="w-3.5 h-3.5 text-teal-700" />}
               className="font-bold text-teal-900"
             >
-              Book Appointment
+              Request Appointment
             </Button>
             <Button
               variant="danger"
@@ -89,11 +111,80 @@ export const PatientDashboard: React.FC = () => {
               leftIcon={<Truck className="w-3.5 h-3.5" />}
               className="font-bold shadow-lg"
             >
-              Emergency 911 Ambulance
+              Request Ambulance
             </Button>
           </div>
         </div>
       </div>
+
+      {/* Hospital Receptionist Note Alert Banner (When slot was unavailable and receptionist wrote a note) */}
+      {declinedRequest && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300 text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm animate-in fade-in">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+              <MessageSquare className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-800">Hospital Reception Note</span>
+                <span className="text-[10px] bg-amber-200/90 text-amber-900 px-2.5 py-0.5 rounded-full font-bold">
+                  Requested Slot Unavailable
+                </span>
+              </div>
+              <p className="text-xs font-medium text-amber-900">
+                Regarding your appointment request with <span className="font-bold">{declinedRequest.doctorName}</span> for <span className="font-bold">{declinedRequest.preferredDate} ({declinedRequest.preferredTime})</span>:
+              </p>
+              <div className="p-2.5 rounded-xl bg-white/90 border border-amber-200 text-xs text-amber-950 font-medium italic shadow-2xs">
+                "{declinedRequest.receptionistNote}"
+              </div>
+              <p className="text-[11px] text-amber-700">
+                Responded by: <span className="font-semibold">{declinedRequest.respondedBy || 'Hospital Reception'}</span> {declinedRequest.respondedAt ? `• ${declinedRequest.respondedAt}` : ''}
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => navigate('/patient/appointments?action=request')}
+            className="bg-amber-600 hover:bg-amber-700 text-white shrink-0 font-semibold shadow-xs"
+          >
+            Request Another Slot / Date
+          </Button>
+        </div>
+      )}
+
+      {/* Appointment Request Under Review Alert (Pending receptionist confirmation) */}
+      {pendingRequest && (
+        <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 text-blue-950 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-blue-700">Appointment Request Under Review</span>
+                <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold">
+                  Awaiting Reception
+                </span>
+              </div>
+              <h4 className="text-sm font-bold text-blue-950 mt-0.5">
+                Dr. {pendingRequest.doctorName} ({pendingRequest.departmentName}) • Preferred: {pendingRequest.preferredDate} at {pendingRequest.preferredTime}
+              </h4>
+              <p className="text-xs text-blue-700 mt-0.5">
+                Hospital reception is reviewing your requested date and slot. You will be scheduled and notified as soon as confirmed.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate('/patient/appointments')}
+            className="shrink-0"
+          >
+            View Request Status
+          </Button>
+        </div>
+      )}
 
       {/* Active Emergency Tracker Alert (If ambulance requested) */}
       {activeEmergency && (
@@ -168,7 +259,12 @@ export const PatientDashboard: React.FC = () => {
               <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-100 space-y-3">
                 <div className="flex items-start justify-between">
                   <div>
-                    <h4 className="font-bold text-sm text-slate-900">{upcomingApt.doctorName}</h4>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-sm text-slate-900">{upcomingApt.doctorName}</h4>
+                      {(upcomingApt.isFollowUp || upcomingApt.type === 'Follow-up') && (
+                        <Badge variant="cyan" size="sm">Follow-Up</Badge>
+                      )}
+                    </div>
                     <p className="text-xs text-indigo-700 font-medium">{upcomingApt.doctorSpecialization}</p>
                     <p className="text-[11px] text-slate-500 mt-0.5">{upcomingApt.departmentName}</p>
                   </div>
@@ -179,8 +275,48 @@ export const PatientDashboard: React.FC = () => {
                 </div>
 
                 <div className="text-xs text-slate-600 pt-2 border-t border-indigo-100/60">
-                  <p><span className="font-semibold text-slate-700">Reason:</span> {upcomingApt.reason}</p>
+                  <p><span className="font-semibold text-slate-700">Reason:</span> {upcomingApt.followUpReason || upcomingApt.reason}</p>
                 </div>
+              </div>
+            ) : pendingFollowUp ? (
+              <div className="p-4 rounded-xl bg-teal-50 border border-teal-200 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-teal-950">Follow-Up Recommended</span>
+                  <Badge variant="cyan" size="sm">Scheduling in Progress</Badge>
+                </div>
+                <p className="text-teal-800">
+                  Dr. {pendingFollowUp.doctorName} recommended a follow-up visit around <span className="font-semibold">{pendingFollowUp.suggestedDate}</span>.
+                </p>
+                <p className="text-slate-500 text-[11px]">Reason: {pendingFollowUp.reason}</p>
+              </div>
+            ) : pendingRequest ? (
+              <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-blue-950">Appointment Request Pending</span>
+                  <Badge variant="indigo" size="sm">Under Review</Badge>
+                </div>
+                <p className="text-blue-800">
+                  Requested with <span className="font-semibold">Dr. {pendingRequest.doctorName}</span> for <span className="font-semibold">{pendingRequest.preferredDate} ({pendingRequest.preferredTime})</span>.
+                </p>
+                <p className="text-slate-500 text-[11px]">Reception is checking doctor slot availability.</p>
+              </div>
+            ) : declinedRequest ? (
+              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-amber-950">Slot Unavailable • Reception Note</span>
+                  <Badge variant="warning" size="sm">Action Needed</Badge>
+                </div>
+                <p className="text-amber-900 italic bg-white/70 p-2 rounded border border-amber-200">
+                  "{declinedRequest.receptionistNote}"
+                </p>
+                <Button
+                  variant="primary"
+                  size="xs"
+                  onClick={() => navigate('/patient/appointments?action=request')}
+                  className="bg-amber-600 hover:bg-amber-700 text-white"
+                >
+                  Request Another Slot
+                </Button>
               </div>
             ) : (
               <div className="text-center py-6 text-xs text-slate-400">
@@ -299,7 +435,7 @@ export const PatientDashboard: React.FC = () => {
             )}
           </CardContent>
           <div className="p-4 bg-slate-50/70 border-t border-slate-100 flex justify-between items-center text-xs">
-            <span className="text-slate-500">Hassle-free digital payment settlement</span>
+            <span className="text-slate-500">Hospital billing desk records</span>
             <Button variant="ghost" size="xs" onClick={() => navigate('/patient/billing')} rightIcon={<ArrowRight className="w-3.5 h-3.5" />}>
               Billing History
             </Button>
