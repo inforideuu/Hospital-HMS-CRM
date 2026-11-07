@@ -423,6 +423,7 @@ export function generateDoctorTimeSlots(
   // 7. Generate candidate slots from schedule (continuous timeline split by slot start time)
   const slotDuration = schedule.slotDurationMinutes > 0 ? schedule.slotDurationMinutes : 30;
   const bufferMins = Math.max(0, settings?.appointmentBufferMinutes || 0);
+  const slotStep = Math.max(1, slotDuration + bufferMins);
   const minNoticeHours = Math.max(0, settings?.minAdvanceBookingHours || 0);
 
   // Active appointments on this date and adjacent dates for overnight shift boundary checks
@@ -452,7 +453,7 @@ export function generateDoctorTimeSlots(
     const continuousEndMins = endMins + 24 * 60;
     // 1. Morning portion on dateStr from previous day's shift
     if (worksFromYesterday) {
-      for (let m = startMins; m + slotDuration <= continuousEndMins; m += slotDuration) {
+      for (let m = startMins; m + slotDuration <= continuousEndMins; m += slotStep) {
         if (m >= 1440) {
           const actualStart = m - 1440;
           const actualEnd = m + slotDuration - 1440;
@@ -465,7 +466,7 @@ export function generateDoctorTimeSlots(
     }
     // 2. Evening portion on dateStr for today's shift
     if (worksToday) {
-      for (let m = startMins; m + slotDuration <= continuousEndMins; m += slotDuration) {
+      for (let m = startMins; m + slotDuration <= continuousEndMins; m += slotStep) {
         if (m < 1440) {
           const crosses = m + slotDuration > 1440;
           const actualEnd = m + slotDuration;
@@ -480,7 +481,7 @@ export function generateDoctorTimeSlots(
     }
   } else {
     // Standard daytime shift (startMins to endMins)
-    for (let m = startMins; m + slotDuration <= endMins; m += slotDuration) {
+    for (let m = startMins; m + slotDuration <= endMins; m += slotStep) {
       candidateSlots.push({ slotStartMins: m, slotEndMins: m + slotDuration });
     }
   }
@@ -784,6 +785,7 @@ export function validateBookingAvailability(
   const slotDuration = schedule.slotDurationMinutes || 30;
   const slotEnd = rawSlotMins + slotDuration;
   const bufferMins = Math.max(0, settings?.appointmentBufferMinutes || 0);
+  const slotStep = Math.max(1, slotDuration + bufferMins);
 
   const dayName = getDayOfWeekName(appointmentDate);
   const worksToday = Boolean(schedule.workingDays?.includes(dayName));
@@ -811,7 +813,7 @@ export function validateBookingAvailability(
         return { isValid: false, errorMessage: `Specialist is not scheduled to work on ${dayName}s.` };
       }
       const offset = rawSlotMins - startMins;
-      if (offset % slotDuration !== 0 || rawSlotMins + slotDuration > continuousEndMins) {
+      if (offset % slotStep !== 0 || rawSlotMins + slotDuration > continuousEndMins) {
         return {
           isValid: false,
           errorMessage: `Selected time is outside doctor's consultation hours (${schedule.consultationStartTime} - ${schedule.consultationEndTime}).`,
@@ -823,7 +825,7 @@ export function validateBookingAvailability(
       }
       const continuousStart = rawSlotMins + 1440;
       const offset = continuousStart - startMins;
-      if (offset < 0 || offset % slotDuration !== 0 || continuousStart + slotDuration > continuousEndMins) {
+      if (offset < 0 || offset % slotStep !== 0 || continuousStart + slotDuration > continuousEndMins) {
         return {
           isValid: false,
           errorMessage: `Selected time is outside doctor's consultation hours (${schedule.consultationStartTime} - ${schedule.consultationEndTime}).`,
@@ -839,7 +841,7 @@ export function validateBookingAvailability(
     if (!worksToday) {
       return { isValid: false, errorMessage: `Specialist is not scheduled to work on ${dayName}s.` };
     }
-    if (rawSlotMins < startMins || slotEnd > endMins || (rawSlotMins - startMins) % slotDuration !== 0) {
+    if (rawSlotMins < startMins || slotEnd > endMins || (rawSlotMins - startMins) % slotStep !== 0) {
       return {
         isValid: false,
         errorMessage: `Selected time is outside doctor's consultation hours (${schedule.consultationStartTime} - ${schedule.consultationEndTime}).`,

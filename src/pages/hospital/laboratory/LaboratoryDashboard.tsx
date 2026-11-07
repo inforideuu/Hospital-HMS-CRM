@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  PhoneCall,
 } from 'lucide-react';
 import {
   BarChart,
@@ -41,6 +42,8 @@ import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { StatCard } from '../../../components/ui/StatCard';
+import { Modal } from '../../../components/ui/Modal';
+import { Input, Textarea } from '../../../components/ui/Input';
 
 const STATUS_COLORS: Record<string, string> = {
   Ordered: '#f59e0b',
@@ -111,10 +114,67 @@ export const LaboratoryDashboard: React.FC = () => {
     [labOrders]
   );
 
-  const criticalCount = useMemo(
-    () => labOrders.filter((o) => o.resultStatus === 'Critical').length,
+  // Critical Panic Value orders pending telephonic physician notification acknowledgment
+  const criticalOrders = useMemo(
+    () => labOrders.filter((o) => o.resultStatus === 'Critical' && !o.criticalAlertAcknowledged),
     [labOrders]
   );
+
+  const criticalCount = criticalOrders.length;
+
+  // Acknowledgment Modal State
+  const [isAcknowledgeModalOpen, setIsAcknowledgeModalOpen] = useState(false);
+  const [selectedCriticalOrder, setSelectedCriticalOrder] = useState<LabOrder | null>(null);
+  const [doctorNotifiedName, setDoctorNotifiedName] = useState('');
+  const [communicationNotes, setCommunicationNotes] = useState('');
+  const [readBackConfirmed, setReadBackConfirmed] = useState(true);
+
+  const handleOpenAcknowledge = (order?: LabOrder) => {
+    const target = order || criticalOrders[0];
+    setSelectedCriticalOrder(target || null);
+    setDoctorNotifiedName(target?.doctorName || 'Attending Physician');
+    setCommunicationNotes(
+      target
+        ? `Telephonically notified Dr. ${target.doctorName} of critical panic value (${target.resultValue || 'Panic level'}) for patient ${target.patientName}. Read-back verification completed.`
+        : 'Telephonic panic alert notification given to ordering physician with verbal read-back verified.'
+    );
+    setReadBackConfirmed(true);
+    setIsAcknowledgeModalOpen(true);
+  };
+
+  const handleConfirmAcknowledge = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!readBackConfirmed) {
+      showToast('Validation Error', 'Read-back confirmation is required under NABL/CAP clinical guidelines.', 'error');
+      return;
+    }
+
+    const callerName = user?.name || 'Lab Staff';
+
+    if (selectedCriticalOrder) {
+      MockStorage.acknowledgeCriticalAlert(
+        selectedCriticalOrder.id,
+        callerName,
+        communicationNotes,
+        doctorNotifiedName
+      );
+      showToast('Panic Alert Ended', `Critical panic alert for ${selectedCriticalOrder.patientName} (${selectedCriticalOrder.id}) acknowledged and resolved.`);
+    } else {
+      // Bulk resolve all pending critical alerts
+      criticalOrders.forEach((o) => {
+        MockStorage.acknowledgeCriticalAlert(
+          o.id,
+          callerName,
+          `Bulk telephonic notification: ${communicationNotes}`,
+          doctorNotifiedName || o.doctorName
+        );
+      });
+      showToast('All Panic Alerts Ended', `${criticalOrders.length} critical findings acknowledged & logged.`);
+    }
+
+    setIsAcknowledgeModalOpen(false);
+    refreshData();
+  };
 
   const rejectedCount = useMemo(
     () => labOrders.filter((o) => o.status === 'Sample Rejected').length,
@@ -281,28 +341,57 @@ export const LaboratoryDashboard: React.FC = () => {
 
       {/* Critical Panic Alert Banner (if any critical orders exist) */}
       {criticalCount > 0 && (
-        <div className="p-4 bg-rose-50 border-l-4 border-rose-600 rounded-xl flex items-center justify-between shadow-xs">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-rose-600 text-white rounded-lg animate-pulse">
+        <div className="p-4 bg-rose-50 border-2 border-rose-500 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm animate-pulse-border">
+          <div className="flex items-start md:items-center gap-3">
+            <div className="p-2.5 bg-rose-600 text-white rounded-lg animate-pulse shrink-0">
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-rose-900">
-                CRITICAL PANIC VALUE ALERT: {criticalCount} Diagnostic {criticalCount === 1 ? 'Finding' : 'Findings'} Exceed Panic Limits
-              </h4>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-bold text-rose-900">
+                  CRITICAL PANIC VALUE ALERT: {criticalCount} Diagnostic {criticalCount === 1 ? 'Finding' : 'Findings'} Exceed Panic Limits
+                </h4>
+                <Badge variant="error" size="sm">STAT ACTION</Badge>
+              </div>
               <p className="text-xs text-rose-700 mt-0.5">
                 Immediate telephonic notification to ordering physician required under NABL/CAP clinical guidelines.
               </p>
+              {criticalOrders.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-2 text-xs text-rose-800">
+                  {criticalOrders.slice(0, 3).map((o) => (
+                    <span key={o.id} className="bg-rose-100/90 px-2 py-0.5 rounded border border-rose-300 font-medium">
+                      {o.id}: {o.patientName} ({o.testName}: {o.resultValue || 'Critical'}) &bull; Dr. {o.doctorName}
+                    </span>
+                  ))}
+                  {criticalOrders.length > 3 && (
+                    <span className="text-[11px] text-rose-600 font-semibold self-center">
+                      +{criticalOrders.length - 3} more
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => navigate('/hospital/laboratory/orders')}
-            leftIcon={<Eye className="w-4 h-4" />}
-          >
-            Review Critical Alerts
-          </Button>
+          <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => handleOpenAcknowledge()}
+              className="bg-rose-600 hover:bg-rose-700 text-white font-semibold"
+              leftIcon={<PhoneCall className="w-4 h-4" />}
+            >
+              Log Physician Call & End Alert
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/hospital/laboratory/orders')}
+              className="border-rose-300 text-rose-800 hover:bg-rose-100"
+              leftIcon={<Eye className="w-4 h-4" />}
+            >
+              Review Critical Alerts
+            </Button>
+          </div>
         </div>
       )}
 
@@ -696,6 +785,89 @@ export const LaboratoryDashboard: React.FC = () => {
           </Card>
         </div>
       </div>
+
+      {/* Modal: Acknowledge & End Critical Panic Alert */}
+      <Modal
+        isOpen={isAcknowledgeModalOpen}
+        onClose={() => setIsAcknowledgeModalOpen(false)}
+        title="End Critical Panic Value Alert"
+        subtitle="Mandatory Telephonic Communication & Read-Back Verification (NABL/CAP Guidelines)"
+        maxWidth="md"
+      >
+        <form onSubmit={handleConfirmAcknowledge} className="space-y-4">
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-2 text-xs">
+            <div className="font-bold text-rose-900 flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4 text-rose-600" />
+              Active Critical Finding Details
+            </div>
+            {selectedCriticalOrder ? (
+              <div className="grid grid-cols-2 gap-2 text-rose-900 bg-white/90 p-2.5 rounded-lg border border-rose-200">
+                <div><span className="font-semibold text-slate-500">Order ID:</span> {selectedCriticalOrder.id}</div>
+                <div><span className="font-semibold text-slate-500">Patient:</span> {selectedCriticalOrder.patientName}</div>
+                <div><span className="font-semibold text-slate-500">Test:</span> {selectedCriticalOrder.testName}</div>
+                <div><span className="font-semibold text-rose-600">Result:</span> <span className="font-bold text-rose-700">{selectedCriticalOrder.resultValue || 'Critical'}</span></div>
+                <div><span className="font-semibold text-slate-500">Ordering Doctor:</span> Dr. {selectedCriticalOrder.doctorName}</div>
+                <div><span className="font-semibold text-slate-500">Sample Type:</span> {selectedCriticalOrder.sampleType}</div>
+              </div>
+            ) : (
+              <div className="text-rose-900 bg-white/90 p-2.5 rounded-lg border border-rose-200">
+                Acknowledging <strong>{criticalOrders.length}</strong> active critical findings in bulk.
+              </div>
+            )}
+          </div>
+
+          <Input
+            label="Ordering Physician Notified *"
+            value={doctorNotifiedName}
+            onChange={(e) => setDoctorNotifiedName(e.target.value)}
+            placeholder="e.g. Dr. Arvind Sharma"
+            required
+          />
+
+          <Textarea
+            label="Telephonic Notification Notes & Log *"
+            value={communicationNotes}
+            onChange={(e) => setCommunicationNotes(e.target.value)}
+            placeholder="Document verbal read-back confirmation and instructions given..."
+            rows={3}
+            required
+          />
+
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <label className="flex items-start gap-2.5 cursor-pointer text-xs text-amber-900">
+              <input
+                type="checkbox"
+                checked={readBackConfirmed}
+                onChange={(e) => setReadBackConfirmed(e.target.checked)}
+                className="mt-0.5 rounded text-rose-600 focus:ring-rose-500 h-4 w-4"
+              />
+              <span className="font-semibold">
+                I certify that the critical panic values have been telephonically communicated to the physician/clinical team and verbal read-back was verified in compliance with clinical laboratory guidelines.
+              </span>
+            </label>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsAcknowledgeModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="danger"
+              size="sm"
+              className="bg-rose-600 hover:bg-rose-700 text-white font-semibold"
+              leftIcon={<CheckCircle2 className="w-4 h-4" />}
+            >
+              Confirm Telephonic Notice & End Alert
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 };

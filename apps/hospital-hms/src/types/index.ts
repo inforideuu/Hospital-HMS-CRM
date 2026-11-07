@@ -14,7 +14,7 @@ export type UserRole =
   | 'ambulance_driver'
   | 'ambulance_manager';
 
-export type PortalType = 'platform' | 'hospital' | 'patient' | 'ambulance_driver';
+export type PortalType = 'platform' | 'sales' | 'hospital' | 'patient' | 'ambulance_driver';
 
 export interface User {
   id: string;
@@ -25,6 +25,10 @@ export interface User {
   avatar?: string;
   hospitalId?: string; // Tenant identifier
   hospitalName?: string;
+  organizationId?: string;
+  organizationName?: string;
+  isOrganizationAdmin?: boolean;
+  permittedBranchIds?: string[];
   patientId?: string; // Linked Patient ID if patient role
   driverId?: string; // Linked Driver ID if ambulance driver
   department?: string;
@@ -86,6 +90,7 @@ export interface Hospital {
   name: string;
   regNumber: string;
   type: HospitalType;
+  organizationId?: string;
   email: string;
   phone: string;
   address: string;
@@ -96,6 +101,7 @@ export interface Hospital {
   adminName?: string;
   adminEmail?: string;
   adminPhone?: string;
+  adminPassword?: string;
   planTier: SubscriptionPlanTier;
   status: HospitalStatus;
   logoUrl?: string;
@@ -106,6 +112,11 @@ export interface Hospital {
   createdAt: string;
   websiteUrl?: string;
   domainStatus?: 'connected' | 'pending' | 'failed';
+  organizationName?: string;
+  isHeadBranch?: boolean;
+  isBranch?: boolean;
+  headBranchId?: string;
+  branchCode?: string;
 }
 
 export interface SupportTicket {
@@ -132,17 +143,25 @@ export interface SupportTicket {
   }[];
 }
 
+export type NotificationType = 'info' | 'success' | 'warning' | 'error' | 'emergency';
+
 export interface PlatformNotification {
   id: string;
   title: string;
   message: string;
-  type: 'info' | 'success' | 'warning' | 'error';
+  type: NotificationType;
   timestamp: string;
   read: boolean;
+  roleTarget?: UserRole | 'all' | 'platform' | 'hospital_staff';
+  targetRoles?: UserRole[];
   hospitalId?: string;
   patientId?: string;
+  userId?: string;
+  category?: 'clinical' | 'emergency' | 'billing' | 'onboarding' | 'system' | 'lead' | 'general';
   link?: string;
 }
+
+export type AppNotification = PlatformNotification;
 
 // ========================
 // HOSPITAL & PATIENT TYPES
@@ -228,6 +247,14 @@ export interface Appointment {
   notes?: string;
   fee: number;
   paymentStatus: 'Paid' | 'Unpaid';
+  rescheduledFromDate?: string;
+  rescheduledFromTime?: string;
+  rescheduleReason?: string;
+  reschedulingPenalty?: number;
+  reschedulingPenaltyCollected?: boolean;
+  reschedulingCollectedInvoiceId?: string;
+  cancellationPenalty?: number;
+  cancellationPenaltyCollected?: boolean;
   createdAt: string;
 }
 
@@ -313,7 +340,7 @@ export interface Bed {
   notes?: string;
 }
 
-export type AdmissionStatus = 'Active' | 'Discharged' | 'Transferred';
+export type AdmissionStatus = 'Active' | 'Discharge Initiated' | 'Discharged' | 'Transferred';
 
 export interface Admission {
   id: string; // e.g. "ADM-5001"
@@ -325,13 +352,31 @@ export interface Admission {
   departmentName: string;
   wardType: WardType;
   bedNumber: string;
+  roomNumber?: string;
   admissionDate: string;
   dischargeDate?: string;
   admissionType: 'Emergency' | 'Elective' | 'Transfer' | 'Maternity';
   reason: string;
+  diagnosis?: string;
   status: AdmissionStatus;
   notes?: string;
   initialDeposit: number;
+
+  nurseNotes?: string;
+  dischargeInitiatedAt?: string;
+  dischargeDoctorId?: string;
+  dischargeDoctorName?: string;
+  dischargeSummary?: string;
+  dischargeAdvice?: string;
+  dischargePrescriptions?: string;
+
+  billingStatus?: 'Pending' | 'Paid' | 'Cleared';
+  invoiceId?: string;
+  finalBilledAmount?: number;
+  finalPaidAmount?: number;
+
+  finalDischargedBy?: string;
+  finalDischargedRole?: 'Nurse' | 'Receptionist' | 'Admin';
 }
 
 export type InvoiceStatus = 'Paid' | 'Pending' | 'Partially Paid' | 'Overdue' | 'Cancelled';
@@ -374,7 +419,7 @@ export interface Medicine {
   genericName: string;
   sku: string;
   batchNumber: string;
-  category: 'Antibiotics' | 'Analgesics' | 'Cardiovascular' | 'Antidiabetic' | 'Respiratory' | 'Vitamins' | 'Emergency Drugs';
+  category: 'Antibiotics' | 'Analgesics' | 'Cardiovascular' | 'Antidiabetic' | 'Respiratory' | 'Vitamins' | 'Emergency Drugs' | string;
   stockQuantity: number;
   minThreshold: number;
   unitPrice: number;
@@ -382,6 +427,12 @@ export interface Medicine {
   manufacturer: string;
   locationRack: string;
   requiresPrescription: boolean;
+  stock?: number;
+  unit?: string;
+  price?: number;
+  status?: string;
+  quarantineReason?: string;
+  quarantinedAt?: string;
 }
 
 export type LabTestStatus = 'Ordered' | 'Sample Collected' | 'In Progress' | 'Completed' | 'Cancelled';
@@ -418,6 +469,14 @@ export interface LabOrder {
   referenceRange?: string;
   resultStatus?: 'Normal' | 'Abnormal' | 'Critical';
   labTechnicianNotes?: string;
+  criticalAlertAcknowledged?: boolean;
+  criticalAlertAcknowledgedBy?: string;
+  criticalAlertAcknowledgedAt?: string;
+  criticalAlertCommunicationNote?: string;
+  criticalAlertDoctorNotified?: string;
+  careTrailSkipped?: boolean;
+  careTrailSkippedReason?: string;
+  careTrailCompletedAtReview?: boolean;
   fee: number;
 }
 
@@ -569,6 +628,10 @@ export interface HospitalSettings {
   taxRegistrationNumber: string;
   defaultCurrency: string;
   invoiceNotes: string;
+  cancellationDeadlineHours?: number;
+  cancellationPenaltyPercent?: number;
+  reschedulingDeadlineHours?: number;
+  reschedulingPenaltyPercent?: number;
 }
 
 export interface ActivityLog {

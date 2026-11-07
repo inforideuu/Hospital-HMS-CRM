@@ -669,7 +669,7 @@ export const HospitalSupportManagement: React.FC = () => {
               <option value="Technical">Technical (Bug, Software Error, Crash)</option>
               <option value="Billing">Billing & Subscription (Invoicing, Taxes, Plan)</option>
               <option value="Clinical Workflow">Clinical Workflow (EHR, OPD, IPD, Beds, Pharmacy)</option>
-              <option value="Integration">Integration (Lab Devices, SMS/Email, POS)</option>
+              <option value="Integration">Integration (Lab Devices, POS, External EHR)</option>
               <option value="Feature Request">Feature Request (Enhancement or New Module)</option>
             </Select>
 

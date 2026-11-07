@@ -24,6 +24,8 @@ import {
   HeartPulse,
   AlertTriangle,
   FileCheck,
+  Lock,
+  Pill,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { ApiService } from '../../../services/apiService';
@@ -43,6 +45,10 @@ export const DoctorDashboard: React.FC = () => {
   const navigate = useNavigate();
   const { showToast } = useNotification();
   const hospId = user?.hospitalId || currentHospital?.id || 'hosp-1';
+  const isAdmissionsEnabled = MockStorage.isCapabilityEnabled(hospId, 'admissions_beds');
+  const isLabEnabled = MockStorage.isCapabilityEnabled(hospId, 'laboratory_diagnostics');
+  const isAmbulanceEnabled = MockStorage.isCapabilityEnabled(hospId, 'ambulance_emergency');
+  const isPharmacyEnabled = MockStorage.isCapabilityEnabled(hospId, 'pharmacy_stock');
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [consultations, setConsultations] = useState<Consultation[]>([]);
@@ -186,6 +192,25 @@ export const DoctorDashboard: React.FC = () => {
   }, [myInpatients]);
 
   const handleStartConsultation = async (apt: Appointment) => {
+    const hospSettings = MockStorage.getHospitalSettings(apt.hospitalId || hospId);
+    const isVitalsTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+    const pat = MockStorage.getPatientById(apt.patientId);
+    const hasVitals = Boolean(
+      pat?.vitals?.bloodPressure ||
+      pat?.vitals?.heartRate ||
+      pat?.vitals?.temperature ||
+      pat?.vitals?.oxygenLevel
+    );
+
+    if (isVitalsTriageMandatory && !hasVitals) {
+      showToast(
+        'Nursing Vitals Triage Pending',
+        `Hospital policy requires nurse clinical vitals triage before beginning consultation for ${apt.patientName}. Nurse must complete vitals intake first.`,
+        'warning'
+      );
+      return;
+    }
+
     try {
       const timestamp = new Date().toISOString();
       MockStorage.updateAppointmentStatus(apt.id, 'In Consultation', {
@@ -230,15 +255,17 @@ export const DoctorDashboard: React.FC = () => {
             >
               My Appointments
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate('/hospital/doctor/inpatients')}
-              leftIcon={<BedDouble className="w-3.5 h-3.5 text-teal-600" />}
-              className="border-teal-300 bg-teal-50/60 hover:bg-teal-100/80 text-teal-900 font-medium"
-            >
-              My Inpatients ({myInpatients.length})
-            </Button>
+            {isAdmissionsEnabled && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate('/hospital/doctor/inpatients')}
+                leftIcon={<BedDouble className="w-3.5 h-3.5 text-teal-600" />}
+                className="border-teal-300 bg-teal-50/60 hover:bg-teal-100/80 text-teal-900 font-medium"
+              >
+                My Inpatients ({myInpatients.length})
+              </Button>
+            )}
             <Button
               variant="primary"
               size="sm"
@@ -337,18 +364,28 @@ export const DoctorDashboard: React.FC = () => {
           icon={<TrendingUp className="w-5 h-5 text-cyan-600" />}
           accentColor="cyan"
         />
-        <StatCard
-          title="Admitted Inpatients"
-          value={myInpatients.length}
-          subtext={
-            readyForDischargeInpatients.length > 0
-              ? `${readyForDischargeInpatients.length} ready for discharge`
-              : 'Ward bed care'
-          }
-          icon={<BedDouble className="w-5 h-5 text-teal-600" />}
-          accentColor="emerald"
-          onClick={() => navigate('/hospital/doctor/inpatients')}
-        />
+        {isAdmissionsEnabled ? (
+          <StatCard
+            title="Admitted Inpatients"
+            value={myInpatients.length}
+            subtext={
+              readyForDischargeInpatients.length > 0
+                ? `${readyForDischargeInpatients.length} ready for discharge`
+                : 'Ward bed care'
+            }
+            icon={<BedDouble className="w-5 h-5 text-teal-600" />}
+            accentColor="emerald"
+            onClick={() => navigate('/hospital/doctor/inpatients')}
+          />
+        ) : (
+          <StatCard
+            title="Prescriptions Issued"
+            value={consultations.filter((c) => c.prescriptionItems && c.prescriptionItems.length > 0).length}
+            subtext="Outpatient pharmacotherapy"
+            icon={<Pill className="w-5 h-5 text-indigo-600" />}
+            accentColor="indigo"
+          />
+        )}
       </div>
 
       {/* Active Consultations Alert Banner if any in progress */}
@@ -458,15 +495,51 @@ export const DoctorDashboard: React.FC = () => {
                       </td>
                       <td className="px-5 py-3.5 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="primary"
-                            size="xs"
-                            onClick={() => handleStartConsultation(apt)}
-                            leftIcon={<Play className="w-3 h-3" />}
-                            className="bg-brand-600 hover:bg-brand-700 text-white font-semibold"
-                          >
-                            Start Consultation
-                          </Button>
+                          {(() => {
+                            const pat = MockStorage.getPatientById(apt.patientId);
+                            const hospSettings = MockStorage.getHospitalSettings(apt.hospitalId || hospId);
+                            const isVitalsTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+                            const hasNurseVitals = Boolean(
+                              pat?.vitals?.bloodPressure ||
+                              pat?.vitals?.heartRate ||
+                              pat?.vitals?.temperature ||
+                              pat?.vitals?.oxygenLevel
+                            );
+                            const isVitalsPending = isVitalsTriageMandatory && !hasNurseVitals;
+
+                            if (isVitalsPending) {
+                              return (
+                                <Button
+                                  variant="outline"
+                                  size="xs"
+                                  className="border-amber-300 text-amber-700 bg-amber-50 cursor-not-allowed opacity-90 font-medium"
+                                  onClick={() => {
+                                    showToast(
+                                      'Nursing Vitals Triage Pending',
+                                      `Hospital policy requires nurse clinical vitals triage before starting consultation for ${apt.patientName}. Nurse must record vitals first.`,
+                                      'warning'
+                                    );
+                                  }}
+                                  title="Locked: Nurse must record vital signs first"
+                                >
+                                  <Lock className="w-3 h-3 mr-1 text-amber-600" />
+                                  Vitals Pending
+                                </Button>
+                              );
+                            }
+
+                            return (
+                              <Button
+                                variant="primary"
+                                size="xs"
+                                onClick={() => handleStartConsultation(apt)}
+                                leftIcon={<Play className="w-3 h-3" />}
+                                className="bg-brand-600 hover:bg-brand-700 text-white font-semibold"
+                              >
+                                Start Consultation
+                              </Button>
+                            );
+                          })()}
                         </div>
                       </td>
                     </tr>
@@ -605,53 +678,116 @@ export const DoctorDashboard: React.FC = () => {
               <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-brand-600 transition-transform group-hover:translate-x-1" />
             </div>
 
-            <div
-              onClick={() => navigate('/hospital/admissions')}
-              className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/70 hover:bg-brand-50 hover:border-brand-200 transition-all cursor-pointer flex items-center justify-between group"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-rose-100 text-rose-700 group-hover:bg-brand-100 group-hover:text-brand-700 transition-colors">
-                  <BedDouble className="w-4 h-4" />
+            {isAdmissionsEnabled ? (
+              <div
+                onClick={() => navigate('/hospital/admissions')}
+                className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/70 hover:bg-brand-50 hover:border-brand-200 transition-all cursor-pointer flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-rose-100 text-rose-700 group-hover:bg-brand-100 group-hover:text-brand-700 transition-colors">
+                    <BedDouble className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 group-hover:text-brand-900">Inpatient Admissions & Beds</h4>
+                    <p className="text-[11px] text-slate-500">Track ward occupancy, admit patients, and oversee inpatient care.</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 group-hover:text-brand-900">Inpatient Admissions & Beds</h4>
-                  <p className="text-[11px] text-slate-500">Track ward occupancy, admit patients, and oversee inpatient care.</p>
-                </div>
+                <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-brand-600 transition-transform group-hover:translate-x-1" />
               </div>
-              <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-brand-600 transition-transform group-hover:translate-x-1" />
-            </div>
+            ) : (
+              <div
+                onClick={() => showToast('Module Locked', 'Inpatient Ward Admissions is locked on the Starter Clinic plan. Upgrade to Professional Hospital.', 'warning')}
+                className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/30 opacity-75 hover:opacity-100 transition-all cursor-pointer flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-amber-100 text-amber-700">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-bold text-slate-800">Inpatient Admissions & Beds</h4>
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-200/60 text-amber-800 font-bold">Locked</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">IPD bed care is locked on the Starter Clinic tier.</p>
+                  </div>
+                </div>
+                <Lock className="w-4 h-4 text-amber-500" />
+              </div>
+            )}
 
-            <div
-              onClick={() => navigate('/hospital/laboratory')}
-              className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/70 hover:bg-brand-50 hover:border-brand-200 transition-all cursor-pointer flex items-center justify-between group"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-amber-100 text-amber-700 group-hover:bg-brand-100 group-hover:text-brand-700 transition-colors">
-                  <FlaskConical className="w-4 h-4" />
+            {isLabEnabled ? (
+              <div
+                onClick={() => navigate('/hospital/laboratory')}
+                className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/70 hover:bg-brand-50 hover:border-brand-200 transition-all cursor-pointer flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-amber-100 text-amber-700 group-hover:bg-brand-100 group-hover:text-brand-700 transition-colors">
+                    <FlaskConical className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 group-hover:text-brand-900">Laboratory & Diagnostics</h4>
+                    <p className="text-[11px] text-slate-500">Review lab orders, diagnostic test findings, and pathology reports.</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 group-hover:text-brand-900">Laboratory & Diagnostics</h4>
-                  <p className="text-[11px] text-slate-500">Review lab orders, diagnostic test findings, and pathology reports.</p>
-                </div>
+                <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-brand-600 transition-transform group-hover:translate-x-1" />
               </div>
-              <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-brand-600 transition-transform group-hover:translate-x-1" />
-            </div>
+            ) : (
+              <div
+                onClick={() => showToast('Module Locked', 'Laboratory & Diagnostics is locked on the Starter Clinic plan. Upgrade to Professional Hospital.', 'warning')}
+                className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/30 opacity-75 hover:opacity-100 transition-all cursor-pointer flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-amber-100 text-amber-700">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-bold text-slate-800">Laboratory & Diagnostics</h4>
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-200/60 text-amber-800 font-bold">Locked</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">Pathology & diagnostic tests locked on Starter Clinic tier.</p>
+                  </div>
+                </div>
+                <Lock className="w-4 h-4 text-amber-500" />
+              </div>
+            )}
 
-            <div
-              onClick={() => navigate('/hospital/ambulance')}
-              className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/70 hover:bg-brand-50 hover:border-brand-200 transition-all cursor-pointer flex items-center justify-between group"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-red-100 text-red-700 group-hover:bg-brand-100 group-hover:text-brand-700 transition-colors">
-                  <Ambulance className="w-4 h-4" />
+            {isAmbulanceEnabled ? (
+              <div
+                onClick={() => navigate('/hospital/ambulance')}
+                className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/70 hover:bg-brand-50 hover:border-brand-200 transition-all cursor-pointer flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-red-100 text-red-700 group-hover:bg-brand-100 group-hover:text-brand-700 transition-colors">
+                    <Ambulance className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 group-hover:text-brand-900">Ambulance & 911 Emergency Desk</h4>
+                    <p className="text-[11px] text-slate-500">Monitor active emergency dispatch and critical incoming patient transit.</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-900 group-hover:text-brand-900">Ambulance & 911 Emergency Desk</h4>
-                  <p className="text-[11px] text-slate-500">Monitor active emergency dispatch and critical incoming patient transit.</p>
-                </div>
+                <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-brand-600 transition-transform group-hover:translate-x-1" />
               </div>
-              <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-brand-600 transition-transform group-hover:translate-x-1" />
-            </div>
+            ) : (
+              <div
+                onClick={() => showToast('Module Locked', 'Ambulance & Emergency is locked on the Starter Clinic plan. Upgrade to Professional Hospital.', 'warning')}
+                className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/30 opacity-75 hover:opacity-100 transition-all cursor-pointer flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-amber-100 text-amber-700">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-bold text-slate-800">Ambulance & 911 Emergency Desk</h4>
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-200/60 text-amber-800 font-bold">Locked</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">Fleet emergency dispatch locked on Starter Clinic tier.</p>
+                  </div>
+                </div>
+                <Lock className="w-4 h-4 text-amber-500" />
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { MockStorage } from '../../services/mockStorage';
@@ -28,18 +28,28 @@ import {
 export const DriverDashboard: React.FC = () => {
   const { user } = useAuth();
   const { showToast } = useNotification();
-  const driverId = user?.driverId || 'DRV-201';
+  const driver = useMemo(() => {
+    if (user?.driverId) return MockStorage.getAmbulanceDriverById(user.driverId);
+    const drivers = MockStorage.getAmbulanceDrivers(user?.hospitalId);
+    return drivers.find(
+      (d) =>
+        (d.email && d.email.toLowerCase() === user?.email?.toLowerCase()) ||
+        d.name === user?.name ||
+        d.id === user?.id
+    );
+  }, [user]);
+  const driverId = driver?.id || user?.driverId || user?.id || '';
 
-  const [driver, setDriver] = useState<AmbulanceDriver | undefined>(undefined);
+  const [, setDriverState] = useState<AmbulanceDriver | undefined>(undefined);
   const [activeRequest, setActiveRequest] = useState<EmergencyRequest | undefined>(undefined);
   const [recentTrips, setRecentTrips] = useState<AmbulanceTrip[]>([]);
   const [paramedicNotes, setParamedicNotes] = useState('');
 
   const loadData = () => {
     const drv = MockStorage.getAmbulanceDriverById(driverId);
-    setDriver(drv);
+    setDriverState(drv);
 
-    const allRequests = MockStorage.getEmergencyRequests();
+    const allRequests = MockStorage.getEmergencyRequests(user?.hospitalId);
     const active = allRequests.find(
       (r) =>
         (r.assignedDriverId === driverId || r.assignedDriverName === user?.name) &&
@@ -48,7 +58,7 @@ export const DriverDashboard: React.FC = () => {
     );
     setActiveRequest(active);
 
-    const trips = MockStorage.getAmbulanceTrips(undefined, driverId);
+    const trips = MockStorage.getAmbulanceTrips(user?.hospitalId, driverId);
     setRecentTrips(trips);
   };
 

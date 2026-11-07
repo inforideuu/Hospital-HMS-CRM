@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Activity,
   ShieldCheck,
@@ -141,13 +141,10 @@ export const Login: React.FC = () => {
             </p>
           </div>
 
-          {/* Quick 1-Click Demo Login Panel */}
-          <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200/90 p-5 shadow-xl space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-teal-600" /> Platform Admin Accounts
-              </h2>
-              <span className="text-[10px] bg-teal-50 text-teal-700 border border-teal-200 px-2.5 py-0.5 rounded-full font-bold">Platform HQ</span>
+          <div className="space-y-4 pt-4 border-t border-slate-200/60 max-w-lg">
+            <div className="flex items-center justify-between text-xs text-slate-600">
+              <span className="font-semibold text-slate-900">Demo Accounts Available</span>
+              <span className="bg-teal-100 text-teal-800 border border-teal-200 px-2.5 py-0.5 rounded-full font-bold">Platform HQ</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -223,7 +220,7 @@ export const Login: React.FC = () => {
                 />
               </div>
 
-              <div className="flex items-center justify-between text-xs pt-1">
+              <div className="flex items-center text-xs pt-1">
                 <label className="flex items-center gap-2 text-slate-600 cursor-pointer">
                   <input
                     type="checkbox"
@@ -233,9 +230,6 @@ export const Login: React.FC = () => {
                   />
                   <span>Remember session</span>
                 </label>
-                <Link to="/forgot-password" className="text-teal-600 hover:text-teal-800 font-semibold">
-                  Forgot password?
-                </Link>
               </div>
 
               <Button

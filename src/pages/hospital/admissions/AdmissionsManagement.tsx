@@ -181,6 +181,7 @@ export const AdmissionsManagement: React.FC = () => {
   };
 
   useEffect(() => {
+    refreshData();
     const handleStorageChange = () => {
       refreshData();
     };
@@ -627,7 +628,10 @@ export const AdmissionsManagement: React.FC = () => {
       reason: admitFormData.reason,
       notes: admitFormData.notes,
       status: 'Active',
-      initialDeposit: Number(admitFormData.initialDeposit),
+      initialDeposit:
+        Number(admitFormData.initialDeposit) > 0
+          ? Number(admitFormData.initialDeposit)
+          : (chosenBed ? chosenBed.dailyRate * 3 : 1000),
     };
 
     MockStorage.saveAdmission(newAdmission);
@@ -746,7 +750,8 @@ export const AdmissionsManagement: React.FC = () => {
       );
       return;
     }
-    if (adm.billingStatus === 'Pending') {
+    const hospSettings = MockStorage.getHospitalSettings(hospId);
+    if (hospSettings.requireFullSettlementOnDischarge !== false && adm.billingStatus === 'Pending') {
       showToast(
         'Action Blocked',
         'Inpatient billing settlement is pending. Settle invoice at Cashier Desk before final release.',

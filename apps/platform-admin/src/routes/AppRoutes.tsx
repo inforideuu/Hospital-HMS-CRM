@@ -11,8 +11,6 @@ import { ProtectedRoute } from '../components/common/ProtectedRoute';
 
 // Auth Pages
 import { Login } from '../pages/auth/Login';
-import { ForgotPassword } from '../pages/auth/ForgotPassword';
-import { ResetPassword } from '../pages/auth/ResetPassword';
 import { Unauthorized } from '../pages/auth/Unauthorized';
 import { NotFound } from '../pages/auth/NotFound';
 
@@ -73,8 +71,8 @@ export const AppRoutes: React.FC = () => {
 
       {/* Public / Auth Routes */}
       <Route path="/login" element={<Login />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/forgot-password" element={<Navigate to="/login" replace />} />
+      <Route path="/reset-password" element={<Navigate to="/login" replace />} />
       <Route path="/unauthorized" element={<Unauthorized />} />
 
       {/* PLATFORM ADMIN PORTAL ROUTES */}

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
 import { MockStorage } from '../../../services/mockStorage';
+import { compressImage } from '../../../utils/imageCompressor';
 import {
   User,
   Ambulance,
@@ -85,8 +86,8 @@ const STANDARD_EQUIPMENT_CHECKLIST = [
 export const AmbulanceManagement: React.FC = () => {
   const { user, currentHospital } = useAuth();
   const { showToast } = useNotification();
-  const hospitalId = user?.hospitalId || 'HOSP-001';
-  const hospitalName = currentHospital?.name || 'Apex Medical Center';
+  const hospitalId = currentHospital?.id || user?.hospitalId || '';
+  const hospitalName = currentHospital?.name || user?.hospitalName || 'Apex Medical Center';
 
   const [activeTab, setActiveTab] = useState('dispatch');
   const [ambulances, setAmbulances] = useState<Ambulance[]>([]);
@@ -294,6 +295,13 @@ export const AmbulanceManagement: React.FC = () => {
   });
 
   const loadData = () => {
+    if (!hospitalId) {
+      setAmbulances([]);
+      setDrivers([]);
+      setEmergencyRequests([]);
+      setMaintenanceRecords([]);
+      return;
+    }
     setAmbulances(MockStorage.getAmbulances(hospitalId));
     setDrivers(MockStorage.getAmbulanceDrivers(hospitalId));
     setEmergencyRequests(MockStorage.getEmergencyRequests(hospitalId));
@@ -354,6 +362,10 @@ export const AmbulanceManagement: React.FC = () => {
   // Handler for Ambulance Manager Manually Logging Emergency Call / Dispatch
   const handleSaveManualEmergency = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hospitalId) {
+      showToast('Facility Required', 'Please select an active hospital facility before logging emergency dispatches.', 'error');
+      return;
+    }
     if (!manualEmergencyForm.patientName || !manualEmergencyForm.patientPhone || !manualEmergencyForm.pickupLocation) {
       showToast('Validation Error', 'Please enter caller/patient name, contact phone, and pickup location.', 'error');
       return;
@@ -560,6 +572,10 @@ export const AmbulanceManagement: React.FC = () => {
   // Handle Add / Edit Ambulance
   const handleAddAmbulance = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hospitalId) {
+      showToast('Facility Required', 'Please select an active hospital facility before enrolling fleet vehicles.', 'error');
+      return;
+    }
 
     if (editingAmbulance) {
       const amb: Ambulance = {
@@ -763,6 +779,10 @@ export const AmbulanceManagement: React.FC = () => {
   // Handle Add / Edit Driver / Paramedic
   const handleAddDriver = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hospitalId) {
+      showToast('Facility Required', 'Please select an active hospital facility before onboarding crew.', 'error');
+      return;
+    }
 
     if (editingDriver) {
       const drv: AmbulanceDriver = {
@@ -968,6 +988,10 @@ export const AmbulanceManagement: React.FC = () => {
   // Handle Add / Edit Maintenance
   const handleAddMaintenance = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hospitalId) {
+      showToast('Facility Required', 'Please select an active hospital facility before logging maintenance records.', 'error');
+      return;
+    }
     const amb = ambulances.find((a) => a.id === newMaintenance.ambulanceId);
     if (!amb && !editingMaintenance) {
       showToast('Error', 'Please select an ambulance unit.', 'error');
@@ -1086,11 +1110,34 @@ export const AmbulanceManagement: React.FC = () => {
 
   const handleExportCSV = () => {
     if (activeTab === 'dispatch') {
-      const exportList = emergencyFilter === 'active'
+      const rawList = emergencyFilter === 'active'
         ? activeEmergencies
         : emergencyFilter === 'completed'
         ? completedEmergencies
         : emergencyRequests;
+      const exportList = rawList.map((req) => ({
+        'Request ID': req.id,
+        'Hospital Name': req.hospitalName || '',
+        'Patient Name': req.patientName,
+        'Patient Phone': req.patientPhone,
+        'Caller Phone': req.callerPhone || '',
+        'Emergency Type': req.emergencyType,
+        'Triage Priority': req.priority,
+        'Request Date': req.requestDate ? req.requestDate.split('T')[0] : '',
+        'Request Time': req.requestTime || '',
+        'Pickup Location': req.pickupLocation,
+        'Destination Hospital': req.destinationHospital || req.destination || '',
+        'Assigned Ambulance': req.assignedAmbulanceReg || req.assignedAmbulanceId || 'Unassigned',
+        'Assigned Driver': req.assignedDriverName || 'Unassigned',
+        'Driver Phone': req.driverPhone || '',
+        'Dispatch Status': req.status,
+        'Chief Complaint': req.chiefComplaint || '',
+        'Dispatch Time': req.dispatchTime || '',
+        'Pickup Time': req.pickupTime || '',
+        'Hospital Arrival Time': req.hospitalArrivalTime || '',
+        'Completed Time': req.completedTime || '',
+        'Paramedic Notes': req.notes || '',
+      }));
       MockStorage.exportToCSV(`Emergency_Triage_${emergencyFilter}`, exportList);
       showToast('CSV Exported', `${emergencyFilter.toUpperCase()} emergency triage records downloaded successfully.`, 'success');
     } else if (activeTab === 'drivers') {
@@ -1105,18 +1152,38 @@ export const AmbulanceManagement: React.FC = () => {
     }
   };
 
-  // Helper for file upload preview (image/docs)
-  const handleFileUpload = (
+  // Helper for file upload preview (image/docs) with client-side compression
+  // Prevents localStorage QuotaExceededError and backend DATA_UPLOAD_MAX_MEMORY_SIZE blocks
+  const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
     setter: (val: string) => void
   ) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setter(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        if (file.type.startsWith('image/')) {
+          const compressed = await compressImage(file, 800, 800, 0.75);
+          setter(compressed);
+        } else {
+          // Documents / attachments
+          if (file.size > 500 * 1024) {
+            showToast('Document Size Warning', 'Please upload documents smaller than 500KB to ensure reliable syncing.', 'warning');
+            return;
+          }
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            setter(reader.result as string);
+          };
+          reader.readAsDataURL(file);
+        }
+      } catch (err) {
+        console.error('File compression fallback:', err);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setter(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 

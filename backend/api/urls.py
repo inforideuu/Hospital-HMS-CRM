@@ -44,6 +44,7 @@ from .views import (
     PatientTestimonialViewSet,
     HospitalSettingViewSet,
     PlatformSettingViewSet,
+    DemoRequestViewSet,
     auth_login,
 )
 
@@ -91,6 +92,7 @@ router.register(r'converted-customers', ConvertedCustomerViewSet)
 router.register(r'testimonials', PatientTestimonialViewSet)
 router.register(r'hospital-settings', HospitalSettingViewSet)
 router.register(r'platform-settings', PlatformSettingViewSet)
+router.register(r'demo-requests', DemoRequestViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

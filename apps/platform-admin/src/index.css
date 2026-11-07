@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+@theme {
+  --color-coral: #FF3030;
+  --color-coral-hover: #e62222;
+  --color-brand-50: #fff1f1;
+  --color-brand-100: #ffe1e1;
+  --color-brand-200: #ffc7c7;
+  --color-brand-300: #ffa3a3;
+  --color-brand-400: #ff6e6e;
+  --color-brand-500: #FF3030;
+  --color-brand-600: #e62222;
+  --color-brand-700: #c21717;
+  --color-brand-800: #9e1717;
+  --color-brand-900: #811a1a;
+  --color-brand-950: #460808;
+}
+
 @layer base {
   :root {
     --font-sans: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -67,3 +83,544 @@
 .animate-subtle-pulse {
   animation: subtle-pulse 3s infinite ease-in-out;
 }
+
+/* ==========================================================================
+   DYNAMIC DESIGN TEMPLATES & THEME PALETTES FOR PUBLIC WEBSITES
+   ========================================================================== */
+
+/* ==========================================================================
+   5 ULTRA-LUXURY & CREATIVE THEME PALETTES FOR HOSPITAL PUBLIC PORTALS
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Theme 1: Swiss Royal Sapphire (Prestige Clinical & Platinum Azure)
+   -------------------------------------------------------------------------- */
+.theme-swiss-sapphire,
+.theme-classic {
+  --primary-theme: #2563eb;
+  --secondary-theme: #0c2340;
+  --bg-theme: #f8fafc;
+  --text-theme: #0c2340;
+  background-color: #f8fafc !important;
+  color: #0c2340 !important;
+}
+.theme-swiss-sapphire nav,
+.theme-classic nav {
+  background-color: #ffffff !important;
+  border-bottom: 3px solid #2563eb !important;
+  box-shadow: 0 4px 20px -2px rgba(37, 99, 235, 0.08) !important;
+}
+.theme-swiss-sapphire nav a,
+.theme-swiss-sapphire nav span,
+.theme-classic nav a,
+.theme-classic nav span {
+  color: #0c2340 !important;
+}
+.theme-swiss-sapphire section:not(#hero):not(#booking):not(#testimonials):not(#footer),
+.theme-classic section:not(#hero):not(#booking):not(#testimonials):not(#footer) {
+  background-color: #f8fafc !important;
+  color: #0c2340 !important;
+}
+.theme-swiss-sapphire .service-section,
+.theme-classic .service-section {
+  background-color: #f1f5f9 !important;
+  border-color: #e2e8f0 !important;
+}
+.theme-swiss-sapphire .service-card,
+.theme-swiss-sapphire section:not(#hero):not(#testimonials) .bg-white,
+.theme-swiss-sapphire section:not(#hero):not(#testimonials) .bg-slate-50,
+.theme-classic .service-card,
+.theme-classic section:not(#hero):not(#testimonials) .bg-white,
+.theme-classic section:not(#hero):not(#testimonials) .bg-slate-50 {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 10px 25px -5px rgba(12, 35, 64, 0.06) !important;
+}
+.theme-swiss-sapphire .service-card:hover,
+.theme-classic .service-card:hover {
+  border-color: #2563eb !important;
+  box-shadow: 0 15px 30px -5px rgba(37, 99, 235, 0.15) !important;
+}
+.theme-swiss-sapphire .service-icon-box,
+.theme-classic .service-icon-box {
+  background-color: #eff6ff !important;
+}
+.theme-swiss-sapphire .service-icon,
+.theme-classic .service-icon {
+  color: #2563eb !important;
+}
+.theme-swiss-sapphire .service-badge,
+.theme-classic .service-badge {
+  color: #2563eb !important;
+}
+.theme-swiss-sapphire section:not(#hero):not(#booking):not(#testimonials) h2,
+.theme-swiss-sapphire section:not(#hero):not(#booking):not(#testimonials) h3,
+.theme-swiss-sapphire section:not(#hero):not(#booking):not(#testimonials) h4,
+.theme-swiss-sapphire .service-title,
+.theme-swiss-sapphire .service-card-title,
+.theme-classic section:not(#hero):not(#booking):not(#testimonials) h2,
+.theme-classic section:not(#hero):not(#booking):not(#testimonials) h3,
+.theme-classic section:not(#hero):not(#booking):not(#testimonials) h4,
+.theme-classic .service-title,
+.theme-classic .service-card-title {
+  color: #0c2340 !important;
+}
+.theme-swiss-sapphire section:not(#hero):not(#booking):not(#testimonials) p,
+.theme-swiss-sapphire .service-subtitle,
+.theme-swiss-sapphire .service-card-desc,
+.theme-classic section:not(#hero):not(#booking):not(#testimonials) p,
+.theme-classic .service-subtitle,
+.theme-classic .service-card-desc {
+  color: #475569 !important;
+}
+
+/* --------------------------------------------------------------------------
+   Theme 2: Nordic Mint & Jade (Biotech Wellness & Scandinavian Calm)
+   -------------------------------------------------------------------------- */
+.theme-nordic-mint,
+.theme-modern-teal,
+.theme-emerald {
+  --primary-theme: #059669;
+  --secondary-theme: #064e3b;
+  --bg-theme: #f0fdf4;
+  --text-theme: #064e3b;
+  background-color: #f0fdf4 !important;
+  color: #064e3b !important;
+}
+.theme-nordic-mint nav,
+.theme-modern-teal nav,
+.theme-emerald nav {
+  background-color: #ffffff !important;
+  border-bottom: 3px solid #059669 !important;
+  box-shadow: 0 4px 20px -2px rgba(5, 150, 105, 0.08) !important;
+}
+.theme-nordic-mint nav a,
+.theme-nordic-mint nav span,
+.theme-modern-teal nav a,
+.theme-modern-teal nav span,
+.theme-emerald nav a,
+.theme-emerald nav span {
+  color: #064e3b !important;
+}
+.theme-nordic-mint section:not(#hero):not(#booking):not(#testimonials):not(#footer),
+.theme-modern-teal section:not(#hero):not(#booking):not(#testimonials):not(#footer),
+.theme-emerald section:not(#hero):not(#booking):not(#testimonials):not(#footer) {
+  background-color: #f0fdf4 !important;
+  color: #064e3b !important;
+}
+.theme-nordic-mint .service-section,
+.theme-modern-teal .service-section,
+.theme-emerald .service-section {
+  background-color: #e8f9ed !important;
+  border-color: #d1fae5 !important;
+}
+.theme-nordic-mint .service-card,
+.theme-nordic-mint section:not(#hero):not(#testimonials) .bg-white,
+.theme-nordic-mint section:not(#hero):not(#testimonials) .bg-slate-50,
+.theme-modern-teal .service-card,
+.theme-modern-teal section:not(#hero):not(#testimonials) .bg-white,
+.theme-modern-teal section:not(#hero):not(#testimonials) .bg-slate-50,
+.theme-emerald .service-card,
+.theme-emerald section:not(#hero):not(#testimonials) .bg-white,
+.theme-emerald section:not(#hero):not(#testimonials) .bg-slate-50 {
+  background-color: #ffffff !important;
+  border-color: #bbf7d0 !important;
+  box-shadow: 0 10px 25px -5px rgba(5, 150, 105, 0.08) !important;
+}
+.theme-nordic-mint .service-card:hover,
+.theme-modern-teal .service-card:hover,
+.theme-emerald .service-card:hover {
+  border-color: #059669 !important;
+  box-shadow: 0 15px 30px -5px rgba(5, 150, 105, 0.15) !important;
+}
+.theme-nordic-mint .service-icon-box,
+.theme-modern-teal .service-icon-box,
+.theme-emerald .service-icon-box {
+  background-color: #ecfdf5 !important;
+}
+.theme-nordic-mint .service-icon,
+.theme-modern-teal .service-icon,
+.theme-emerald .service-icon {
+  color: #059669 !important;
+}
+.theme-nordic-mint .service-badge,
+.theme-modern-teal .service-badge,
+.theme-emerald .service-badge {
+  color: #059669 !important;
+}
+.theme-nordic-mint section:not(#hero):not(#booking):not(#testimonials) h2,
+.theme-nordic-mint section:not(#hero):not(#booking):not(#testimonials) h3,
+.theme-nordic-mint section:not(#hero):not(#booking):not(#testimonials) h4,
+.theme-nordic-mint .service-title,
+.theme-nordic-mint .service-card-title,
+.theme-modern-teal section:not(#hero):not(#booking):not(#testimonials) h2,
+.theme-modern-teal section:not(#hero):not(#booking):not(#testimonials) h3,
+.theme-modern-teal section:not(#hero):not(#booking):not(#testimonials) h4,
+.theme-modern-teal .service-title,
+.theme-modern-teal .service-card-title,
+.theme-emerald section:not(#hero):not(#booking):not(#testimonials) h2,
+.theme-emerald section:not(#hero):not(#booking):not(#testimonials) h3,
+.theme-emerald section:not(#hero):not(#booking):not(#testimonials) h4,
+.theme-emerald .service-title,
+.theme-emerald .service-card-title {
+  color: #064e3b !important;
+}
+.theme-nordic-mint section:not(#hero):not(#booking):not(#testimonials) p,
+.theme-nordic-mint .service-subtitle,
+.theme-nordic-mint .service-card-desc,
+.theme-modern-teal section:not(#hero):not(#booking):not(#testimonials) p,
+.theme-modern-teal .service-subtitle,
+.theme-modern-teal .service-card-desc,
+.theme-emerald section:not(#hero):not(#booking):not(#testimonials) p,
+.theme-emerald .service-subtitle,
+.theme-emerald .service-card-desc {
+  color: #374151 !important;
+}
+
+/* --------------------------------------------------------------------------
+   Theme 3: Midnight Obsidian Luxe (Elite Concierge & Champagne Gold)
+   -------------------------------------------------------------------------- */
+.theme-midnight-luxe,
+.theme-deep-ocean {
+  --primary-theme: #f59e0b;
+  --secondary-theme: #d97706;
+  --bg-theme: #fffdf5;
+  --text-theme: #78350f;
+  background-color: #fffdf5 !important;
+  color: #78350f !important;
+}
+.theme-midnight-luxe nav,
+.theme-deep-ocean nav {
+  background-color: #ffffff !important;
+  border-bottom: 3px solid #f59e0b !important;
+  box-shadow: 0 4px 20px -2px rgba(245, 158, 11, 0.1) !important;
+}
+.theme-midnight-luxe nav a,
+.theme-midnight-luxe nav span,
+.theme-deep-ocean nav a,
+.theme-deep-ocean nav span {
+  color: #78350f !important;
+}
+.theme-midnight-luxe section:not(#hero):not(#booking):not(#testimonials):not(#footer),
+.theme-deep-ocean section:not(#hero):not(#booking):not(#testimonials):not(#footer) {
+  background-color: #fffdf5 !important;
+  color: #78350f !important;
+  border-color: #fef3c7 !important;
+}
+.theme-midnight-luxe .service-section,
+.theme-deep-ocean .service-section {
+  background-color: #fef9c3 !important;
+  border-color: #fde047 !important;
+}
+.theme-midnight-luxe .service-card,
+.theme-midnight-luxe section:not(#hero):not(#testimonials) .bg-white,
+.theme-midnight-luxe section:not(#hero):not(#testimonials) .bg-slate-50,
+.theme-deep-ocean .service-card,
+.theme-deep-ocean section:not(#hero):not(#testimonials) .bg-white,
+.theme-deep-ocean section:not(#hero):not(#testimonials) .bg-slate-50 {
+  background-color: #ffffff !important;
+  border-color: #fde68a !important;
+  color: #78350f !important;
+  box-shadow: 0 10px 25px -5px rgba(245, 158, 11, 0.08) !important;
+}
+.theme-midnight-luxe .service-card:hover,
+.theme-deep-ocean .service-card:hover {
+  border-color: #f59e0b !important;
+  box-shadow: 0 15px 30px -5px rgba(245, 158, 11, 0.18) !important;
+}
+.theme-midnight-luxe .service-icon-box,
+.theme-deep-ocean .service-icon-box {
+  background-color: #fef3c7 !important;
+}
+.theme-midnight-luxe .service-icon,
+.theme-deep-ocean .service-icon {
+  color: #d97706 !important;
+}
+.theme-midnight-luxe .service-badge,
+.theme-deep-ocean .service-badge {
+  color: #b45309 !important;
+}
+.theme-midnight-luxe section:not(#hero):not(#booking):not(#testimonials) h2,
+.theme-midnight-luxe section:not(#hero):not(#booking):not(#testimonials) h3,
+.theme-midnight-luxe section:not(#hero):not(#booking):not(#testimonials) h4,
+.theme-midnight-luxe .service-title,
+.theme-midnight-luxe .service-card-title,
+.theme-deep-ocean section:not(#hero):not(#booking):not(#testimonials) h2,
+.theme-deep-ocean section:not(#hero):not(#booking):not(#testimonials) h3,
+.theme-deep-ocean section:not(#hero):not(#booking):not(#testimonials) h4,
+.theme-deep-ocean .service-title,
+.theme-deep-ocean .service-card-title {
+  color: #451a03 !important;
+}
+.theme-midnight-luxe section:not(#hero):not(#booking):not(#testimonials) p,
+.theme-midnight-luxe .service-subtitle,
+.theme-midnight-luxe .service-card-desc,
+.theme-deep-ocean section:not(#hero):not(#booking):not(#testimonials) p,
+.theme-deep-ocean .service-subtitle,
+.theme-deep-ocean .service-card-desc {
+  color: #4b5563 !important;
+}
+
+/* --------------------------------------------------------------------------
+   Theme 4: Amethyst Orchid Elegance (Creative Modern Specialist & Serenity)
+   -------------------------------------------------------------------------- */
+.theme-amethyst-orchid {
+  --primary-theme: #7c3aed;
+  --secondary-theme: #4c1d95;
+  --bg-theme: #faf5ff;
+  --text-theme: #4c1d95;
+  background-color: #faf5ff !important;
+  color: #4c1d95 !important;
+}
+.theme-amethyst-orchid nav {
+  background-color: #ffffff !important;
+  border-bottom: 3px solid #7c3aed !important;
+  box-shadow: 0 4px 20px -2px rgba(124, 58, 237, 0.08) !important;
+}
+.theme-amethyst-orchid nav a,
+.theme-amethyst-orchid nav span {
+  color: #4c1d95 !important;
+}
+.theme-amethyst-orchid section:not(#hero):not(#booking):not(#testimonials):not(#footer) {
+  background-color: #faf5ff !important;
+  color: #4c1d95 !important;
+}
+.theme-amethyst-orchid .service-section {
+  background-color: #f3e8ff !important;
+  border-color: #e9d5ff !important;
+}
+.theme-amethyst-orchid .service-card,
+.theme-amethyst-orchid section:not(#hero):not(#testimonials) .bg-white,
+.theme-amethyst-orchid section:not(#hero):not(#testimonials) .bg-slate-50 {
+  background-color: #ffffff !important;
+  border-color: #e9d5ff !important;
+  box-shadow: 0 10px 25px -5px rgba(124, 58, 237, 0.08) !important;
+}
+.theme-amethyst-orchid .service-card:hover {
+  border-color: #7c3aed !important;
+  box-shadow: 0 15px 30px -5px rgba(124, 58, 237, 0.15) !important;
+}
+.theme-amethyst-orchid .service-icon-box {
+  background-color: #f5f3ff !important;
+}
+.theme-amethyst-orchid .service-icon {
+  color: #7c3aed !important;
+}
+.theme-amethyst-orchid .service-badge {
+  color: #7c3aed !important;
+}
+.theme-amethyst-orchid section:not(#hero):not(#booking):not(#testimonials) h2,
+.theme-amethyst-orchid section:not(#hero):not(#booking):not(#testimonials) h3,
+.theme-amethyst-orchid section:not(#hero):not(#booking):not(#testimonials) h4,
+.theme-amethyst-orchid .service-title,
+.theme-amethyst-orchid .service-card-title {
+  color: #4c1d95 !important;
+}
+.theme-amethyst-orchid section:not(#hero):not(#booking):not(#testimonials) p,
+.theme-amethyst-orchid .service-subtitle,
+.theme-amethyst-orchid .service-card-desc {
+  color: #4b5563 !important;
+}
+
+/* --------------------------------------------------------------------------
+   Theme 5: Monaco Crimson & Rose (High-Velocity Cardiac & Emergency Vitality)
+   -------------------------------------------------------------------------- */
+.theme-monaco-crimson,
+.theme-crimson {
+  --primary-theme: #dc2626;
+  --secondary-theme: #991b1b;
+  --bg-theme: #fff5f5;
+  --text-theme: #111827;
+  background-color: #fff5f5 !important;
+  color: #111827 !important;
+}
+.theme-monaco-crimson nav,
+.theme-crimson nav {
+  background-color: #ffffff !important;
+  border-bottom: 3px solid #dc2626 !important;
+  box-shadow: 0 4px 20px -2px rgba(220, 38, 38, 0.08) !important;
+}
+.theme-monaco-crimson nav a,
+.theme-monaco-crimson nav span,
+.theme-crimson nav a,
+.theme-crimson nav span {
+  color: #991b1b !important;
+}
+.theme-monaco-crimson section:not(#hero):not(#booking):not(#testimonials):not(#footer),
+.theme-crimson section:not(#hero):not(#booking):not(#testimonials):not(#footer) {
+  background-color: #fff5f5 !important;
+  color: #111827 !important;
+}
+.theme-monaco-crimson .service-section,
+.theme-crimson .service-section {
+  background-color: #fee2e2 !important;
+  border-color: #fecaca !important;
+}
+.theme-monaco-crimson .service-card,
+.theme-monaco-crimson section:not(#hero):not(#testimonials) .bg-white,
+.theme-monaco-crimson section:not(#hero):not(#testimonials) .bg-slate-50,
+.theme-crimson .service-card,
+.theme-crimson section:not(#hero):not(#testimonials) .bg-white,
+.theme-crimson section:not(#hero):not(#testimonials) .bg-slate-50 {
+  background-color: #ffffff !important;
+  border-color: #fecaca !important;
+  box-shadow: 0 10px 25px -5px rgba(220, 38, 38, 0.08) !important;
+}
+.theme-monaco-crimson .service-card:hover,
+.theme-crimson .service-card:hover {
+  border-color: #dc2626 !important;
+  box-shadow: 0 15px 30px -5px rgba(220, 38, 38, 0.15) !important;
+}
+.theme-monaco-crimson .service-icon-box,
+.theme-crimson .service-icon-box {
+  background-color: #fef2f2 !important;
+}
+.theme-monaco-crimson .service-icon,
+.theme-crimson .service-icon {
+  color: #dc2626 !important;
+}
+.theme-monaco-crimson .service-badge,
+.theme-crimson .service-badge {
+  color: #dc2626 !important;
+}
+.theme-monaco-crimson section:not(#hero):not(#booking):not(#testimonials) h2,
+.theme-monaco-crimson section:not(#hero):not(#booking):not(#testimonials) h3,
+.theme-monaco-crimson section:not(#hero):not(#booking):not(#testimonials) h4,
+.theme-monaco-crimson .service-title,
+.theme-monaco-crimson .service-card-title,
+.theme-crimson section:not(#hero):not(#booking):not(#testimonials) h2,
+.theme-crimson section:not(#hero):not(#booking):not(#testimonials) h3,
+.theme-crimson section:not(#hero):not(#booking):not(#testimonials) h4,
+.theme-crimson .service-title,
+.theme-crimson .service-card-title {
+  color: #991b1b !important;
+}
+.theme-monaco-crimson section:not(#hero):not(#booking):not(#testimonials) p,
+.theme-monaco-crimson .service-subtitle,
+.theme-monaco-crimson .service-card-desc,
+.theme-crimson section:not(#hero):not(#booking):not(#testimonials) p,
+.theme-crimson .service-subtitle,
+.theme-crimson .service-card-desc {
+  color: #374151 !important;
+}
+
+/* ==========================================================================
+   SHIELDED HIGH-CONTRAST SECTIONS (HERO, BOOKING, TESTIMONIALS, FOOTER)
+   Guaranteed 100% crystal-clear readability across all themes with zero collapse
+   ========================================================================== */
+
+/* 1. Hero Section: Always crisp white on dark backdrop */
+#hero h1,
+#hero h2,
+#hero h3,
+#hero h4 {
+  color: #ffffff !important;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5) !important;
+}
+#hero p {
+  color: #f1f5f9 !important;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* 2. Immediate Consultation & Booking CTA (#booking) */
+#booking {
+  background-color: #0b1329 !important;
+  color: #ffffff !important;
+}
+.theme-swiss-sapphire #booking,
+.theme-classic #booking {
+  background-color: #061427 !important;
+  background-image: radial-gradient(circle at top right, rgba(37, 99, 235, 0.25) 0%, transparent 60%) !important;
+  border-color: #1e3a8a !important;
+}
+.theme-nordic-mint #booking,
+.theme-modern-teal #booking,
+.theme-emerald #booking {
+  background-color: #021d15 !important;
+  background-image: radial-gradient(circle at top right, rgba(5, 150, 105, 0.25) 0%, transparent 60%) !important;
+  border-color: #064e3b !important;
+}
+.theme-midnight-luxe #booking,
+.theme-deep-ocean #booking {
+  background-color: #1c1303 !important;
+  background-image: radial-gradient(circle at top right, rgba(245, 158, 11, 0.35) 0%, transparent 60%) !important;
+  border-color: #b45309 !important;
+}
+.theme-amethyst-orchid #booking {
+  background-color: #140524 !important;
+  background-image: radial-gradient(circle at top right, rgba(124, 58, 237, 0.25) 0%, transparent 60%) !important;
+  border-color: #4c1d95 !important;
+}
+.theme-monaco-crimson #booking,
+.theme-crimson #booking {
+  background-color: #240404 !important;
+  background-image: radial-gradient(circle at top right, rgba(220, 38, 38, 0.25) 0%, transparent 60%) !important;
+  border-color: #7f1d1d !important;
+}
+#booking h2,
+#booking h3 {
+  color: #ffffff !important;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+#booking p {
+  color: #e2e8f0 !important;
+}
+#booking .booking-subtitle {
+  color: #f8fafc !important;
+  font-weight: 600 !important;
+}
+
+/* 3. 3D Testimonials Stage (#testimonials) */
+#testimonials {
+  color: #ffffff !important;
+}
+.theme-swiss-sapphire #testimonials,
+.theme-classic #testimonials {
+  background-color: #051124 !important;
+  background-image: linear-gradient(180deg, #051124 0%, #091b38 50%, #051124 100%) !important;
+  border-color: #1e3a8a !important;
+}
+.theme-nordic-mint #testimonials,
+.theme-modern-teal #testimonials,
+.theme-emerald #testimonials {
+  background-color: #021d15 !important;
+  background-image: linear-gradient(180deg, #021d15 0%, #042f23 50%, #021d15 100%) !important;
+  border-color: #064e3b !important;
+}
+.theme-midnight-luxe #testimonials,
+.theme-deep-ocean #testimonials {
+  background-color: #1c1303 !important;
+  background-image: linear-gradient(180deg, #1c1303 0%, #2e1d05 50%, #1c1303 100%) !important;
+  border-color: #b45309 !important;
+}
+.theme-amethyst-orchid #testimonials {
+  background-color: #120524 !important;
+  background-image: linear-gradient(180deg, #120524 0%, #21093d 50%, #120524 100%) !important;
+  border-color: #4c1d95 !important;
+}
+.theme-monaco-crimson #testimonials,
+.theme-crimson #testimonials {
+  background-color: #220404 !important;
+  background-image: linear-gradient(180deg, #220404 0%, #3a0707 50%, #220404 100%) !important;
+  border-color: #7f1d1d !important;
+}
+#testimonials h2,
+#testimonials h3,
+#testimonials h4 {
+  color: #ffffff !important;
+}
+#testimonials p {
+  color: #cbd5e1 !important;
+}
+
+/* 4. Footer: Clean contrast, no clashing gradients */
+footer h3,
+footer h4 {
+  color: #ffffff !important;
+}
+footer p,
+footer li,
+footer a {
+  color: #e2e8f0 !important;
+}
+

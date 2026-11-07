@@ -43,6 +43,8 @@ export const PatientAmbulance: React.FC = () => {
   const [chiefComplaint, setChiefComplaint] = useState('');
   const [contactPhone, setContactPhone] = useState(patient?.phone || user?.phone || '+1 (555) 234-5678');
 
+  const isAmbulanceEnabled = MockStorage.isCapabilityEnabled(hospitalId, 'ambulance_emergency');
+
   const loadData = () => {
     const list = MockStorage.getEmergencyRequests(hospitalId, patientId);
     setRequests(list);
@@ -53,6 +55,20 @@ export const PatientAmbulance: React.FC = () => {
     window.addEventListener('pulse_storage_updated', loadData);
     return () => window.removeEventListener('pulse_storage_updated', loadData);
   }, [hospitalId, patientId]);
+
+  if (!isAmbulanceEnabled) {
+    return (
+      <div className="p-8 max-w-xl mx-auto my-12 bg-white rounded-2xl border border-slate-200 text-center space-y-4 shadow-sm">
+        <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+          <Ambulance className="w-8 h-8" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-900">Ambulance Dispatch Not Available</h3>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Emergency ambulance dispatch services are not configured for your registered facility. For medical emergencies, please dial your regional emergency hotline immediately or visit the nearest tertiary trauma facility.
+        </p>
+      </div>
+    );
+  }
 
   const activeRequest = requests.find(
     (r) => r.status !== 'Completed' && r.status !== 'Cancelled'

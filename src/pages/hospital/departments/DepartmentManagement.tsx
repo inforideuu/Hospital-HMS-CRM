@@ -94,6 +94,10 @@ export const DepartmentManagement: React.FC = () => {
   );
 
   const handleOpenAdd = () => {
+    if (!isHospitalAdmin) {
+      showToast('Access Restricted', 'Only Hospital Administrators have permission to create departments.', 'error');
+      return;
+    }
     setFormData({
       name: '',
       code: '',
@@ -106,6 +110,10 @@ export const DepartmentManagement: React.FC = () => {
   };
 
   const handleOpenEdit = (dept: Department) => {
+    if (!isHospitalAdmin) {
+      showToast('Access Restricted', 'Only Hospital Administrators have permission to edit departments.', 'error');
+      return;
+    }
     setSelectedDept(dept);
     setFormData({
       name: dept.name,
@@ -120,6 +128,10 @@ export const DepartmentManagement: React.FC = () => {
 
   const handleSaveDept = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isHospitalAdmin) {
+      showToast('Permission Denied', 'Only Hospital Administrators can save departments.', 'error');
+      return;
+    }
     if (!formData.name || !formData.code) return;
 
     if (isEditModalOpen && selectedDept) {
@@ -177,9 +189,11 @@ export const DepartmentManagement: React.FC = () => {
                 Delete All Existing
               </Button>
             )}
-            <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
-              Create Department
-            </Button>
+            {isHospitalAdmin && (
+              <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
+                Create Department
+              </Button>
+            )}
           </div>
         }
       />
@@ -237,9 +251,11 @@ export const DepartmentManagement: React.FC = () => {
               : 'No clinical departments are currently configured. Create a department to begin structuring your clinical divisions.'}
           </p>
           <div className="mt-4">
-            <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
-              Create First Department
-            </Button>
+            {isHospitalAdmin && (
+              <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
+                Create First Department
+              </Button>
+            )}
           </div>
         </Card>
       ) : (
@@ -293,25 +309,31 @@ export const DepartmentManagement: React.FC = () => {
                     <Phone className="w-3.5 h-3.5" /> {dept.phoneExtension || 'N/A'}
                   </span>
                   <div className="flex items-center gap-1.5">
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => handleOpenEdit(dept)}
-                      leftIcon={<Edit className="w-3 h-3" />}
-                    >
-                      Configure
-                    </Button>
-                    {isHospitalAdmin && (
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        className="text-rose-600 hover:bg-rose-50 border border-rose-200/60"
-                        onClick={() => setDeleteConfirmDeptId(dept.id)}
-                        leftIcon={<Trash2 className="w-3 h-3" />}
-                        title="Delete Department (Hospital Admin Only)"
-                      >
-                        Delete
-                      </Button>
+                    {isHospitalAdmin ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => handleOpenEdit(dept)}
+                          leftIcon={<Edit className="w-3 h-3" />}
+                        >
+                          Configure
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="text-rose-600 hover:bg-rose-50 border border-rose-200/60"
+                          onClick={() => setDeleteConfirmDeptId(dept.id)}
+                          leftIcon={<Trash2 className="w-3 h-3" />}
+                          title="Delete Department (Hospital Admin Only)"
+                        >
+                          Delete
+                        </Button>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-slate-400 italic bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
+                        View Only
+                      </span>
                     )}
                   </div>
                 </div>

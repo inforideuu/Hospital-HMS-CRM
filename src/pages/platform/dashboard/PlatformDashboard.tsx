@@ -29,7 +29,10 @@ import {
   Server,
   ShieldAlert,
   Search,
-  Upload
+  Upload,
+  Mail,
+  Phone,
+  Trash2
 } from 'lucide-react';
 import {
   AreaChart,
@@ -49,7 +52,7 @@ import {
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
-import { Hospital, HospitalType, SubscriptionPlanTier, User, HospitalSubscription, Patient, SupportTicket, Ambulance as AmbulanceType, EmergencyRequest, HospitalWebsite, ActivityLog } from '../../../types';
+import { DemoRequest, Hospital, HospitalType, SubscriptionPlanTier, User, HospitalSubscription, Patient, SupportTicket, Ambulance as AmbulanceType, EmergencyRequest, HospitalWebsite, ActivityLog } from '../../../types';
 import { StatCard } from '../../../components/ui/StatCard';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Badge } from '../../../components/ui/Badge';
@@ -64,6 +67,7 @@ export const PlatformDashboardContent: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { showToast } = useNotification();
+  const isSuperAdmin = user?.role === 'super_admin';
 
   const [dateRange, setDateRange] = useState<'6m' | '12m' | 'ytd'>('6m');
   const [hospitals, setHospitals] = useState<Hospital[]>(() => MockStorage.getHospitals());
@@ -143,6 +147,12 @@ export const PlatformDashboardContent: React.FC = () => {
   const totalPatients = safePatients.length;
   const activeSubs = safeSubscriptions.filter((s) => s?.status === 'active' || s?.status === 'trialing').length;
   const pendingTickets = safeTickets.filter((t) => t?.status === 'open' || t?.status === 'in_progress').length;
+  const priorityTickets = safeTickets
+    .filter((t) => t && (t.status === 'open' || t.status === 'in_progress'))
+    .sort((a, b) => {
+      const priorityWeight: Record<string, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
+      return (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0);
+    });
   const totalAmbulances = safeAmbulances.length;
   const activeEmergencies = safeEmergencies.filter((r) => r?.status !== 'Completed' && r?.status !== 'Cancelled').length;
 
@@ -238,6 +248,10 @@ export const PlatformDashboardContent: React.FC = () => {
   };
 
   const handleApproveHospital = (id: string, name: string) => {
+    if (!isSuperAdmin) {
+      showToast('Access Denied', 'Only Super Administrator has authorization to approve hospital tenants.', 'error');
+      return;
+    }
     MockStorage.updateHospitalStatus(id, 'active');
     showToast('Hospital Approved', `${name} has been provisioned and activated.`, 'success');
   };
@@ -260,6 +274,10 @@ export const PlatformDashboardContent: React.FC = () => {
 
   const handleQuickOnboardSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isSuperAdmin) {
+      showToast('Access Denied', 'Only Super Administrator has authorization to register and onboard hospital tenants.', 'error');
+      return;
+    }
     if (!newHospitalData.name || !newHospitalData.city) {
       showToast('Validation Error', 'Please enter hospital name and location.', 'error');
       return;
@@ -329,16 +347,16 @@ export const PlatformDashboardContent: React.FC = () => {
   return (
     <div className="space-y-6 animate-in fade-in duration-300 pb-12">
       {/* 1. EXECUTIVE WELCOME & GREETING BANNER */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 p-6 sm:p-8 text-white shadow-xl border border-slate-700/80">
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#161212] via-[#211616] to-[#2B1414] p-6 sm:p-8 text-white shadow-2xl border border-[#3E2222]">
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-2 max-w-2xl">
             <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FF3030]/15 border border-[#FF3030]/30 text-[#FF3030] text-xs font-bold">
+                <span className="w-2 h-2 rounded-full bg-[#FF3030] animate-pulse" />
                 All Systems Operational • 99.99% Uptime
               </span>
-              <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5" />
+              <span className="text-xs text-neutral-400 font-mono flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-[#FF3030]" />
                 {currentDateFormatted}
               </span>
             </div>
@@ -346,46 +364,48 @@ export const PlatformDashboardContent: React.FC = () => {
             <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-white">
               {getGreeting()}, {user?.name || 'Super Admin'}
             </h1>
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            <p className="text-xs sm:text-sm text-neutral-300 leading-relaxed">
               Real-time multi-tenant health network telemetry, MRR velocity, clinical bed capacity, and hospital compliance across all provisioned facilities.
             </p>
           </div>
 
           {/* Quick Actions Cluster */}
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            <Button
-              variant="primary"
-              size="sm"
-              leftIcon={<Plus className="w-4 h-4" />}
-              onClick={() => setIsAddHospitalModalOpen(true)}
-              className="shadow-lg shadow-brand-500/30"
-            >
-              Add Hospital
-            </Button>
+            {isSuperAdmin && (
+              <Button
+                variant="coral"
+                size="sm"
+                leftIcon={<Plus className="w-4 h-4" />}
+                onClick={() => setIsAddHospitalModalOpen(true)}
+                className="bg-[#FF3030] hover:bg-[#e62222] text-white border-none shadow-lg shadow-[#FF3030]/30"
+              >
+                Add Hospital
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
-              leftIcon={<CreditCard className="w-4 h-4 text-indigo-400" />}
+              leftIcon={<CreditCard className="w-4 h-4 text-[#FF3030]" />}
               onClick={() => navigate('/platform/subscriptions')}
-              className="bg-slate-800/80 text-slate-200 border-slate-700 hover:bg-slate-700"
+              className="bg-[#241a1a]/90 text-neutral-200 border-[#3d2828] hover:bg-[#302020] hover:border-[#FF3030]/40 hover:text-white"
             >
               Subscription Plans
             </Button>
             <Button
               variant="outline"
               size="sm"
-              leftIcon={<Globe className="w-4 h-4 text-teal-400" />}
+              leftIcon={<Globe className="w-4 h-4 text-[#FF3030]" />}
               onClick={() => navigate('/platform/websites')}
-              className="bg-slate-800/80 text-slate-200 border-slate-700 hover:bg-slate-700"
+              className="bg-[#241a1a]/90 text-neutral-200 border-[#3d2828] hover:bg-[#302020] hover:border-[#FF3030]/40 hover:text-white"
             >
               Manage Websites
             </Button>
             <Button
               variant="outline"
               size="sm"
-              leftIcon={<BarChart3 className="w-4 h-4 text-purple-400" />}
+              leftIcon={<BarChart3 className="w-4 h-4 text-[#FF3030]" />}
               onClick={() => navigate('/platform/reports')}
-              className="bg-slate-800/80 text-slate-200 border-slate-700 hover:bg-slate-700"
+              className="bg-[#241a1a]/90 text-neutral-200 border-[#3d2828] hover:bg-[#302020] hover:border-[#FF3030]/40 hover:text-white"
             >
               View Reports
             </Button>
@@ -393,8 +413,8 @@ export const PlatformDashboardContent: React.FC = () => {
         </div>
 
         {/* Decorative Background Accents */}
-        <div className="absolute right-0 top-0 -mt-8 -mr-8 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute left-1/3 bottom-0 -mb-10 w-48 h-48 bg-teal-500/10 rounded-full blur-2xl pointer-events-none" />
+        <div className="absolute right-0 top-0 -mt-8 -mr-8 w-72 h-72 bg-[#FF3030]/20 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute left-1/4 bottom-0 -mb-10 w-56 h-56 bg-[#FF3030]/15 rounded-full blur-3xl pointer-events-none" />
       </div>
 
       {/* 2. PLATFORM KPI CARDS (8 METRICS GRID) */}
@@ -405,7 +425,7 @@ export const PlatformDashboardContent: React.FC = () => {
           value={totalHospitals}
           icon={<Building2 className="w-5 h-5" />}
           trend={{ value: '+1 this month', direction: 'up', label: 'Registered facilities' }}
-          accentColor="indigo"
+          accentColor="coral"
           subtext="Multi-specialty healthcare networks"
           onClick={() => navigate('/platform/hospitals')}
         />
@@ -449,7 +469,7 @@ export const PlatformDashboardContent: React.FC = () => {
           value={`₹${totalMRR.toLocaleString('en-IN')}`}
           icon={<DollarSign className="w-5 h-5" />}
           trend={{ value: '+14.8%', direction: 'up', label: `ARR: ₹${(totalMRR * 12).toLocaleString('en-IN')}` }}
-          accentColor="indigo"
+          accentColor="coral"
           subtext="Recurring collection rate"
           onClick={() => navigate('/platform/subscriptions')}
         />
@@ -476,15 +496,15 @@ export const PlatformDashboardContent: React.FC = () => {
           onClick={() => navigate('/platform/support')}
         />
 
-        {/* KPI 8: Active Ambulances */}
+        {/* KPI 8: Provisioned Tenant Websites */}
         <StatCard
-          title="Ambulance Fleet"
-          value={totalAmbulances}
-          icon={<Ambulance className="w-5 h-5" />}
-          trend={{ value: `${activeEmergencies} Active Trips`, direction: 'neutral', label: 'Telemetry live' }}
-          accentColor="rose"
-          subtext="ALS/BLS rapid response units"
-          onClick={() => navigate('/platform/hospitals')}
+          title="Tenant Web Portals"
+          value={websites.length}
+          icon={<Globe className="w-5 h-5" />}
+          trend={{ value: `${websites.filter((w) => w.status === 'published' || w.published).length} Published`, direction: 'up', label: '100% SSL' }}
+          accentColor="indigo"
+          subtext="Active branded hospital portals"
+          onClick={() => navigate('/platform/websites')}
         />
       </div>
 
@@ -515,7 +535,7 @@ export const PlatformDashboardContent: React.FC = () => {
                       onClick={() => setDateRange(r)}
                       className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
                         dateRange === r
-                          ? 'bg-white text-slate-900 shadow-xs'
+                          ? 'bg-[#FF3030] text-white shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
@@ -658,7 +678,7 @@ export const PlatformDashboardContent: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
           <div>
             <div className="flex items-center gap-2">
-              <Building2 className="w-5 h-5 text-brand-600" />
+              <Building2 className="w-5 h-5 text-[#FF3030]" />
               <h3 className="text-base font-bold text-slate-900">Recently Added Hospital Workspaces</h3>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -675,14 +695,16 @@ export const PlatformDashboardContent: React.FC = () => {
             >
               View All Hospitals ({totalHospitals})
             </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              leftIcon={<Plus className="w-3.5 h-3.5" />}
-              onClick={() => setIsAddHospitalModalOpen(true)}
-            >
-              Onboard Hospital
-            </Button>
+            {isSuperAdmin && (
+              <Button
+                variant="primary"
+                size="sm"
+                leftIcon={<Plus className="w-3.5 h-3.5" />}
+                onClick={() => setIsAddHospitalModalOpen(true)}
+              >
+                Onboard Hospital
+              </Button>
+            )}
           </div>
         </div>
 
@@ -884,50 +906,50 @@ export const PlatformDashboardContent: React.FC = () => {
           </div>
         </Card>
 
-        {/* Widget 2: Ambulance & Emergency Overview */}
+        {/* Widget 2: Platform Infrastructure & Cloud Reliability Overview */}
         <Card className="p-6 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
-                <Radio className="w-5 h-5 text-rose-600 animate-pulse" />
-                <h3 className="text-base font-bold text-slate-900">Global Ambulance & 911 Emergency Fleet</h3>
+                <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                <h3 className="text-base font-bold text-slate-900">Platform Cloud & Tenant Infrastructure</h3>
               </div>
-              <Badge variant="error" size="sm">
-                {activeEmergencies} Active Trips
+              <Badge variant="success" size="sm">
+                99.98% Uptime
               </Badge>
             </div>
 
             <div className="grid grid-cols-3 gap-3 my-4">
               <div className="p-3 bg-slate-50 rounded-xl text-center">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Total Fleet</span>
-                <p className="text-lg font-extrabold text-slate-900 mt-0.5">{totalAmbulances} Units</p>
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Tenant Nodes</span>
+                <p className="text-lg font-extrabold text-slate-900 mt-0.5">{hospitals.length} Active</p>
               </div>
               <div className="p-3 bg-slate-50 rounded-xl text-center">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Available Standby</span>
-                <p className="text-lg font-extrabold text-emerald-600 mt-0.5">
-                  {safeAmbulances.filter((a) => a.status === 'Available').length} Ready
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Web Portals</span>
+                <p className="text-lg font-extrabold text-indigo-600 mt-0.5">
+                  {websites.filter((w) => w.status === 'published' || w.published).length} Live
                 </p>
               </div>
               <div className="p-3 bg-slate-50 rounded-xl text-center">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Avg Response</span>
-                <p className="text-lg font-extrabold text-indigo-600 mt-0.5">6.8 mins</p>
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Database Engine</span>
+                <p className="text-lg font-extrabold text-teal-600 mt-0.5">MySQL 8.0</p>
               </div>
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed">
-              Real-time GPS telemetry and emergency paramedic coordination synchronized across all hospital emergency triage centers.
+              Multi-tenant architecture with encrypted isolation, real-time sync across hospital EHR databases, automated SSL certificates, and zero-downtime microservices.
             </p>
           </div>
 
           <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-xs text-slate-500 font-medium">911 Triage Status: <strong className="text-emerald-600">Active</strong></span>
+            <span className="text-xs text-slate-500 font-medium">Health Status: <strong className="text-emerald-600">All Clusters Operational</strong></span>
             <Button
               variant="outline"
               size="sm"
               leftIcon={<Building2 className="w-4 h-4" />}
               onClick={() => navigate('/platform/hospitals')}
             >
-              View Hospitals
+              Manage Hospitals
             </Button>
           </div>
         </Card>
@@ -1007,12 +1029,17 @@ export const PlatformDashboardContent: React.FC = () => {
                 </div>
               </div>
 
-              {/* Recent urgent tickets */}
+              {/* Recent urgent tickets (Filtered so solved/closed tickets vanish immediately) */}
               <div className="space-y-2.5">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-                  Priority Tickets Queue
-                </span>
-                {safeTickets.slice(0, 3).map((ticket) => (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                    Priority Tickets Queue
+                  </span>
+                  <Badge variant={priorityTickets.length > 0 ? 'warning' : 'success'} size="sm">
+                    {priorityTickets.length} Pending
+                  </Badge>
+                </div>
+                {priorityTickets.slice(0, 3).map((ticket) => (
                   <div
                     key={ticket.id}
                     onClick={() => navigate('/platform/support')}
@@ -1030,6 +1057,13 @@ export const PlatformDashboardContent: React.FC = () => {
                     <p className="text-[11px] text-slate-500 truncate mt-1">{ticket.hospitalName}</p>
                   </div>
                 ))}
+                {priorityTickets.length === 0 && (
+                  <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100 text-center">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 mx-auto mb-1" />
+                    <p className="text-xs font-bold text-emerald-900">All Priority Queues Clear</p>
+                    <p className="text-[11px] text-emerald-700 mt-0.5">No open tickets pending review.</p>
+                  </div>
+                )}
               </div>
             </div>
 

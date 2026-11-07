@@ -108,7 +108,11 @@ export const StaffManagement: React.FC = () => {
         ...selectedStaff,
         ...formData,
       };
-      MockStorage.saveStaff(updated);
+      const res = MockStorage.saveStaff(updated);
+      if (!res.success) {
+        showToast('Duplicate Email', res.message || 'Staff email already in use.', 'error');
+        return;
+      }
       showToast('Staff Updated', `${updated.name} profile updated.`);
       setIsEditModalOpen(false);
     } else {
@@ -120,7 +124,11 @@ export const StaffManagement: React.FC = () => {
         status: 'active',
         avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=120&auto=format&fit=crop&q=80',
       };
-      MockStorage.saveStaff(newStaff);
+      const res = MockStorage.saveStaff(newStaff);
+      if (!res.success) {
+        showToast('Duplicate Email', res.message || 'Staff email already in use.', 'error');
+        return;
+      }
 
       // Create corresponding User login credentials
       const newUser: User = {

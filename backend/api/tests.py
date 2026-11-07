@@ -1,6 +1,8 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
+import datetime
+from django.utils import timezone as dj_timezone
 from .models import (
     Hospital,
     UserProfile,
@@ -13,11 +15,16 @@ from .models import (
     Consultation,
     Prescription,
     SupportTicket,
+    OPDRoom,
 )
 
 class OPDAppointmentBookingValidationTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.future_date_1 = (dj_timezone.now().date() + datetime.timedelta(days=2)).isoformat()
+        self.future_date_2 = (dj_timezone.now().date() + datetime.timedelta(days=3)).isoformat()
+        self.future_date_leave = (dj_timezone.now().date() + datetime.timedelta(days=5)).isoformat()
+        self.future_date_leave_end = (dj_timezone.now().date() + datetime.timedelta(days=6)).isoformat()
         self.hospital = Hospital.objects.create(
             id='HOSP-TEST-01',
             name='Test Hospital',
@@ -73,7 +80,7 @@ class OPDAppointmentBookingValidationTests(TestCase):
             'hospital': self.hospital.id,
             'patient': self.patient1.id,
             'doctor': self.doctor1.id,
-            'date': '2026-10-22',
+            'date': self.future_date_1,
             'time': '10:00 AM',
             'status': 'Confirmed',
             'type': 'Consultation',
@@ -87,7 +94,7 @@ class OPDAppointmentBookingValidationTests(TestCase):
             'hospital': self.hospital.id,
             'patient': self.patient2.id,
             'doctor': self.doctor1.id,
-            'date': '2026-10-22',
+            'date': self.future_date_1,
             'time': '10:00 AM',
             'status': 'Scheduled',
             'type': 'Consultation',
@@ -103,7 +110,7 @@ class OPDAppointmentBookingValidationTests(TestCase):
             'hospital': self.hospital.id,
             'patient': self.patient1.id,
             'doctor': self.doctor1.id,
-            'date': '2026-10-21',
+            'date': self.future_date_2,
             'time': '11:00 AM',
             'status': 'Confirmed',
             'type': 'Consultation',
@@ -117,7 +124,7 @@ class OPDAppointmentBookingValidationTests(TestCase):
             'hospital': self.hospital.id,
             'patient': self.patient2.id,
             'doctor': self.doctor2.id,
-            'date': '2026-10-21',
+            'date': self.future_date_2,
             'time': '11:00 AM',
             'status': 'Scheduled',
             'type': 'Consultation',
@@ -134,8 +141,8 @@ class OPDAppointmentBookingValidationTests(TestCase):
             doctor=self.doctor1,
             period_type='Leave',
             title='Annual Leave',
-            start_date='2026-10-25',
-            end_date='2026-10-26',
+            start_date=self.future_date_leave,
+            end_date=self.future_date_leave_end,
             is_all_day=True,
             reason='Family Vacation',
         )
@@ -146,7 +153,7 @@ class OPDAppointmentBookingValidationTests(TestCase):
             'hospital': self.hospital.id,
             'patient': self.patient1.id,
             'doctor': self.doctor1.id,
-            'date': '2026-10-25',
+            'date': self.future_date_leave,
             'time': '02:00 PM',
             'status': 'Scheduled',
             'type': 'Consultation',
@@ -161,7 +168,7 @@ class OPDAppointmentBookingValidationTests(TestCase):
             'hospital': self.hospital.id,
             'patient': self.patient1.id,
             'doctor': self.doctor1.id,
-            'date': '2026-10-22',
+            'date': self.future_date_1,
             'time': '03:00 PM',
             'status': 'Scheduled',
             'type': 'Consultation',
@@ -571,6 +578,13 @@ class DoctorConsultationWorkflowTests(TestCase):
             phone='9876500001',
             email='other@hospital.com',
         )
+        self.opd_room = OPDRoom.objects.create(
+            id='OPD-WF-01',
+            hospital=self.hospital,
+            name='Consultation Chamber 1',
+            code='CH-101',
+            status='Available'
+        )
         self.doctor = Doctor.objects.create(
             id='DOC-WF-01',
             hospital=self.hospital,
@@ -580,6 +594,8 @@ class DoctorConsultationWorkflowTests(TestCase):
             phone='9876543210',
             email='strange@hospital.com',
             consultation_fee=150.00,
+            opd_room_id=self.opd_room.id,
+            opd_room_name=self.opd_room.name,
         )
         self.other_doctor = Doctor.objects.create(
             id='DOC-WF-02',
@@ -636,6 +652,8 @@ class DoctorConsultationWorkflowTests(TestCase):
         self.appointment.refresh_from_db()
         self.assertEqual(self.appointment.status, 'In Consultation')
         self.assertIsNotNone(self.appointment.consultation_started_at)
+        self.opd_room.refresh_from_db()
+        self.assertEqual(self.opd_room.status, 'Occupied')
 
         consult_data = res_start.data['consultation']
         self.assertEqual(consult_data['status'], 'Draft')
@@ -671,6 +689,8 @@ class DoctorConsultationWorkflowTests(TestCase):
         self.appointment.refresh_from_db()
         self.assertEqual(self.appointment.status, 'Completed')
         self.assertIsNotNone(self.appointment.consultation_completed_at)
+        self.opd_room.refresh_from_db()
+        self.assertEqual(self.opd_room.status, 'Available')
 
         # 6. Verify Patient EHR updated with diagnosis and vitals
         self.patient.refresh_from_db()

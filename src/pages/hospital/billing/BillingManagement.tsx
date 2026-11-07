@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock,
   AlertTriangle,
+  AlertCircle,
   CreditCard,
   Download,
   Trash2,
@@ -253,7 +254,10 @@ export const BillingManagement: React.FC = () => {
   const ipdLabGST = settings.enableGSTBilling !== false ? (ipdLabCharges * ipdLabGSTRate) / 100 : 0;
   const ipdTotalGST = ipdBedGST + ipdDocGST + ipdLabGST;
 
-  const ipdDeposit = Number(selectedPatientAdmission?.initialDeposit) || 0;
+  const autoIPDDeposit = selectedPatientBed ? selectedPatientBed.dailyRate * 3 : 1000;
+  const ipdDeposit = (selectedPatientAdmission && Number(selectedPatientAdmission.initialDeposit) > 0)
+    ? Number(selectedPatientAdmission.initialDeposit)
+    : autoIPDDeposit;
   const ipdSubtotal = ipdBedCharges + ipdDoctorCharges + ipdLabCharges;
   const ipdGrossWithGST = ipdSubtotal + ipdTotalGST;
   const ipdNetDue = Math.max(0, ipdGrossWithGST - ipdDeposit);
@@ -553,6 +557,53 @@ export const BillingManagement: React.FC = () => {
       txnRef = `AUTH-${claimApprovalNumber.trim()}`;
     }
 
+    // Automatically ensure all uncollected late cancellation penalties are merged into items
+    let invoiceItems = [...items];
+    if (pat && formCategory !== 'Walk-in Pharmacy') {
+      const pendingPenalties = MockStorage.getPendingCancellationPenalties(pat.id, hospId);
+      if (pendingPenalties.length > 0) {
+        const existingPenaltyIds = new Set(
+          invoiceItems.filter((it) => it.id.startsWith('item-penalty-')).map((it) => it.id)
+        );
+        const missing = pendingPenalties.filter((pen) => !existingPenaltyIds.has(`item-penalty-${pen.id}`));
+        if (missing.length > 0) {
+          const autoItems: InvoiceItem[] = missing.map((pen) => {
+            const isReschedule = Boolean(pen.reschedulingPenalty && !pen.reschedulingPenaltyCollected);
+            const feeAmount = isReschedule ? (pen.reschedulingPenalty || 0) : (pen.cancellationPenalty || 0);
+            const feeType = isReschedule ? 'Late Appointment Rescheduling Fee' : 'Late Appointment Cancellation Fee';
+            const feeDate = isReschedule ? (pen.rescheduledFromDate || pen.appointmentDate) : pen.appointmentDate;
+            return {
+              id: `item-penalty-${pen.id}`,
+              description: `${feeType} (${pen.doctorName} - ${feeDate})`,
+              category: 'Consultation',
+              quantity: 1,
+              unitPrice: feeAmount,
+              total: feeAmount,
+            };
+          });
+          invoiceItems = [...invoiceItems, ...autoItems];
+        }
+      }
+    }
+
+    let finalSubtotal = calculatedSubtotal;
+    let finalTax = calculatedTax;
+    let finalTotal = calculatedTotal;
+    if (invoiceItems.length > items.length) {
+      finalSubtotal = invoiceItems.reduce((acc, it) => acc + (it.total || 0), 0);
+      if (useDepartmentalGST) {
+        const recalc = calculateItemizedDepartmentalGST(invoiceItems, settings, discount);
+        finalTax = recalc.totalTax;
+        finalTotal = recalc.totalAmount;
+      } else {
+        finalTax = (finalSubtotal * taxRate) / 100;
+        finalTotal = Math.max(0, finalSubtotal + finalTax - discount);
+      }
+      if (collectPaymentNow && (immediatePayAmount === 0 || immediatePayAmount >= calculatedTotal)) {
+        settledAmount = finalTotal;
+      }
+    }
+
     const prefix =
       formCategory === 'Walk-in Pharmacy'
         ? 'INV-OTC'
@@ -569,13 +620,13 @@ export const BillingManagement: React.FC = () => {
       patientPhone: pat.phone,
       issueDate: issueDate || new Date().toISOString().split('T')[0],
       dueDate: dueDate || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
-      items,
-      subtotal: calculatedSubtotal,
+      items: invoiceItems,
+      subtotal: finalSubtotal,
       taxRate: effectiveTaxRate,
-      taxAmount: calculatedTax,
+      taxAmount: finalTax,
       discount,
       discountReason: discount > 0 ? discountReason : undefined,
-      totalAmount: calculatedTotal,
+      totalAmount: finalTotal,
       amountPaid: settledAmount,
       status: invStatus,
       paymentMethod: settlementMethod,
@@ -598,6 +649,13 @@ export const BillingManagement: React.FC = () => {
     };
 
     MockStorage.saveInvoice(newInv);
+
+    // If invoice includes late cancellation penalty line items, mark them collected
+    const penaltyItems = items.filter((it) => it.id.startsWith('item-penalty-'));
+    if (penaltyItems.length > 0) {
+      const penaltyAptIds = penaltyItems.map((it) => it.id.replace('item-penalty-', ''));
+      MockStorage.markCancellationPenaltyCollected(penaltyAptIds, newInv.id);
+    }
 
     if (selectedPatientAdmission) {
       MockStorage.linkAdmissionInvoice(
@@ -1435,10 +1493,101 @@ export const BillingManagement: React.FC = () => {
                     setSelectedPatientId(p?.id || '');
                     if (p) {
                       setPatientSelectError('');
+                      // Automatically attach any pending uncollected late cancellation penalties to bill
+                      const pendingPenalties = MockStorage.getPendingCancellationPenalties(p.id, hospId);
+                      if (pendingPenalties.length > 0) {
+                        const penaltyItems: InvoiceItem[] = pendingPenalties.map((pen) => {
+                          const isReschedule = Boolean(pen.reschedulingPenalty && !pen.reschedulingPenaltyCollected);
+                          const feeAmount = isReschedule ? (pen.reschedulingPenalty || 0) : (pen.cancellationPenalty || 0);
+                          const feeType = isReschedule ? 'Late Appointment Rescheduling Fee' : 'Late Appointment Cancellation Fee';
+                          const feeDate = isReschedule ? (pen.rescheduledFromDate || pen.appointmentDate) : pen.appointmentDate;
+                          return {
+                            id: `item-penalty-${pen.id}`,
+                            description: `${feeType} (${pen.doctorName} - ${feeDate})`,
+                            category: 'Consultation',
+                            quantity: 1,
+                            unitPrice: feeAmount,
+                            total: feeAmount,
+                          };
+                        });
+                        setItems((prev) => [
+                          ...prev.filter((it) => !it.id.startsWith('item-penalty-')),
+                          ...penaltyItems,
+                        ]);
+                        const totalPen = pendingPenalties.reduce((sum, pen) => {
+                          const cPen = (!pen.cancellationPenaltyCollected ? pen.cancellationPenalty : 0) || 0;
+                          const rPen = (!pen.reschedulingPenaltyCollected ? pen.reschedulingPenalty : 0) || 0;
+                          return sum + cPen + rPen;
+                        }, 0);
+                        showToast(
+                          'Outstanding Penalty Added',
+                          `Attached uncollected late appointment fee (₹${totalPen}) to bill for cashier collection.`,
+                          'warning'
+                        );
+                      }
                     }
                   }}
                   error={patientSelectError}
                 />
+
+                {(() => {
+                  if (!selectedPatientId) return null;
+                  const penalties = MockStorage.getPendingCancellationPenalties(selectedPatientId, hospId);
+                  if (penalties.length === 0) return null;
+                  const totalPenalty = penalties.reduce((sum, p) => {
+                    const cPen = (!p.cancellationPenaltyCollected ? p.cancellationPenalty : 0) || 0;
+                    const rPen = (!p.reschedulingPenaltyCollected ? p.reschedulingPenalty : 0) || 0;
+                    return sum + cPen + rPen;
+                  }, 0);
+                  const isAttached = items.some((it) => it.id.startsWith('item-penalty-'));
+                  return (
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-3 mt-1.5">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold text-amber-950">
+                            Uncollected Late Appointment Fee: ₹{totalPenalty}
+                          </p>
+                          <p className="text-[11px] text-amber-800 mt-0.5">
+                            From late modification on {penalties[0].rescheduledFromDate || penalties[0].appointmentDate} (Dr. {penalties[0].doctorName}).
+                            {isAttached ? ' Attached to this invoice for collection.' : ' Click to attach to this invoice.'}
+                          </p>
+                        </div>
+                      </div>
+                      {!isAttached && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          className="border-amber-300 text-amber-800 hover:bg-amber-100 font-bold shrink-0"
+                          onClick={() => {
+                            const penaltyItems: InvoiceItem[] = penalties.map((pen) => {
+                              const isReschedule = Boolean(pen.reschedulingPenalty && !pen.reschedulingPenaltyCollected);
+                              const feeAmount = isReschedule ? (pen.reschedulingPenalty || 0) : (pen.cancellationPenalty || 0);
+                              const feeType = isReschedule ? 'Late Appointment Rescheduling Fee' : 'Late Appointment Cancellation Fee';
+                              const feeDate = isReschedule ? (pen.rescheduledFromDate || pen.appointmentDate) : pen.appointmentDate;
+                              return {
+                                id: `item-penalty-${pen.id}`,
+                                description: `${feeType} (${pen.doctorName} - ${feeDate})`,
+                                category: 'Consultation',
+                                quantity: 1,
+                                unitPrice: feeAmount,
+                                total: feeAmount,
+                              };
+                            });
+                            setItems((prev) => [
+                              ...prev.filter((it) => !it.id.startsWith('item-penalty-')),
+                              ...penaltyItems,
+                            ]);
+                            showToast('Penalty Attached', `Added ₹${totalPenalty} late appointment fee to bill.`, 'info');
+                          }}
+                        >
+                          + Attach Penalty (₹{totalPenalty})
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {formCategory === 'Pharmacy Service' && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

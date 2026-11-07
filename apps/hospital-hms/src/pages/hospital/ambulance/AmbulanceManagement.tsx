@@ -45,9 +45,10 @@ import {
 } from 'lucide-react';
 
 export const AmbulanceManagement: React.FC = () => {
-  const { user } = useAuth();
+  const { user, currentHospital } = useAuth();
   const { showToast } = useNotification();
-  const hospitalId = user?.hospitalId || 'HOSP-001';
+  const hospitalId = currentHospital?.id || user?.hospitalId || '';
+  const hospitalName = currentHospital?.name || user?.hospitalName || 'Medical Center';
 
   const [activeTab, setActiveTab] = useState('dispatch');
   const [ambulances, setAmbulances] = useState<Ambulance[]>([]);
@@ -101,6 +102,13 @@ export const AmbulanceManagement: React.FC = () => {
   });
 
   const loadData = () => {
+    if (!hospitalId) {
+      setAmbulances([]);
+      setDrivers([]);
+      setEmergencyRequests([]);
+      setMaintenanceRecords([]);
+      return;
+    }
     setAmbulances(MockStorage.getAmbulances(hospitalId));
     setDrivers(MockStorage.getAmbulanceDrivers(hospitalId));
     setEmergencyRequests(MockStorage.getEmergencyRequests(hospitalId));
@@ -202,7 +210,7 @@ export const AmbulanceManagement: React.FC = () => {
     const amb: Ambulance = {
       id: `AMB-${Date.now().toString().slice(-3)}`,
       hospitalId,
-      hospitalName: 'Apex Medical Center',
+      hospitalName,
       regNumber: newAmbulance.regNumber,
       type: newAmbulance.type,
       model: newAmbulance.model,

@@ -100,6 +100,7 @@ export const HospitalDashboard: React.FC = () => {
     MockStorage.getSubscriptionByHospitalId(hospId)
   );
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const [capacityView, setCapacityView] = useState<'beds' | 'chambers'>('chambers');
 
   const loadData = () => {
     setPatients(MockStorage.getPatients(hospId));
@@ -127,16 +128,23 @@ export const HospitalDashboard: React.FC = () => {
   // Real bed capacity & status for current hospital
   const currentPlan = MockStorage.getPlanByTier(currentTier);
   const planMaxBeds = currentPlan?.maxBeds ?? (hasBedCapability ? 120 : 0);
-  const totalBedsCount = beds.length > 0 ? beds.length : (currentHospital?.totalBeds || planMaxBeds);
-  const occupiedBeds = beds.filter((b) => b.status === 'Occupied').length || admissions.filter((a) => a.status === 'Active').length;
+  const hospitalCreatedBedsCount = beds.length;
+  const occupiedBeds = beds.filter((b) => b.status === 'Occupied').length;
   const maintenanceBeds = beds.filter((b) => b.status === 'Maintenance').length;
-  const availableBeds = Math.max(0, totalBedsCount - occupiedBeds - maintenanceBeds);
+  const availableBeds = beds.filter((b) => b.status === 'Available').length;
 
   // Real OPD Chamber metrics for outpatient facilities
+  const activeConsultationRoomIds = new Set(
+    appointments
+      .filter((a) => a.status === 'In Consultation')
+      .map((a) => a.opdRoomId || doctors.find((d) => d.id === a.doctorId)?.opdRoomId)
+      .filter(Boolean)
+  );
+
   const totalRoomsCount = opdRooms.length;
-  const availableRoomsCount = opdRooms.filter((r) => r.status === 'Available').length;
-  const occupiedRoomsCount = opdRooms.filter((r) => r.status === 'Occupied').length;
-  const maintenanceRoomsCount = opdRooms.filter((r) => r.status === 'Maintenance').length;
+  const occupiedRoomsCount = opdRooms.filter((r) => r.status === 'Occupied' || activeConsultationRoomIds.has(r.id)).length;
+  const maintenanceRoomsCount = opdRooms.filter((r) => r.status === 'Maintenance' && !activeConsultationRoomIds.has(r.id)).length;
+  const availableRoomsCount = Math.max(0, totalRoomsCount - occupiedRoomsCount - maintenanceRoomsCount);
 
   const totalRevenue = invoices.reduce((acc, i) => acc + (i.amountPaid || 0), 0);
   const pendingRevenue = invoices.reduce(
@@ -215,17 +223,19 @@ export const HospitalDashboard: React.FC = () => {
   });
 
   // Dynamic Capacity distribution data
-  const bedData = [
+  const fullBedCategories = [
     { name: 'Available Beds', value: availableBeds, color: '#10b981' },
     { name: 'Occupied (Inpatient)', value: occupiedBeds, color: '#6366f1' },
     { name: 'Maintenance', value: maintenanceBeds, color: '#f43f5e' },
   ];
+  const bedChartData = hospitalCreatedBedsCount > 0 ? fullBedCategories.filter((d) => d.value > 0) : [];
 
-  const opdChamberData = [
+  const fullChamberCategories = [
     { name: 'Available Chambers', value: availableRoomsCount, color: '#10b981' },
     { name: 'Occupied (Consulting)', value: occupiedRoomsCount, color: '#6366f1' },
     { name: 'Maintenance', value: maintenanceRoomsCount, color: '#f59e0b' },
-  ].filter((d) => d.value > 0);
+  ];
+  const chamberChartData = totalRoomsCount > 0 ? fullChamberCategories.filter((d) => d.value > 0) : [];
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -394,7 +404,7 @@ export const HospitalDashboard: React.FC = () => {
       )}
 
       {/* KPI Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={`grid grid-cols-2 ${hasBedCapability ? 'lg:grid-cols-3 xl:grid-cols-5' : 'lg:grid-cols-4'} gap-4`}>
         <StatCard
           title="Active Patients"
           value={activePatients}
@@ -411,35 +421,38 @@ export const HospitalDashboard: React.FC = () => {
           accentColor="indigo"
           trend={{ value: 'Live', direction: 'up', label: 'DB Synced' }}
         />
-        {hasBedCapability ? (
+        <StatCard
+          title="OPD Chambers"
+          value={`${availableRoomsCount} / ${totalRoomsCount}`}
+          unit="Rooms"
+          subtext={`${availableRoomsCount} chambers ready for consultations`}
+          icon={<Building2 className="w-5 h-5 text-amber-600" />}
+          accentColor="amber"
+          trend={{
+            value: `${totalRoomsCount > 0 ? Math.round((occupiedRoomsCount / totalRoomsCount) * 100) : 0}%`,
+            direction: 'neutral',
+            label: 'in-use',
+          }}
+          onClick={() => navigate('/hospital/opd-rooms')}
+        />
+        {hasBedCapability && (
           <StatCard
             title="Bed Occupancy"
-            value={beds.length > 0 ? `${occupiedBeds} / ${beds.length}` : `${occupiedBeds} / ${planMaxBeds}`}
+            value={hospitalCreatedBedsCount > 0 ? `${occupiedBeds} / ${hospitalCreatedBedsCount}` : `0 / ${planMaxBeds}`}
+            unit="Beds"
             subtext={
-              beds.length > 0
-                ? `${availableBeds} beds available (Max ${planMaxBeds})`
-                : `${planMaxBeds} beds available (${currentPlan.name})`
+              hospitalCreatedBedsCount > 0
+                ? `${availableBeds} available • ${occupiedBeds} occupied (${hospitalCreatedBedsCount}/${planMaxBeds} max plan quota)`
+                : `0 of ${planMaxBeds} max plan beds created in wards (${currentPlan.name})`
             }
-            icon={<BedDouble className="w-5 h-5 text-amber-600" />}
-            accentColor="amber"
+            icon={<BedDouble className="w-5 h-5 text-indigo-600" />}
+            accentColor="indigo"
             trend={{
-              value: `${totalBedsCount > 0 ? Math.round((occupiedBeds / totalBedsCount) * 100) : 0}%`,
+              value: `${hospitalCreatedBedsCount > 0 ? Math.round((occupiedBeds / hospitalCreatedBedsCount) * 100) : 0}%`,
               direction: 'neutral',
-              label: beds.length > 0 ? 'in-use' : 'capacity',
+              label: hospitalCreatedBedsCount > 0 ? 'in-use' : `0 / ${planMaxBeds} setup`,
             }}
-          />
-        ) : (
-          <StatCard
-            title="OPD Chambers"
-            value={`${availableRoomsCount} / ${totalRoomsCount}`}
-            subtext={`${availableRoomsCount} chambers ready for consultations`}
-            icon={<Building2 className="w-5 h-5 text-amber-600" />}
-            accentColor="amber"
-            trend={{
-              value: `${totalRoomsCount > 0 ? Math.round((occupiedRoomsCount / totalRoomsCount) * 100) : 0}%`,
-              direction: 'neutral',
-              label: 'in-use',
-            }}
+            onClick={() => navigate('/hospital/admissions')}
           />
         )}
         <StatCard
@@ -483,16 +496,50 @@ export const HospitalDashboard: React.FC = () => {
         {/* Capacity Distribution Pie Chart */}
         <Card>
           <CardHeader
-            title={hasBedCapability ? "IPD Bed Allocation" : "OPD Chamber Status"}
-            subtitle={hasBedCapability ? "Real-time occupancy status" : "Real-time consultation chamber status"}
+            title={!hasBedCapability || capacityView === 'chambers' ? "OPD Chamber Status" : "IPD Bed Allocation"}
+            subtitle={
+              !hasBedCapability || capacityView === 'chambers'
+                ? "Real-time consultation chamber status"
+                : hospitalCreatedBedsCount > 0
+                ? `Real-time occupancy across ${hospitalCreatedBedsCount} created beds (Max ${planMaxBeds} on plan)`
+                : `0 physical beds created (Up to ${planMaxBeds} allowed on ${currentPlan.name} plan)`
+            }
+            action={
+              hasBedCapability ? (
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold border border-slate-200/90 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setCapacityView('chambers')}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      capacityView === 'chambers'
+                        ? 'bg-white text-amber-800 font-bold shadow-xs border border-amber-200'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                    }`}
+                  >
+                    Chambers ({availableRoomsCount}/{totalRoomsCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCapacityView('beds')}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      capacityView === 'beds'
+                        ? 'bg-white text-indigo-800 font-bold shadow-xs border border-indigo-200'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                    }`}
+                  >
+                    Beds ({occupiedBeds}/{hospitalCreatedBedsCount})
+                  </button>
+                </div>
+              ) : undefined
+            }
           />
           <CardContent>
             <div className="h-56 w-full flex items-center justify-center">
-              {(hasBedCapability ? bedData : opdChamberData).length > 0 ? (
+              {(!hasBedCapability || capacityView === 'chambers' ? chamberChartData : bedChartData).length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={hasBedCapability ? bedData : opdChamberData}
+                      data={!hasBedCapability || capacityView === 'chambers' ? chamberChartData : bedChartData}
                       cx="50%"
                       cy="50%"
                       innerRadius={55}
@@ -500,7 +547,7 @@ export const HospitalDashboard: React.FC = () => {
                       paddingAngle={4}
                       dataKey="value"
                     >
-                      {(hasBedCapability ? bedData : opdChamberData).map((entry, index) => (
+                      {(!hasBedCapability || capacityView === 'chambers' ? chamberChartData : bedChartData).map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
@@ -511,29 +558,39 @@ export const HospitalDashboard: React.FC = () => {
                 </ResponsiveContainer>
               ) : (
                 <div className="text-center p-4">
-                  <Building2 className="w-8 h-8 text-slate-400 mx-auto mb-2 opacity-60" />
-                  <p className="text-xs text-slate-500 font-medium">No OPD chambers configured</p>
+                  <BedDouble className="w-8 h-8 text-slate-400 mx-auto mb-2 opacity-60" />
+                  <p className="text-xs text-slate-500 font-medium">
+                    {!hasBedCapability || capacityView === 'chambers' ? 'No OPD chambers configured' : 'No physical IPD beds created yet'}
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">
+                    {!hasBedCapability || capacityView === 'chambers'
+                      ? 'Add consultation chambers to schedule specialist visits.'
+                      : `Your ${currentPlan.name} plan permits up to ${planMaxBeds} beds. Configure wards and beds in Admissions.`}
+                  </p>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="mt-2 text-xs"
-                    onClick={() => navigate('/hospital/opd-rooms')}
+                    className="mt-3 text-xs font-bold"
+                    onClick={() => navigate(!hasBedCapability || capacityView === 'chambers' ? '/hospital/opd-rooms' : '/hospital/admissions')}
                   >
-                    + Add Chamber
+                    {!hasBedCapability || capacityView === 'chambers' ? '+ Add Chamber' : '+ Manage Wards & Beds'}
                   </Button>
                 </div>
               )}
             </div>
-            {(hasBedCapability ? bedData : opdChamberData).length > 0 && (
-              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
-                {(hasBedCapability ? bedData : opdChamberData).map((b) => (
+            {(!hasBedCapability || capacityView === 'chambers' ? totalRoomsCount > 0 : hospitalCreatedBedsCount > 0) && (
+              <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
+                {(!hasBedCapability || capacityView === 'chambers' ? fullChamberCategories : fullBedCategories).map((b) => (
                   <div key={b.name} className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: b.color }} />
-                      <span className="text-slate-600 dark:text-slate-400 font-medium">{b.name}</span>
+                      <span className="text-slate-600 font-medium">{b.name}</span>
                     </div>
-                    <span className="font-bold text-slate-900 dark:text-white">
-                      {b.value} {hasBedCapability ? 'Beds' : 'Chambers'}
+                    <span className="font-bold text-slate-900">
+                      {b.value} {!hasBedCapability || capacityView === 'chambers' ? 'Chambers' : 'Beds'}
+                      <span className="text-slate-400 font-normal ml-1">
+                        ({Math.round((b.value / (!hasBedCapability || capacityView === 'chambers' ? (totalRoomsCount || 1) : (hospitalCreatedBedsCount || 1))) * 100)}%)
+                      </span>
                     </span>
                   </div>
                 ))}

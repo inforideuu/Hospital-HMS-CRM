@@ -33,6 +33,8 @@ import {
   Activity,
   CheckSquare,
   Download,
+  FastForward,
+  PhoneCall,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { useAuth } from '../../../context/AuthContext';
@@ -213,6 +215,8 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
   const [reviewDoctorName, setReviewDoctorName] = useState('');
   const [doctorClinicalImpression, setDoctorClinicalImpression] = useState('');
   const [doctorInstructions, setDoctorInstructions] = useState('');
+  const [skipCareTrail, setSkipCareTrail] = useState(false);
+  const [skipReason, setSkipReason] = useState('');
 
   // Nurse Follow-Up & Directive Execution State
   const [selectedExecNurseId, setSelectedExecNurseId] = useState('');
@@ -308,10 +312,10 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
       statusFilter === 'all'
         ? true
         : statusFilter === 'Pending Sample'
-        ? order.status === 'Ordered' || order.status === 'Pending Sample'
-        : statusFilter === 'Processing'
-        ? order.status === 'In Progress' || order.status === 'Processing'
-        : order.status === statusFilter;
+          ? order.status === 'Ordered' || order.status === 'Pending Sample'
+          : statusFilter === 'Processing'
+            ? order.status === 'In Progress' || order.status === 'Processing'
+            : order.status === statusFilter;
 
     const matchesDoctor = doctorFilter === 'all' || order.doctorId === doctorFilter;
     const matchesDate = !dateFilter || (order.orderDate && order.orderDate.startsWith(dateFilter));
@@ -515,7 +519,7 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
 
     const matching = hospitalNurses.find(
       (n) => (user?.name && n.name.toLowerCase().includes(user.name.toLowerCase())) ||
-             (user?.id && n.id === user.id)
+        (user?.id && n.id === user.id)
     ) || hospitalNurses[0];
 
     setSelectedCollectorNurseId(matching?.id || 'NUR-CUSTOM');
@@ -664,8 +668,8 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
       hasCritical || overallResultStatus === 'Critical'
         ? 'Critical'
         : hasAbnormal || overallResultStatus === 'Abnormal'
-        ? 'Abnormal'
-        : 'Normal';
+          ? 'Abnormal'
+          : 'Normal';
 
     // Form summary value string for quick display
     const finalResultValue =
@@ -727,34 +731,73 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
       (order.resultStatus === 'Critical'
         ? 'Critical diagnostic abnormality noted. Urgent clinical intervention required.'
         : order.resultStatus === 'Abnormal'
-        ? 'Diagnostic values outside reference interval. Therapeutic management indicated.'
-        : 'Diagnostic findings within acceptable biological reference limits. Maintain routine care.')
+          ? 'Diagnostic values outside reference interval. Therapeutic management indicated.'
+          : 'Diagnostic findings within acceptable biological reference limits. Maintain routine care.')
     );
     setDoctorInstructions(
       order.doctorInstructions ||
       (order.resultStatus === 'Critical'
         ? 'STAT: Administer corrective treatment immediately. Continuous vitals monitoring. Repeat panel in 6 hours.'
         : order.resultStatus === 'Abnormal'
-        ? 'Adjust oral therapy as prescribed. Monitor bedside vitals and document patient clinical response.'
-        : 'Continue current treatment protocol and standard diet. Reassess at scheduled follow-up.')
+          ? 'Adjust oral therapy as prescribed. Monitor bedside vitals and document patient clinical response.'
+          : 'Continue current treatment protocol and standard diet. Reassess at scheduled follow-up.')
     );
+    setSkipCareTrail(order.resultStatus === 'Normal');
+    setSkipReason('Physician reviewed and concluded diagnostic care trail directly without bedside nursing actions.');
     setIsDoctorReviewModalOpen(true);
   };
 
-  const handleConfirmDoctorReview = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleConfirmDoctorReview = (e?: React.FormEvent, forceSkipTrail = false) => {
+    if (e) e.preventDefault();
     if (!selectedOrder) return;
+
+    const shouldSkip = forceSkipTrail || skipCareTrail;
 
     MockStorage.reviewLabReportByDoctor(
       selectedOrder.id,
       selectedOrder.doctorId || 'DOC-DEFAULT',
       reviewDoctorName,
       doctorClinicalImpression,
-      doctorInstructions
+      doctorInstructions,
+      shouldSkip,
+      skipReason
     );
 
-    showToast('Doctor Review Recorded & Directive Issued', `Clinical orders issued by ${reviewDoctorName}. Assigned to nursing station.`);
+    if (shouldSkip) {
+      showToast(
+        'Care Trail Completed',
+        `Diagnostic report reviewed by ${reviewDoctorName}. Clinical care trail concluded directly (bedside nursing directives bypassed).`,
+        'success'
+      );
+    } else {
+      showToast('Doctor Review Recorded & Directive Issued', `Clinical orders issued by ${reviewDoctorName}. Assigned to nursing station.`);
+    }
+
     setIsDoctorReviewModalOpen(false);
+    refreshData();
+  };
+
+  const handleSkipCareTrail = (order: LabOrder) => {
+    const doctorObj = doctors.find((d) => d.id === order.doctorId || d.name === order.doctorName);
+    const physicianName = order.reviewedByDoctorName || order.doctorName || doctorObj?.name || (user?.name ? `Dr. ${user.name}` : 'Attending Physician');
+    MockStorage.skipCareTrailForOrder(
+      order.id,
+      physicianName,
+      'Care trail concluded directly by physician; bedside nursing directives bypassed.'
+    );
+    showToast('Care Trail Concluded', `Order ${order.id} closed directly without requiring nursing actions.`);
+    refreshData();
+  };
+
+  const handleAcknowledgeCriticalInLab = (order: LabOrder) => {
+    const callerName = user?.name || 'Lab Staff';
+    MockStorage.acknowledgeCriticalAlert(
+      order.id,
+      callerName,
+      `Telephonic notification completed to Dr. ${order.doctorName || 'Ordering Physician'}. Panic alert cleared.`,
+      order.doctorName
+    );
+    showToast('Critical Panic Alert Ended', `Telephonic communication verified and panic alert ended.`);
     refreshData();
   };
 
@@ -763,7 +806,7 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
     setSelectedOrder(order);
     const matching = hospitalNurses.find(
       (n) => (user?.name && n.name.toLowerCase().includes(user.name.toLowerCase())) ||
-             (user?.id && n.id === user.id)
+        (user?.id && n.id === user.id)
     ) || hospitalNurses[0];
 
     setSelectedExecNurseId(matching?.id || 'NUR-CUSTOM');
@@ -817,7 +860,7 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
     if (!selectedOrder) return;
 
     const fullReason = rejectionNotes ? `${rejectionReason} — ${rejectionNotes}` : rejectionReason;
-    MockStorage.rejectLabSample(selectedOrder.id, fullReason, 'Sarah Jenkins (Lab In-Charge)');
+    MockStorage.rejectLabSample(selectedOrder.id, fullReason, 'Praveen (Lab In-Charge)');
 
     // Optionally auto-order redraw with Urgent priority
     if (requestRedraw) {
@@ -956,15 +999,15 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
           activeTab === 'orders'
             ? 'Diagnostic Work Orders'
             : activeTab === 'new-order'
-            ? 'Place Diagnostic Lab Order'
-            : 'Laboratory Test Catalog'
+              ? 'Place Diagnostic Lab Order'
+              : 'Laboratory Test Catalog'
         }
         subtitle={
           activeTab === 'orders'
             ? 'Full lifecycle tracking: phlebotomy barcoding, multi-parameter results entry, and pathologist sign-offs'
             : activeTab === 'new-order'
-            ? 'Submit a laboratory requisition with automated vacutainer tube selection & clinical priority'
-            : 'Master directory of diagnostic tests, structured parameters, reference intervals, and fee schedules in INR (₹)'
+              ? 'Submit a laboratory requisition with automated vacutainer tube selection & clinical priority'
+              : 'Master directory of diagnostic tests, structured parameters, reference intervals, and fee schedules in INR (₹)'
         }
         breadcrumbs={[
           { label: 'Hospital HMS', href: '/hospital/dashboard' },
@@ -973,8 +1016,8 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
               activeTab === 'orders'
                 ? 'Diagnostic Work Orders'
                 : activeTab === 'new-order'
-                ? 'Place Lab Order'
-                : 'Test Catalog',
+                  ? 'Place Lab Order'
+                  : 'Test Catalog',
           },
         ]}
         actions={
@@ -1134,7 +1177,7 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
         </Card>
       </div>
 
-      
+
 
       {/* SECTION 1: Diagnostic Work Orders Tab */}
       {activeTab === 'orders' && (
@@ -1233,9 +1276,8 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                       return (
                         <tr
                           key={order.id}
-                          className={`hover:bg-slate-50/80 transition-colors align-top ${
-                            isCritical ? 'bg-rose-50/40' : isRejected ? 'bg-slate-50/60 opacity-80' : ''
-                          }`}
+                          className={`hover:bg-slate-50/80 transition-colors align-top ${isCritical ? 'bg-rose-50/40' : isRejected ? 'bg-slate-50/60 opacity-80' : ''
+                            }`}
                         >
                           {/* Order & Barcode */}
                           <td className="px-4 py-3.5 align-top">
@@ -1298,20 +1340,35 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                               <div className="space-y-1.5">
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <span
-                                    className={`font-bold text-xs ${
-                                      isCritical
+                                    className={`font-bold text-xs ${isCritical
                                         ? 'text-rose-600'
                                         : order.resultStatus === 'Abnormal'
-                                        ? 'text-amber-600'
-                                        : 'text-slate-900'
-                                    }`}
+                                          ? 'text-amber-600'
+                                          : 'text-slate-900'
+                                      }`}
                                   >
                                     {order.resultValue}
                                   </span>
                                   {isCritical && (
-                                    <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold uppercase">
-                                      CRITICAL
-                                    </span>
+                                    <div className="flex items-center gap-1">
+                                      <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-extrabold uppercase">
+                                        CRITICAL
+                                      </span>
+                                      {order.criticalAlertAcknowledged ? (
+                                        <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-semibold border border-emerald-200" title={`Notified Dr. ${order.criticalAlertDoctorNotified || order.doctorName} at ${order.criticalAlertAcknowledgedAt}`}>
+                                          ✓ Notified Dr. {order.criticalAlertDoctorNotified || order.doctorName}
+                                        </span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleAcknowledgeCriticalInLab(order)}
+                                          className="text-[9px] bg-rose-100 hover:bg-rose-200 text-rose-800 px-1.5 py-0.5 rounded font-bold border border-rose-300 flex items-center gap-0.5 transition-colors"
+                                          title="Log telephonic notification and end panic alert"
+                                        >
+                                          <PhoneCall className="w-2.5 h-2.5 text-rose-600" /> End Alert
+                                        </button>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                                 {order.resultItems && order.resultItems.length > 0 && (
@@ -1336,6 +1393,11 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                                             — Nurse {order.executedByNurseName} {order.executedByNurseId ? `(${order.executedByNurseId})` : ''}
                                           </span>
                                         )}
+                                      </div>
+                                    )}
+                                    {order.careTrailSkipped && (
+                                      <div className="pt-1 border-t border-purple-200/60 flex items-center gap-1 text-[9px] text-amber-800 font-semibold">
+                                        <FastForward className="w-2.5 h-2.5 text-amber-600" /> Bedside nursing trail concluded directly by physician
                                       </div>
                                     )}
                                   </div>
@@ -1372,7 +1434,7 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                             )}
                             {isActionCompleted && (
                               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                                <CheckCircle2 className="w-3 h-3" /> Action Completed
+                                <CheckCircle2 className="w-3 h-3" /> {order.careTrailSkipped ? 'Trail Concluded' : 'Action Completed'}
                               </span>
                             )}
                             {isRejected && (
@@ -1520,6 +1582,16 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                                     leftIcon={<CheckSquare className="w-3 h-3" />}
                                   >
                                     Execute Directives
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="xs"
+                                    onClick={() => handleSkipCareTrail(order)}
+                                    className="border-amber-300 text-amber-800 hover:bg-amber-50 font-medium"
+                                    leftIcon={<FastForward className="w-3 h-3 text-amber-600" />}
+                                    title="Skip remaining bedside nursing trail and complete order directly"
+                                  >
+                                    Skip Trail
                                   </Button>
                                   <Button
                                     variant="outline"
@@ -1722,11 +1794,10 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                     setCatalogPanelTypeFilter('all');
                     setCatalogStatusFilter('all');
                   }}
-                  className={`px-3 py-1 rounded-lg font-medium transition-colors ${
-                    catalogPanelTypeFilter === 'all' && catalogStatusFilter === 'all'
+                  className={`px-3 py-1 rounded-lg font-medium transition-colors ${catalogPanelTypeFilter === 'all' && catalogStatusFilter === 'all'
                       ? 'bg-indigo-600 text-white shadow-sm'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
+                    }`}
                 >
                   All Investigations ({catalogStats.total})
                 </button>
@@ -1737,11 +1808,10 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                     setCatalogPanelTypeFilter('panels');
                     setCatalogStatusFilter('all');
                   }}
-                  className={`px-3 py-1 rounded-lg font-medium transition-colors inline-flex items-center gap-1.5 ${
-                    catalogPanelTypeFilter === 'panels'
+                  className={`px-3 py-1 rounded-lg font-medium transition-colors inline-flex items-center gap-1.5 ${catalogPanelTypeFilter === 'panels'
                       ? 'bg-teal-600 text-white shadow-sm'
                       : 'bg-teal-50 text-teal-800 hover:bg-teal-100 border border-teal-200/60'
-                  }`}
+                    }`}
                 >
                   <Layers className="w-3.5 h-3.5" />
                   Multi-Parameter Panels ({catalogStats.panels})
@@ -1753,11 +1823,10 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                     setCatalogPanelTypeFilter('single');
                     setCatalogStatusFilter('all');
                   }}
-                  className={`px-3 py-1 rounded-lg font-medium transition-colors ${
-                    catalogPanelTypeFilter === 'single'
+                  className={`px-3 py-1 rounded-lg font-medium transition-colors ${catalogPanelTypeFilter === 'single'
                       ? 'bg-indigo-600 text-white shadow-sm'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
+                    }`}
                 >
                   Single Tests ({catalogStats.single})
                 </button>
@@ -1767,11 +1836,10 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                   onClick={() => {
                     setCatalogStatusFilter('active');
                   }}
-                  className={`px-3 py-1 rounded-lg font-medium transition-colors ${
-                    catalogStatusFilter === 'active'
+                  className={`px-3 py-1 rounded-lg font-medium transition-colors ${catalogStatusFilter === 'active'
                       ? 'bg-emerald-600 text-white shadow-sm'
                       : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200/60'
-                  }`}
+                    }`}
                 >
                   Active ({catalogStats.active})
                 </button>
@@ -1781,11 +1849,10 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                   onClick={() => {
                     setCatalogStatusFilter('inactive');
                   }}
-                  className={`px-3 py-1 rounded-lg font-medium transition-colors ${
-                    catalogStatusFilter === 'inactive'
+                  className={`px-3 py-1 rounded-lg font-medium transition-colors ${catalogStatusFilter === 'inactive'
                       ? 'bg-slate-700 text-white shadow-sm'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
+                    }`}
                 >
                   Inactive ({catalogStats.inactive})
                 </button>
@@ -1796,21 +1863,21 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                 catalogSampleTypeFilter !== 'all' ||
                 catalogStatusFilter !== 'all' ||
                 catalogPanelTypeFilter !== 'all') && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCatalogSearchQuery('');
-                    setCatalogCategoryFilter('all');
-                    setCatalogSampleTypeFilter('all');
-                    setCatalogStatusFilter('all');
-                    setCatalogPanelTypeFilter('all');
-                  }}
-                  className="text-xs text-rose-600 hover:text-rose-700 font-semibold inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-rose-50 transition-colors"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Reset Filters
-                </button>
-              )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCatalogSearchQuery('');
+                      setCatalogCategoryFilter('all');
+                      setCatalogSampleTypeFilter('all');
+                      setCatalogStatusFilter('all');
+                      setCatalogPanelTypeFilter('all');
+                    }}
+                    className="text-xs text-rose-600 hover:text-rose-700 font-semibold inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-rose-50 transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Reset Filters
+                  </button>
+                )}
             </div>
 
             {/* Dynamic Search & Multi-Filter Toolbar */}
@@ -1956,9 +2023,8 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                       return (
                         <React.Fragment key={test.id}>
                           <tr
-                            className={`hover:bg-slate-50/80 transition-colors ${
-                              isInactive ? 'bg-slate-50/40 text-slate-400' : ''
-                            } ${isExpanded ? 'bg-teal-50/30' : ''}`}
+                            className={`hover:bg-slate-50/80 transition-colors ${isInactive ? 'bg-slate-50/40 text-slate-400' : ''
+                              } ${isExpanded ? 'bg-teal-50/30' : ''}`}
                           >
                             <td className="px-4 py-3.5">
                               <p className={`font-bold ${isInactive ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
@@ -1994,11 +2060,10 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                                 <button
                                   type="button"
                                   onClick={() => toggleExpandCatalogTest(test.id)}
-                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-semibold text-[11px] border transition-colors ${
-                                    isExpanded
+                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-semibold text-[11px] border transition-colors ${isExpanded
                                       ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
                                       : 'bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-200'
-                                  }`}
+                                    }`}
                                   title="Click to view structured panel parameters"
                                 >
                                   <Layers className="w-3 h-3" />
@@ -2233,11 +2298,10 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                   {currentHospital?.name ? `${currentHospital.name.toUpperCase()} • SPECIMEN` : 'TERTIARY HOSPITAL LAB SPECIMEN'}
                 </span>
                 <span
-                  className={`font-mono text-[10px] font-extrabold px-2 py-0.5 rounded border ${
-                    selectedOrder.priority === 'Urgent'
+                  className={`font-mono text-[10px] font-extrabold px-2 py-0.5 rounded border ${selectedOrder.priority === 'Urgent'
                       ? 'bg-rose-50 text-rose-700 border-rose-200'
                       : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  }`}
+                    }`}
                 >
                   {selectedOrder.priority === 'Urgent' ? 'STAT / URGENT' : 'ROUTINE'}
                 </span>
@@ -2532,13 +2596,12 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                                   value={state.value}
                                   onChange={(e) => handleParameterValueChange(p.id, e.target.value)}
                                   placeholder="Enter value"
-                                  className={`w-28 px-2 py-1 text-xs border rounded focus:outline-none ${
-                                    state.isCritical
+                                  className={`w-28 px-2 py-1 text-xs border rounded focus:outline-none ${state.isCritical
                                       ? 'border-rose-400 font-bold text-rose-700'
                                       : state.isAbnormal
-                                      ? 'border-amber-400 font-semibold text-amber-700'
-                                      : 'border-slate-300'
-                                  }`}
+                                        ? 'border-amber-400 font-semibold text-amber-700'
+                                        : 'border-slate-300'
+                                    }`}
                                 />
                               </td>
                               <td className="px-3 py-2 text-slate-500 font-mono">{p.unit}</td>
@@ -2548,22 +2611,20 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                                   <button
                                     type="button"
                                     onClick={() => handleParameterFlagToggle(p.id, 'isAbnormal')}
-                                    className={`px-1.5 py-0.5 text-[10px] rounded font-bold transition-colors ${
-                                      state.isAbnormal
+                                    className={`px-1.5 py-0.5 text-[10px] rounded font-bold transition-colors ${state.isAbnormal
                                         ? 'bg-amber-500 text-white'
                                         : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                                    }`}
+                                      }`}
                                   >
                                     High/Low
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => handleParameterFlagToggle(p.id, 'isCritical')}
-                                    className={`px-1.5 py-0.5 text-[10px] rounded font-bold transition-colors ${
-                                      state.isCritical
+                                    className={`px-1.5 py-0.5 text-[10px] rounded font-bold transition-colors ${state.isCritical
                                         ? 'bg-rose-600 text-white animate-pulse'
                                         : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                                    }`}
+                                      }`}
                                   >
                                     Critical!
                                   </button>
@@ -2791,22 +2852,94 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
               required
             />
 
+            {/* Option to Skip Bedside Nursing Directives & Complete Care Trail Immediately */}
+            <div className={`p-3.5 rounded-xl border transition-all ${skipCareTrail ? 'bg-amber-50/80 border-amber-300' : 'bg-slate-50 border-slate-200'}`}>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={skipCareTrail}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setSkipCareTrail(checked);
+                    if (checked && !doctorInstructions) {
+                      setDoctorInstructions('Diagnostic review completed. No bedside nursing directives required.');
+                    }
+                  }}
+                  className="mt-0.5 rounded text-amber-600 focus:ring-amber-500 h-4 w-4"
+                />
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <FastForward className="w-3.5 h-3.5 text-amber-600" />
+                    Skip Complete Care Trail (Conclude Immediately Without Bedside Nursing)
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Check this option if test findings are normal/routine, the patient is outpatient or discharged, or no bedside nursing intervention is required. This closes the care trail immediately and marks the lab requisition as completely resolved.
+                  </p>
+                </div>
+              </label>
+
+              {skipCareTrail && (
+                <div className="mt-2.5 pt-2 border-t border-amber-200">
+                  <Input
+                    label="Care Trail Completion Note / Reason"
+                    value={skipReason}
+                    onChange={(e) => setSkipReason(e.target.value)}
+                    placeholder="e.g. Outpatient routine follow-up; no bedside nursing required."
+                  />
+                </div>
+              )}
+            </div>
+
             <Textarea
-              label="Clinical Orders / Instructions for Nursing Staff *"
+              label={`Clinical Orders / Instructions for Nursing Staff ${skipCareTrail ? '(Optional)' : '*'}`}
               value={doctorInstructions}
               onChange={(e) => setDoctorInstructions(e.target.value)}
               placeholder="Specific bedside action: e.g. Administer 500ml normal saline STAT, withhold ACE inhibitors, monitor BP every 2 hours..."
-              rows={3}
-              required
+              rows={2}
+              required={!skipCareTrail}
             />
 
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
               <Button type="button" variant="outline" size="sm" onClick={() => setIsDoctorReviewModalOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white" leftIcon={<Stethoscope className="w-4 h-4" />}>
-                Record Review & Dispatch Directives to Nurse
-              </Button>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                {skipCareTrail ? (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    onClick={(e) => handleConfirmDoctorReview(e, true)}
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+                    leftIcon={<FastForward className="w-4 h-4" />}
+                  >
+                    Review & Complete Care Trail (Skip Nursing)
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => handleConfirmDoctorReview(e, true)}
+                      className="border-amber-400 text-amber-800 hover:bg-amber-50"
+                      leftIcon={<FastForward className="w-3.5 h-3.5 text-amber-600" />}
+                      title="Skip bedside nursing trail and mark order fully completed immediately"
+                    >
+                      Skip Care Trail
+                    </Button>
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      size="sm"
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold"
+                      leftIcon={<Stethoscope className="w-4 h-4" />}
+                    >
+                      Record Review & Dispatch to Nurse
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </form>
         )}
@@ -3496,7 +3629,7 @@ export const LaboratoryManagement: React.FC<LaboratoryManagementProps> = ({ defa
                   onClick={handleAddParameterToForm}
                   leftIcon={<Plus className="w-3.5 h-3.5 text-teal-600" />}
                 >
-                   Add Clinical Parameter
+                  Add Clinical Parameter
                 </Button>
               </div>
             </div>

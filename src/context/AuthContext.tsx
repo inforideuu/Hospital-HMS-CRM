@@ -53,11 +53,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   });
 
   useEffect(() => {
-    const handleStorageChange = () => {
+    const handleStorageChange = (e?: Event) => {
+      const customDetail = (e as CustomEvent)?.detail;
+      // Only process auth or hospital changes to prevent re-rendering during unrelated module storage events
+      if (customDetail?.key && customDetail.key !== 'pulse_auth_user' && customDetail.key !== 'pulse_hospitals') {
+        return;
+      }
       const authUser = MockStorage.getAuthUser();
-      setUser(authUser);
+      setUser((prev) => {
+        if (!prev && !authUser) return null;
+        if (prev && authUser && prev.id === authUser.id && prev.role === authUser.role && prev.hospitalId === authUser.hospitalId) {
+          return prev;
+        }
+        return authUser;
+      });
       if (authUser?.hospitalId) {
-        setCurrentHospital(MockStorage.getHospitalById(authUser.hospitalId) || null);
+        const hosp = MockStorage.getHospitalById(authUser.hospitalId) || null;
+        setCurrentHospital((prev) => (prev?.id === hosp?.id ? prev : hosp));
       } else {
         setCurrentHospital(null);
       }
@@ -106,6 +118,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const isSuperAdmin = foundUser.role === 'super_admin' || foundUser.role === 'super_admin_manager';
 
+    // 1.5 Hospital Suspension Lock Check (Super Admin Suspended Facility)
+    if (!isSuperAdmin && foundUser.hospitalId) {
+      const hosp = MockStorage.getHospitalById(foundUser.hospitalId);
+      if (hosp && hosp.status && (hosp.status.toLowerCase() === 'suspended' || hosp.status.toLowerCase() === 'inactive' || hosp.status.toLowerCase() === 'rejected')) {
+        return {
+          success: false,
+          error: `Facility Access Suspended: ${hosp.name} has been suspended by system administration. Access is temporarily revoked for all staff, doctors, and patients. Please contact Super Admin support.`,
+        };
+      }
+    }
+
     // 2. Subscription Plan Expiry Lock Check
     if (!isSuperAdmin && foundUser.hospitalId) {
       const subStatus = MockStorage.checkHospitalSubscriptionStatus(foundUser.hospitalId);
@@ -143,15 +166,39 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     MockStorage.setAuthUser(foundUser);
     setUser(foundUser);
-    if (foundUser.hospitalId) {
+
+    const targetHosp = targetHospitalId ? MockStorage.getHospitalById(targetHospitalId) : null;
+    const userHosp = foundUser.hospitalId ? MockStorage.getHospitalById(foundUser.hospitalId) : null;
+    const isHeadAdminOfTarget = Boolean(
+      foundUser.role === 'hospital_admin' &&
+      targetHosp &&
+      (targetHosp.isBranch || targetHosp.headBranchId || (targetHosp.organizationId && targetHosp.isHeadBranch === false)) &&
+      (
+        foundUser.isOrganizationAdmin ||
+        (targetHosp.headBranchId && foundUser.hospitalId === targetHosp.headBranchId) ||
+        (userHosp?.id && targetHosp.headBranchId === userHosp.id) ||
+        (userHosp?.isHeadBranch && userHosp.organizationId && targetHosp.organizationId === userHosp.organizationId)
+      )
+    );
+
+    const effectiveHospitalId = (targetHospitalId && (
+      foundUser.isOrganizationAdmin ||
+      foundUser.hospitalId === targetHospitalId ||
+      foundUser.permittedBranchIds?.includes(targetHospitalId) ||
+      isHeadAdminOfTarget
+    ))
+      ? targetHospitalId
+      : (foundUser.hospitalId || undefined);
+
+    if (effectiveHospitalId) {
       if (typeof window !== 'undefined' && window.sessionStorage) {
         try {
-          sessionStorage.setItem('pulse_active_hospital_target', foundUser.hospitalId);
+          sessionStorage.setItem('pulse_active_hospital_target', effectiveHospitalId);
         } catch {
           // ignore
         }
       }
-      const hosp = MockStorage.getHospitalById(foundUser.hospitalId);
+      const hosp = MockStorage.getHospitalById(effectiveHospitalId);
       setCurrentHospital(hosp || null);
     } else {
       setCurrentHospital(null);
@@ -180,6 +227,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const switchHospital = (hospitalId: string) => {
+    // Sub-branch admins or local staff cannot switch to other hospital facilities
+    if (user && user.role === 'hospital_admin' && !user.isOrganizationAdmin && user.hospitalId !== hospitalId) {
+      const targetHosp = MockStorage.getHospitalById(hospitalId);
+      const userHosp = user.hospitalId ? MockStorage.getHospitalById(user.hospitalId) : null;
+      const isHeadAdminOfTarget = Boolean(
+        targetHosp &&
+        (targetHosp.isBranch || targetHosp.headBranchId || (targetHosp.organizationId && targetHosp.isHeadBranch === false)) &&
+        (
+          targetHosp.headBranchId === user.hospitalId ||
+          (userHosp?.isHeadBranch && userHosp.organizationId && targetHosp.organizationId === userHosp.organizationId)
+        )
+      );
+      if (!isHeadAdminOfTarget) {
+        return;
+      }
+    }
+
     const hosp = MockStorage.getHospitalById(hospitalId);
     if (hosp) {
       if (typeof window !== 'undefined' && window.sessionStorage) {

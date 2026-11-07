@@ -13,8 +13,6 @@ import { ProtectedRoute } from '../components/common/ProtectedRoute';
 // Auth Pages
 import { Login } from '../pages/auth/Login';
 import { PlatformLogin } from '../pages/auth/PlatformLogin';
-import { ForgotPassword } from '../pages/auth/ForgotPassword';
-import { ResetPassword } from '../pages/auth/ResetPassword';
 import { Unauthorized } from '../pages/auth/Unauthorized';
 import { NotFound } from '../pages/auth/NotFound';
 
@@ -31,7 +29,9 @@ import { PlatformDashboard } from '../pages/platform/dashboard/PlatformDashboard
 import { HospitalManagement } from '../pages/platform/hospitals/HospitalManagement';
 import { HospitalDetail } from '../pages/platform/hospitals/HospitalDetail';
 import { PendingHospitalOnboarding } from '../pages/platform/hospitals/PendingHospitalOnboarding';
+import { DemoRequestsPage } from '../pages/platform/demo-requests/DemoRequestsPage';
 import { SubscriptionManagement } from '../pages/platform/subscriptions/SubscriptionManagement';
+import { EnterpriseManifests } from '../pages/platform/enterprise/EnterpriseManifests';
 import { PlatformUsers } from '../pages/platform/users/PlatformUsers';
 import { HospitalWebsites } from '../pages/platform/websites/HospitalWebsites';
 import { SupportCenter } from '../pages/platform/support/SupportCenter';
@@ -57,8 +57,10 @@ import { PharmacistDashboard } from '../pages/hospital/pharmacist/PharmacistDash
 import { AmbulanceManagement } from '../pages/hospital/ambulance/AmbulanceManagement';
 import { ReportsAnalytics } from '../pages/hospital/reports/ReportsAnalytics';
 import { HospitalSettings } from '../pages/hospital/settings/HospitalSettings';
+import { TestimonialManagement } from '../pages/hospital/testimonials/TestimonialManagement';
 import { HospitalSupportManagement } from '../pages/hospital/support/HospitalSupportManagement';
 import { EnterpriseManagement } from '../pages/hospital/enterprise/EnterpriseManagement';
+import { EnterpriseHealthNetwork } from '../pages/hospital/enterprise/EnterpriseHealthNetwork';
 import { EnterpriseDashboard } from '../pages/hospital/enterprise/EnterpriseDashboard';
 import { OrganizationProfile } from '../pages/hospital/enterprise/OrganizationProfile';
 import { BranchManagement } from '../pages/hospital/enterprise/BranchManagement';
@@ -114,8 +116,8 @@ export const AppRoutes: React.FC = () => {
       <Route path="/hospital/:hospitalSlug/login" element={<Login />} />
       <Route path="/hospital-site/:hospitalSlug/login" element={<Login />} />
       <Route path="/superadmin-login" element={<PlatformLogin />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/forgot-password" element={<Navigate to="/login" replace />} />
+      <Route path="/reset-password" element={<Navigate to="/login" replace />} />
       <Route path="/unauthorized" element={<Unauthorized />} />
 
       {/* PLATFORM ADMIN PORTAL ROUTES */}
@@ -131,12 +133,21 @@ export const AppRoutes: React.FC = () => {
         <Route path="dashboard" element={<PlatformDashboard />} />
         <Route path="hospitals" element={<HospitalManagement />} />
         <Route path="hospitals/:id" element={<HospitalDetail />} />
+        <Route
+          path="enterprise-manifests"
+          element={
+            <ProtectedRoute allowedRoles={['super_admin', 'super_admin_manager']}>
+              <EnterpriseManifests />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="demo-requests" element={<DemoRequestsPage />} />
         <Route path="pending-onboarding" element={<PendingHospitalOnboarding />} />
         <Route path="subscriptions" element={<SubscriptionManagement />} />
         <Route
           path="users"
           element={
-            <ProtectedRoute allowedRoles={['super_admin']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'super_admin_manager']}>
               <PlatformUsers />
             </ProtectedRoute>
           }
@@ -149,7 +160,7 @@ export const AppRoutes: React.FC = () => {
         <Route
           path="settings"
           element={
-            <ProtectedRoute allowedRoles={['super_admin']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'super_admin_manager']}>
               <PlatformSettings />
             </ProtectedRoute>
           }
@@ -167,6 +178,7 @@ export const AppRoutes: React.FC = () => {
       >
         <Route index element={<Navigate to="/sales/dashboard" replace />} />
         <Route path="dashboard" element={<SalesDashboard />} />
+        <Route path="demo-requests" element={<DemoRequestsPage />} />
         <Route path="leads" element={<SalesLeads />} />
         <Route path="follow-ups" element={<SalesFollowUps />} />
         <Route path="activities" element={<SalesActivities />} />
@@ -410,18 +422,26 @@ export const AppRoutes: React.FC = () => {
           }
         />
         <Route
+          path="enterprise-network"
+          element={
+            <ProtectedRoute allowedRoles={['hospital_admin']}>
+              <EnterpriseHealthNetwork />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="enterprise"
           element={
-            <ProtectedRoute allowedRoles={['hospital_admin', 'doctor']}>
-              <EnterpriseDashboard />
+            <ProtectedRoute allowedRoles={['hospital_admin']}>
+              <EnterpriseHealthNetwork />
             </ProtectedRoute>
           }
         />
         <Route
           path="enterprise/dashboard"
           element={
-            <ProtectedRoute allowedRoles={['hospital_admin', 'doctor']}>
-              <EnterpriseDashboard />
+            <ProtectedRoute allowedRoles={['hospital_admin']}>
+              <EnterpriseHealthNetwork />
             </ProtectedRoute>
           }
         />
@@ -470,6 +490,14 @@ export const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['hospital_admin']}>
               <EnterpriseSubscriptionDetails />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="testimonials"
+          element={
+            <ProtectedRoute allowedRoles={['hospital_admin']}>
+              <TestimonialManagement />
             </ProtectedRoute>
           }
         />

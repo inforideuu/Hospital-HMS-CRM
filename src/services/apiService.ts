@@ -1256,6 +1256,32 @@ export const ApiService = {
     }
   },
 
+  async validateCoupon(code: string, hospitalId?: string, targetScope: 'subscription' | 'billing_software' = 'subscription') {
+    try {
+      const res = await fetch(`${API_BASE_URL}/coupons/validate/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, hospital_id: hospitalId, target_scope: targetScope }),
+      });
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  async redeemCoupon(code: string, hospitalId: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/coupons/redeem/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, hospital_id: hospitalId }),
+      });
+      return await res.json();
+    } catch (err) {
+      return null;
+    }
+  },
+
   // Branch Requests
   async getBranchRequests(orgId?: string) {
     try {

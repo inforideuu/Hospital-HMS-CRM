@@ -14,6 +14,7 @@ import {
   FileText,
   Eye,
   Stethoscope,
+  Lock,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { ApiService } from '../../../services/apiService';
@@ -108,6 +109,25 @@ export const DoctorPatientQueue: React.FC = () => {
   }, [myTodayAppointments]);
 
   const handleStartConsultation = async (apt: Appointment) => {
+    const hospSettings = MockStorage.getHospitalSettings(apt.hospitalId || hospId);
+    const isVitalsTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+    const pat = MockStorage.getPatientById(apt.patientId);
+    const hasVitals = Boolean(
+      pat?.vitals?.bloodPressure ||
+      pat?.vitals?.heartRate ||
+      pat?.vitals?.temperature ||
+      pat?.vitals?.oxygenLevel
+    );
+
+    if (isVitalsTriageMandatory && !hasVitals) {
+      showToast(
+        'Nursing Vitals Triage Pending',
+        `Hospital policy requires nurse clinical vitals triage before beginning consultation for ${apt.patientName}. Nurse must complete vitals intake first.`,
+        'warning'
+      );
+      return;
+    }
+
     try {
       const timestamp = new Date().toISOString();
       MockStorage.updateAppointmentStatus(apt.id, 'In Consultation', {
@@ -270,15 +290,51 @@ export const DoctorPatientQueue: React.FC = () => {
                               >
                                 EHR
                               </Button>
-                              <Button
-                                variant="primary"
-                                size="sm"
-                                onClick={() => handleStartConsultation(apt)}
-                                leftIcon={<Play className="w-3.5 h-3.5" />}
-                                className="bg-brand-600 hover:bg-brand-700 text-white font-bold shadow-xs"
-                              >
-                                Start Consultation
-                              </Button>
+                              {(() => {
+                                const pat = MockStorage.getPatientById(apt.patientId);
+                                const hospSettings = MockStorage.getHospitalSettings(apt.hospitalId || hospId);
+                                const isVitalsTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+                                const hasNurseVitals = Boolean(
+                                  pat?.vitals?.bloodPressure ||
+                                  pat?.vitals?.heartRate ||
+                                  pat?.vitals?.temperature ||
+                                  pat?.vitals?.oxygenLevel
+                                );
+                                const isVitalsPending = isVitalsTriageMandatory && !hasNurseVitals;
+
+                                if (isVitalsPending) {
+                                  return (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="border-amber-300 text-amber-700 bg-amber-50 cursor-not-allowed opacity-90 font-medium"
+                                      onClick={() => {
+                                        showToast(
+                                          'Nursing Vitals Triage Pending',
+                                          `Hospital policy requires nurse clinical vitals triage before starting consultation for ${apt.patientName}. Nurse must record vitals first.`,
+                                          'warning'
+                                        );
+                                      }}
+                                      title="Locked: Nurse must record vital signs first"
+                                    >
+                                      <Lock className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                                      Vitals Pending
+                                    </Button>
+                                  );
+                                }
+
+                                return (
+                                  <Button
+                                    variant="primary"
+                                    size="sm"
+                                    onClick={() => handleStartConsultation(apt)}
+                                    leftIcon={<Play className="w-3.5 h-3.5" />}
+                                    className="bg-brand-600 hover:bg-brand-700 text-white font-bold shadow-xs"
+                                  >
+                                    Start Consultation
+                                  </Button>
+                                );
+                              })()}
                             </div>
                           </td>
                         </tr>

@@ -40,6 +40,7 @@ export const OPDRoomManagement: React.FC = () => {
 
   const [opdRooms, setOpdRooms] = useState<OPDRoom[]>(() => MockStorage.getOPDRooms(hospId));
   const [departments, setDepartments] = useState<Department[]>(() => MockStorage.getDepartments(hospId));
+  const [appointments, setAppointments] = useState(() => MockStorage.getAppointments(hospId));
   const doctors = MockStorage.getDoctors(hospId);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -61,9 +62,10 @@ export const OPDRoomManagement: React.FC = () => {
   });
 
   const refreshData = () => {
-  setOpdRooms(MockStorage.getOPDRooms(hospId));
-  setDepartments(MockStorage.getDepartments(hospId)); 
-};
+    setOpdRooms(MockStorage.getOPDRooms(hospId));
+    setDepartments(MockStorage.getDepartments(hospId));
+    setAppointments(MockStorage.getAppointments(hospId));
+  };
 
 
   useEffect(() => {
@@ -89,22 +91,29 @@ export const OPDRoomManagement: React.FC = () => {
   });
 
   const handleOpenAdd = () => {
-  const currentDepts = MockStorage.getDepartments(hospId);
-  setDepartments(currentDepts);
-  const defaultDept = currentDepts[0];
-  setFormData({
-    name: '',
-    code: '',
-    departmentId: defaultDept?.id || '',
-    location: '',
-    status: 'Available',
-    description: '',
-  });
-  setIsAddModalOpen(true);
-};
-
+    if (!isHospitalAdmin) {
+      showToast('Access Restricted', 'Receptionists cannot create OPD rooms. Only Hospital Administrators have this permission.', 'error');
+      return;
+    }
+    const currentDepts = MockStorage.getDepartments(hospId);
+    setDepartments(currentDepts);
+    const defaultDept = currentDepts[0];
+    setFormData({
+      name: '',
+      code: '',
+      departmentId: defaultDept?.id || '',
+      location: '',
+      status: 'Available',
+      description: '',
+    });
+    setIsAddModalOpen(true);
+  };
 
   const handleOpenEdit = (room: OPDRoom) => {
+    if (!isHospitalAdmin) {
+      showToast('Access Restricted', 'Receptionists cannot modify OPD rooms.', 'error');
+      return;
+    }
     setSelectedRoom(room);
     setFormData({
       name: room.name,
@@ -119,6 +128,10 @@ export const OPDRoomManagement: React.FC = () => {
 
   const handleSaveRoom = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isHospitalAdmin) {
+      showToast('Permission Denied', 'Receptionists cannot create or modify OPD rooms.', 'error');
+      return;
+    }
     if (!formData.name || !formData.code || !formData.departmentId || !formData.location) {
       showToast('Validation Error', 'Room Name, Code, Associated Department, and Location are required.', 'error');
       return;
@@ -154,6 +167,10 @@ export const OPDRoomManagement: React.FC = () => {
   };
 
   const handleToggleStatus = (room: OPDRoom) => {
+    if (!isHospitalAdmin) {
+      showToast('Permission Denied', 'Receptionists cannot change room status.', 'error');
+      return;
+    }
     const nextStatus: OPDRoomStatus = room.status === 'Available' ? 'Inactive' : 'Available';
     MockStorage.updateOPDRoomStatus(room.id, nextStatus);
     showToast('Room Status Changed', `${room.name} marked as ${nextStatus}.`);
@@ -161,6 +178,10 @@ export const OPDRoomManagement: React.FC = () => {
   };
 
   const handleDeleteConfirm = () => {
+    if (!isHospitalAdmin) {
+      showToast('Permission Denied', 'Receptionists cannot delete OPD rooms.', 'error');
+      return;
+    }
     if (confirmDeleteId) {
       const roomToDelete = opdRooms.find((r) => r.id === confirmDeleteId);
       MockStorage.deleteOPDRoom(confirmDeleteId);
@@ -178,7 +199,7 @@ export const OPDRoomManagement: React.FC = () => {
         breadcrumbs={[{ label: 'Hospital HMS', href: '/hospital/dashboard' }, { label: 'OPD Rooms' }]}
         actions={
           <div className="flex items-center gap-2">
-            {opdRooms.length > 0 && (
+            {isHospitalAdmin && opdRooms.length > 0 && (
               <Button
                 variant="outline"
                 size="sm"
@@ -189,9 +210,11 @@ export const OPDRoomManagement: React.FC = () => {
                 Delete All Existing
               </Button>
             )}
-            <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
-              Create OPD Room
-            </Button>
+            {isHospitalAdmin && (
+              <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
+                Create OPD Room
+              </Button>
+            )}
           </div>
         }
       />
@@ -231,16 +254,27 @@ export const OPDRoomManagement: React.FC = () => {
             <div className="col-span-full p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
               <DoorOpen className="w-10 h-10 text-slate-400 mx-auto mb-2" />
               <h3 className="font-bold text-slate-700 text-sm">No OPD Rooms Found</h3>
-              <p className="text-xs text-slate-500 mt-1">Create OPD rooms for your hospital departments to begin assigning doctors.</p>
-              <Button variant="outline" size="sm" onClick={handleOpenAdd} className="mt-4">
-                + Create First OPD Room
-              </Button>
+              <p className="text-xs text-slate-500 mt-1">
+                {isHospitalAdmin
+                  ? 'Create OPD rooms for your hospital departments to begin assigning doctors.'
+                  : 'No consultation rooms available under the selected filter criteria.'}
+              </p>
+              {isHospitalAdmin && (
+                <Button variant="outline" size="sm" onClick={handleOpenAdd} className="mt-4">
+                  + Create First OPD Room
+                </Button>
+              )}
             </div>
           ) : (
             filtered.map((room) => {
               const assignedDocs = doctors.filter(
                 (d) => d.opdRoomId === room.id || d.roomNumber.includes(room.code)
               );
+
+              const isOccupiedByConsultation = appointments.some(
+                (a) => a.status === 'In Consultation' && (a.opdRoomId === room.id || assignedDocs.some((d) => d.id === a.doctorId))
+              );
+              const effectiveStatus: OPDRoomStatus = isOccupiedByConsultation ? 'Occupied' : room.status;
 
               return (
                 <div
@@ -255,11 +289,11 @@ export const OPDRoomManagement: React.FC = () => {
                         </span>
                         <h3 className="font-bold text-base text-slate-900 mt-1.5 leading-snug">{room.name}</h3>
                       </div>
-                      {room.status === 'Available' ? (
+                      {effectiveStatus === 'Available' ? (
                         <Badge variant="success" size="sm" dot>Available</Badge>
-                      ) : room.status === 'Occupied' ? (
-                        <Badge variant="info" size="sm" dot>Occupied</Badge>
-                      ) : room.status === 'Maintenance' ? (
+                      ) : effectiveStatus === 'Occupied' ? (
+                        <Badge variant="info" size="sm" dot>Occupied (Consulting)</Badge>
+                      ) : effectiveStatus === 'Maintenance' ? (
                         <Badge variant="warning" size="sm" dot>Maintenance</Badge>
                       ) : (
                         <Badge variant="error" size="sm" dot>Inactive</Badge>
@@ -306,37 +340,45 @@ export const OPDRoomManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => handleToggleStatus(room)}
-                    >
-                      {room.status === 'Available' ? 'Deactivate' : 'Activate Room'}
-                    </Button>
-
-                    <div className="flex gap-1.5">
+                  {isHospitalAdmin ? (
+                    <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
                       <Button
                         variant="outline"
                         size="xs"
-                        onClick={() => handleOpenEdit(room)}
-                        title="Configure Room"
+                        onClick={() => handleToggleStatus(room)}
                       >
-                        <Edit className="w-3.5 h-3.5" />
+                        {room.status === 'Available' ? 'Deactivate' : 'Activate Room'}
                       </Button>
-                      {isHospitalAdmin && (
+
+                      <div className="flex gap-1.5">
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => handleOpenEdit(room)}
+                          title="Configure Room"
+                        >
+                          <Edit className="w-3.5 h-3.5" />
+                        </Button>
                         <Button
                           variant="ghost"
                           size="xs"
-                          className="text-rose-600"
+                          className="text-rose-600 hover:bg-rose-50"
                           onClick={() => setConfirmDeleteId(room.id)}
                           title="Delete OPD Room"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
-                      )}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+                      <span className="flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${room.status === 'Available' ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                        <span className="font-medium text-slate-600">{room.status}</span>
+                      </span>
+                      <span className="text-[11px] font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">Read-Only View</span>
+                    </div>
+                  )}
                 </div>
               );
             })
@@ -453,6 +495,11 @@ export const OPDRoomManagement: React.FC = () => {
         isOpen={isClearAllDialogOpen}
         onClose={() => setIsClearAllDialogOpen(false)}
         onConfirm={() => {
+          if (!isHospitalAdmin) {
+            showToast('Permission Denied', 'Receptionists cannot delete OPD rooms.', 'error');
+            setIsClearAllDialogOpen(false);
+            return;
+          }
           MockStorage.clearOPDRooms(hospId);
           showToast('OPD Rooms Purged', 'All OPD rooms and consultation chambers have been deleted.');
           setIsClearAllDialogOpen(false);

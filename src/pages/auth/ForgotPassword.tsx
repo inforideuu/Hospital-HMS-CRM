@@ -22,11 +22,11 @@ export const ForgotPassword: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col justify-center text-slate-100 p-4">
       <div className="max-w-md w-full mx-auto bg-white text-slate-900 rounded-3xl shadow-2xl p-8 border border-slate-200">
-        <div className="flex items-center gap-2 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white">
-            <Activity className="w-5 h-5" />
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 rounded-xl bg-white border border-slate-200/80 p-1 flex items-center justify-center shadow-sm">
+            <img src="/logo.png" alt="Zenelait" className="w-full h-full object-contain" />
           </div>
-          <span className="font-bold text-lg text-slate-900">PulseCore Account Recovery</span>
+          <span className="font-bold text-lg text-slate-900">Zenelait Account Recovery</span>
         </div>
 
         {isSubmitted ? (

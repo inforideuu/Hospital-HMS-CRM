@@ -19,9 +19,11 @@ import {
   ToggleLeft,
   ToggleRight,
   Eye,
+  Clock,
+  Lock,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
-import { SubscriptionPlanTier, HospitalSubscription, BillingInterval, SubscriptionPlan, CouponCode } from '../../../types';
+import { SubscriptionPlanTier, HospitalSubscription, BillingInterval, SubscriptionPlan, CouponCode, CouponCategory } from '../../../types';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -47,7 +49,6 @@ export const SubscriptionManagement: React.FC = () => {
   // Plan Management Modal State
   const [editingPlan, setEditingPlan] = useState<SubscriptionPlan | null>(null);
   const [isEditPlanModalOpen, setIsEditPlanModalOpen] = useState(false);
-  const [newFeatureInput, setNewFeatureInput] = useState('');
 
   // Billing Software Add-on Modal State
   const [isBillingAddonModalOpen, setIsBillingAddonModalOpen] = useState(false);
@@ -55,14 +56,16 @@ export const SubscriptionManagement: React.FC = () => {
 
   // Coupon Codes CRUD State
   const [coupons, setCoupons] = useState<CouponCode[]>(() => MockStorage.getCoupons());
+  const [couponCategoryFilter, setCouponCategoryFilter] = useState<'all' | 'subscription' | 'billing_software'>('all');
   const [isCouponModalOpen, setIsCouponModalOpen] = useState(false);
   const [editingCoupon, setEditingCoupon] = useState<CouponCode | null>(null);
   const [couponForm, setCouponForm] = useState({
     code: '',
     discountPercentage: 50,
+    category: 'subscription' as CouponCategory,
     description: '',
     validUntil: '2026-12-31',
-    maxUses: 100,
+    maxUses: undefined as number | undefined,
   });
 
   const refreshData = () => {
@@ -76,9 +79,10 @@ export const SubscriptionManagement: React.FC = () => {
     setCouponForm({
       code: '',
       discountPercentage: 50,
+      category: 'subscription',
       description: 'Special platform promotional discount for hospital subscription plans.',
       validUntil: '2026-12-31',
-      maxUses: 100,
+      maxUses: undefined,
     });
     setIsCouponModalOpen(true);
   };
@@ -88,9 +92,10 @@ export const SubscriptionManagement: React.FC = () => {
     setCouponForm({
       code: coupon.code,
       discountPercentage: coupon.discountPercentage,
+      category: coupon.category || 'subscription',
       description: coupon.description,
       validUntil: coupon.validUntil || '2026-12-31',
-      maxUses: coupon.maxUses || 100,
+      maxUses: coupon.maxUses,
     });
     setIsCouponModalOpen(true);
   };
@@ -106,18 +111,20 @@ export const SubscriptionManagement: React.FC = () => {
       id: editingCoupon ? editingCoupon.id : `COUPON-${Date.now()}`,
       code: couponForm.code.trim().replace(/\s+/g, '_'),
       discountPercentage: Number(couponForm.discountPercentage),
+      category: couponForm.category,
       description: couponForm.description,
       isActive: editingCoupon ? editingCoupon.isActive : true,
       validUntil: couponForm.validUntil,
       maxUses: Number(couponForm.maxUses),
-      usedCount: editingCoupon ? editingCoupon.usedCount : 0,
+      usedCount: editingCoupon ? (editingCoupon.usedCount || 0) : 0,
+      usedByHospitals: editingCoupon ? (editingCoupon.usedByHospitals || []) : [],
       createdAt: editingCoupon ? editingCoupon.createdAt : new Date().toISOString().split('T')[0],
     };
 
     MockStorage.saveCoupon(couponToSave);
     showToast(
       editingCoupon ? 'Coupon Code Updated' : 'New Coupon Code Created',
-      `Coupon "${couponToSave.code}" with ${couponToSave.discountPercentage}% discount is now ${couponToSave.isActive ? 'ACTIVE' : 'INACTIVE'}.`
+      `Coupon "${couponToSave.code}" (${couponToSave.category === 'billing_software' ? 'Billing Software' : 'HMS Subscription'}) with ${couponToSave.discountPercentage}% discount is now ${couponToSave.isActive ? 'ACTIVE' : 'INACTIVE'}.`
     );
     setIsCouponModalOpen(false);
     refreshData();
@@ -140,8 +147,14 @@ export const SubscriptionManagement: React.FC = () => {
   };
 
   const handleOpenEditPlan = (plan: SubscriptionPlan) => {
-    setEditingPlan({ ...plan, features: [...plan.features] });
-    setNewFeatureInput('');
+    const cleanFeatures = (plan.features || []).filter(
+      (f) =>
+        !f.toLowerCase().includes('sms') &&
+        !f.toLowerCase().includes('whatsapp') &&
+        !f.toLowerCase().includes('email support') &&
+        !f.toLowerCase().includes('standard email')
+    );
+    setEditingPlan({ ...plan, features: cleanFeatures });
     setIsEditPlanModalOpen(true);
   };
 
@@ -165,19 +178,10 @@ export const SubscriptionManagement: React.FC = () => {
         editingPlan.tagline = `Zero-cost ${editingPlan.trialDays}-day full platform trial provisioned automatically on hospital registration.`;
       }
       MockStorage.savePlan(editingPlan);
-      showToast('Plan Customized', `${editingPlan.name} features, limits, and pricing have been updated.`);
+      showToast('Plan Customized', `${editingPlan.name} configuration, capacities, and pricing have been updated.`);
       setIsEditPlanModalOpen(false);
       refreshData();
     }
-  };
-
-  const handleAddFeature = () => {
-    if (!newFeatureInput.trim() || !editingPlan) return;
-    setEditingPlan({
-      ...editingPlan,
-      features: [...editingPlan.features, newFeatureInput.trim()],
-    });
-    setNewFeatureInput('');
   };
 
   const handleRemoveFeature = (index: number) => {
@@ -285,7 +289,7 @@ export const SubscriptionManagement: React.FC = () => {
               leftIcon={<Tag className="w-3.5 h-3.5" />}
               className="bg-purple-600 hover:bg-purple-700 text-white font-bold shadow-sm"
             >
-              + Create Coupon Code
+               Create Coupon Code
             </Button>
             <Button
               variant="outline"
@@ -568,15 +572,23 @@ export const SubscriptionManagement: React.FC = () => {
                 {/* Capacity Limits */}
                 <div className={`p-3 rounded-xl mb-4 text-xs space-y-1.5 ${plan.isPopular ? 'bg-slate-800/80 text-slate-300' : 'bg-slate-50 text-slate-600'}`}>
                   <div className="flex justify-between">
-                    <span>Patient Capacity:</span>
-                    <span className="font-bold">{plan.maxPatients.toLocaleString()} EHR</span>
+                    <span>Max Patient EHR:</span>
+                    <span className="font-bold">{plan.maxPatients.toLocaleString()} Patients</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Doctors & Staff:</span>
-                    <span className="font-bold">{plan.maxDoctors} Docs / {plan.maxStaff} Staff</span>
+                    <span>Inpatient Beds:</span>
+                    <span className="font-bold">{plan.tier === 'basic' || !plan.maxBeds ? '0 Beds (OPD Only)' : `${plan.maxBeds} Beds`}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Cloud Storage:</span>
+                    <span>Max Staff Members:</span>
+                    <span className="font-bold">{plan.maxStaff} Staff</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Specialist Doctors:</span>
+                    <span className="font-bold">{plan.maxDoctors} Docs</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Cloud Storage Vault:</span>
                     <span className="font-bold">{plan.storageGB} GB Vault</span>
                   </div>
                 </div>
@@ -643,88 +655,112 @@ export const SubscriptionManagement: React.FC = () => {
           title="Active Hospital Client Subscriptions"
           subtitle="Real-time multi-tenant contract status, billing intervals, and payment methods"
         />
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-left text-xs border-collapse min-w-[1120px]">
             <thead>
-              <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-500 font-semibold uppercase tracking-wider">
-                <th className="px-5 py-3.5">Hospital Workspace</th>
-                <th className="px-4 py-3.5">Plan Tier</th>
-                <th className="px-4 py-3.5">Cycle & Amount</th>
-                <th className="px-4 py-3.5">Plan Activated Date</th>
-                <th className="px-4 py-3.5">Renewal Date</th>
-                <th className="px-4 py-3.5">Status</th>
-                <th className="px-5 py-3.5 text-right">Actions</th>
+              <tr className="border-b border-slate-200 bg-slate-50/90 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
+                <th className="py-3.5 pl-6 pr-4 min-w-[240px]">Hospital Workspace</th>
+                <th className="py-3.5 px-4 min-w-[160px]">Plan Tier</th>
+                <th className="py-3.5 px-4 min-w-[140px]">Cycle & Amount</th>
+                <th className="py-3.5 px-4 min-w-[170px]">Plan Activated Date</th>
+                <th className="py-3.5 px-4 min-w-[140px]">Renewal Date</th>
+                <th className="py-3.5 px-4 min-w-[140px]">Status</th>
+                <th className="py-3.5 pr-6 pl-4 text-right min-w-[130px]">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {subscriptions.map((sub) => {
-                const hosp = hospitals.find((h) => h.id === sub.hospitalId);
+              {(() => {
+                // Deduplicate subscriptions strictly per hospital (keeping latest / upgraded subscription)
+                const dedupedSubs = subscriptions.reduce<HospitalSubscription[]>((acc, sub) => {
+                  const existingIdx = acc.findIndex((s) => MockStorage.matchHospitalId(s.hospitalId, sub.hospitalId));
+                  if (existingIdx === -1) {
+                    acc.push(sub);
+                  } else {
+                    const existing = acc[existingIdx];
+                    if (sub.paymentStatus === 'pending_approval' && existing.paymentStatus !== 'pending_approval') {
+                      acc[existingIdx] = sub;
+                    } else if (existing.paymentStatus !== 'pending_approval') {
+                      const subDate = sub.upgradedDate || sub.activatedDate || sub.startDate || '';
+                      const existDate = existing.upgradedDate || existing.activatedDate || existing.startDate || '';
+                      if (Boolean(sub.upgradedDate) && !Boolean(existing.upgradedDate)) {
+                        acc[existingIdx] = sub;
+                      } else if (subDate >= existDate) {
+                        acc[existingIdx] = sub;
+                      }
+                    }
+                  }
+                  return acc;
+                }, []);
 
-                return (
-                  <tr key={sub.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="px-5 py-4">
-                      <p className="font-bold text-slate-900 leading-tight">{hosp?.name || sub.hospitalId}</p>
-                      <p className="text-[11px] text-slate-400 font-mono mt-0.5">{sub.hospitalId} • {sub.paymentMethod}</p>
-                    </td>
+                return dedupedSubs.map((sub) => {
+                  const hosp = hospitals.find((h) => h.id === sub.hospitalId || MockStorage.matchHospitalId(h.id, sub.hospitalId));
 
-                    <td className="px-4 py-4">
-                      <span className="capitalize px-2.5 py-1 rounded-md text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
-                        {sub.planName}
-                      </span>
-                    </td>
+                  return (
+                    <tr key={sub.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-4 pl-6 pr-4 align-top">
+                        <p className="font-bold text-slate-900 leading-tight text-sm">{hosp?.name || sub.hospitalId}</p>
+                        <p className="text-[11px] text-slate-400 font-mono mt-1">{sub.hospitalId} • {sub.paymentMethod}</p>
+                      </td>
 
-                    <td className="px-4 py-4">
-                      <p className="font-bold text-slate-900">₹{sub.amount.toLocaleString('en-IN')}</p>
-                      <p className="text-[11px] text-slate-500 capitalize">{sub.interval} interval</p>
-                    </td>
-
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                        <span className="font-semibold text-slate-800">
-                          {sub.upgradedDate || sub.activatedDate || sub.startDate || '—'}
+                      <td className="py-4 px-4 align-top whitespace-nowrap">
+                        <span className="capitalize px-2.5 py-1 rounded-md text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 inline-block">
+                          {sub.planName}
                         </span>
-                      </div>
-                      <p className="text-[10px] text-teal-700 font-medium flex items-center gap-1 mt-0.5">
-                        <Sparkles className="w-3 h-3 text-teal-500 shrink-0" />
-                        {sub.upgradedDate ? 'Plan Upgraded' : sub.status === 'trialing' ? 'Trial Started' : 'Plan Activated'}
-                      </p>
-                    </td>
+                      </td>
 
-                    <td className="px-4 py-4">
-                      <p className="font-medium text-slate-800">{sub.renewalDate}</p>
-                      <p className="text-[10px] text-slate-400">Auto-Renew: {sub.autoRenew ? 'Yes' : 'No'}</p>
-                    </td>
+                      <td className="py-4 px-4 align-top whitespace-nowrap">
+                        <p className="font-bold text-slate-900 text-sm">₹{sub.amount.toLocaleString('en-IN')}</p>
+                        <p className="text-[11px] text-slate-500 capitalize mt-0.5">{sub.interval} interval</p>
+                      </td>
 
-                    <td className="px-4 py-4 space-y-1">
-                      {sub.paymentStatus === 'pending_approval' ? (
-                        <div>
-                          <Badge variant="warning" dot>Pending Approval</Badge>
-                          <p className="text-[10px] text-amber-800 font-mono font-bold mt-0.5">UTR: {sub.utrNumber}</p>
+                      <td className="py-4 px-4 align-top">
+                        <div className="flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                          <span className="font-semibold text-slate-800 text-xs">
+                            {sub.upgradedDate || sub.activatedDate || sub.startDate || '—'}
+                          </span>
                         </div>
-                      ) : (
-                        <>
-                          {sub.status === 'active' && <Badge variant="success" dot>Active</Badge>}
-                          {sub.status === 'trialing' && <Badge variant="cyan" dot>Trialing</Badge>}
-                          {sub.status === 'past_due' && <Badge variant="warning" dot>Past Due</Badge>}
-                          {sub.status === 'canceled' && <Badge variant="error" dot>Canceled</Badge>}
-                        </>
-                      )}
-                    </td>
+                        <p className="text-[10px] text-teal-700 font-medium flex items-center gap-1 mt-1">
+                          <Sparkles className="w-3 h-3 text-teal-500 shrink-0" />
+                          {sub.upgradedDate ? 'Plan Upgraded' : sub.status === 'trialing' ? 'Trial Started' : 'Plan Activated'}
+                        </p>
+                      </td>
 
-                    <td className="px-5 py-4 text-right">
-                      <Button
-                        variant="outline"
-                        size="xs"
-                        onClick={() => handleOpenUpgrade(sub)}
-                        leftIcon={<Edit className="w-3.5 h-3.5" />}
-                      >
-                        Change Tier
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
+                      <td className="py-4 px-4 align-top whitespace-nowrap">
+                        <p className="font-semibold text-slate-800 text-xs">{sub.renewalDate}</p>
+                      </td>
+
+                      <td className="py-4 px-4 align-top space-y-1">
+                        {sub.paymentStatus === 'pending_approval' ? (
+                          <div>
+                            <Badge variant="warning" dot>Pending Approval</Badge>
+                            <p className="text-[10px] text-amber-800 font-mono font-bold mt-1">UTR: {sub.utrNumber}</p>
+                          </div>
+                        ) : (
+                          <>
+                            {sub.status === 'active' && <Badge variant="success" dot>Active</Badge>}
+                            {sub.status === 'trialing' && <Badge variant="cyan" dot>Trialing</Badge>}
+                            {sub.status === 'past_due' && <Badge variant="warning" dot>Past Due</Badge>}
+                            {sub.status === 'canceled' && <Badge variant="error" dot>Canceled</Badge>}
+                          </>
+                        )}
+                      </td>
+
+                      <td className="py-4 pr-6 pl-4 text-right align-top whitespace-nowrap">
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => handleOpenUpgrade(sub)}
+                          leftIcon={<Edit className="w-3.5 h-3.5" />}
+                          className="font-medium"
+                        >
+                          Change Tier
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                });
+              })()}
             </tbody>
           </table>
         </div>
@@ -734,7 +770,7 @@ export const SubscriptionManagement: React.FC = () => {
       <Card>
         <CardHeader
           title="Promotional Coupon Codes & Discounts (Superadmin Only)"
-          subtitle="Create, edit, enable/disable, or remove promo codes for hospital admins to redeem during subscription upgrades"
+          subtitle="Create, edit, enable/disable, or remove promo codes for hospital admins to redeem during subscription upgrades or billing software"
           action={
             <Button
               variant="primary"
@@ -747,84 +783,193 @@ export const SubscriptionManagement: React.FC = () => {
             </Button>
           }
         />
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+        <div className="px-5 pt-3 pb-2 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap bg-slate-50/50">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setCouponCategoryFilter('all')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                couponCategoryFilter === 'all'
+                  ? 'bg-purple-600 text-white shadow-xs'
+                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              All Categories ({coupons.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setCouponCategoryFilter('subscription')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                couponCategoryFilter === 'subscription'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              HMS Subscriptions ({coupons.filter((c) => (c.category || 'subscription') === 'subscription').length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setCouponCategoryFilter('billing_software')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                couponCategoryFilter === 'billing_software'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              Billing Software ({coupons.filter((c) => c.category === 'billing_software').length})
+            </button>
+          </div>
+          <span className="text-[11px] text-slate-500 font-medium">
+            💡 Billing software coupons are dummy coupons reserved for external partner software.
+          </span>
+        </div>
+
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-left text-xs border-collapse min-w-[1180px]">
             <thead>
-              <tr className="border-b border-slate-100 bg-purple-50/50 text-slate-600 font-semibold uppercase tracking-wider">
-                <th className="px-5 py-3.5">Coupon Code</th>
-                <th className="px-4 py-3.5">Discount %</th>
-                <th className="px-4 py-3.5">Description</th>
-                <th className="px-4 py-3.5">Redemptions</th>
-                <th className="px-4 py-3.5">Status</th>
-                <th className="px-5 py-3.5 text-right">Actions</th>
+              <tr className="border-b border-purple-200 bg-purple-50/80 text-purple-950 font-bold uppercase tracking-wider text-[11px]">
+                <th className="py-3.5 pl-6 pr-4 min-w-[200px]">Coupon Code</th>
+                <th className="py-3.5 px-4 min-w-[160px]">Category & Scope</th>
+                <th className="py-3.5 px-4 min-w-[110px]">Discount</th>
+                <th className="py-3.5 px-4 min-w-[260px]">Description & Notes</th>
+                <th className="py-3.5 px-4 min-w-[180px]">Hospitals Redeemed</th>
+                <th className="py-3.5 px-4 min-w-[130px]">Status</th>
+                <th className="py-3.5 pr-6 pl-4 text-right min-w-[150px]">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {coupons.length === 0 ? (
+              {coupons.filter((c) => {
+                if (couponCategoryFilter === 'all') return true;
+                return (c.category || 'subscription') === couponCategoryFilter;
+              }).length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-6 text-center text-slate-400 italic">
-                    No active coupon codes created yet. Click "+ Add Coupon" above to introduce discounts.
+                  <td colSpan={7} className="px-6 py-8 text-center text-slate-400 italic">
+                    No matching coupon codes found for the selected category.
                   </td>
                 </tr>
               ) : (
-                coupons.map((coupon) => (
-                  <tr key={coupon.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="px-5 py-4">
-                      <div className="flex items-center gap-2">
-                        <Tag className="w-4 h-4 text-purple-600 shrink-0" />
-                        <span className="font-mono font-bold text-sm text-purple-900 bg-purple-100/70 px-2 py-0.5 rounded border border-purple-200">
-                          {coupon.code}
+                coupons
+                  .filter((c) => {
+                    if (couponCategoryFilter === 'all') return true;
+                    return (c.category || 'subscription') === couponCategoryFilter;
+                  })
+                  .map((coupon) => (
+                    <tr key={coupon.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-4 pl-6 pr-4 align-top">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 border border-purple-200 shadow-2xs">
+                            <Tag className="w-4 h-4 text-purple-600" />
+                          </div>
+                          <div>
+                            <span className="font-mono font-bold text-xs text-purple-900 bg-purple-100/80 px-2 py-0.5 rounded border border-purple-200 inline-block">
+                              {coupon.code}
+                            </span>
+                            {coupon.validUntil && (
+                              <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-1 font-sans">
+                                <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                                Valid until: {coupon.validUntil}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="py-4 px-4 align-top whitespace-nowrap">
+                        {(coupon.category || 'subscription') === 'billing_software' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300">
+                            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                            Billing Software 
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
+                            <span className="w-2 h-2 rounded-full bg-indigo-500 shrink-0" />
+                            HMS & CRM Tier
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="py-4 px-4 align-top whitespace-nowrap">
+                        <span className="inline-flex items-center text-xs font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+                          {coupon.discountPercentage}% OFF
                         </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className="text-sm font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                        {coupon.discountPercentage}% OFF
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 text-slate-600 max-w-xs truncate">
-                      {coupon.description}
-                    </td>
-                    <td className="px-4 py-4 font-mono text-slate-700">
-                      <span className="font-bold text-slate-900">{coupon.usedCount}</span> / {coupon.maxUses || '∞'} uses
-                    </td>
-                    <td className="px-4 py-4">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleCouponStatus(coupon)}
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold transition-all cursor-pointer ${
-                          coupon.isActive
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                            : 'bg-slate-200 text-slate-600 border border-slate-300'
-                        }`}
-                      >
-                        {coupon.isActive ? <ToggleRight className="w-4 h-4 text-emerald-600" /> : <ToggleLeft className="w-4 h-4 text-slate-400" />}
-                        {coupon.isActive ? 'ACTIVE' : 'DISABLED'}
-                      </button>
-                    </td>
-                    <td className="px-5 py-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Button
-                          variant="outline"
-                          size="xs"
-                          onClick={() => handleOpenEditCoupon(coupon)}
-                          leftIcon={<Edit className="w-3.5 h-3.5" />}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="xs"
+                      </td>
+
+                      <td className="py-4 px-4 align-top">
+                        <p className="text-xs text-slate-700 font-medium leading-relaxed max-w-sm">
+                          {coupon.description || 'Promotional subscription discount.'}
+                        </p>
+                        {coupon.maxUses && (
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            Cap: Max {coupon.maxUses} total redemptions
+                          </p>
+                        )}
+                      </td>
+
+                      <td className="py-4 px-4 align-top whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-50/80 border border-purple-200/60 text-purple-900 font-bold text-xs">
+                          <Building2 className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                          <span>{coupon.usedByHospitals?.length ?? (coupon.usedCount || 0)}</span>
+                          <span className="text-[11px] font-medium text-purple-700">
+                            {(coupon.usedByHospitals?.length ?? (coupon.usedCount || 0)) === 1 ? 'Hospital' : 'Hospitals'}
+                          </span>
+                        </div>
+                        {coupon.usedByHospitals && coupon.usedByHospitals.length > 0 ? (
+                          <div
+                            className="text-[10px] text-purple-700 mt-1 font-mono truncate max-w-[170px]"
+                            title={`Redeemed by: ${coupon.usedByHospitals.join(', ')} (1 redemption per hospital)`}
+                          >
+                            {coupon.usedByHospitals.join(', ')}
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            No redemptions yet
+                          </p>
+                        )}
+                      </td>
+
+                      <td className="py-4 px-4 align-top whitespace-nowrap">
+                        <button
+                          type="button"
                           onClick={() => handleToggleCouponStatus(coupon)}
-                          leftIcon={coupon.isActive ? <ToggleLeft className="w-3.5 h-3.5 text-amber-600" /> : <ToggleRight className="w-3.5 h-3.5 text-emerald-600" />}
-                          className={coupon.isActive ? "text-amber-700 border-amber-200 hover:bg-amber-50" : "text-emerald-700 border-emerald-200 hover:bg-emerald-50"}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-2xs ${
+                            coupon.isActive
+                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100'
+                              : 'bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200'
+                          }`}
+                          title="Click to toggle status"
                         >
-                          {coupon.isActive ? 'Disable' : 'Enable'}
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          {coupon.isActive ? <ToggleRight className="w-4 h-4 text-emerald-600" /> : <ToggleLeft className="w-4 h-4 text-slate-400" />}
+                          <span>{coupon.isActive ? 'ACTIVE' : 'DISABLED'}</span>
+                        </button>
+                      </td>
+
+                      <td className="py-4 pr-6 pl-4 text-right align-top whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => handleOpenEditCoupon(coupon)}
+                            leftIcon={<Edit className="w-3.5 h-3.5" />}
+                            className="font-medium"
+                          >
+                            Edit
+                          </Button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Are you sure you want to permanently delete promotional coupon "${coupon.code}"?`)) {
+                                handleDeleteCouponClick(coupon.id, coupon.code);
+                              }
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors inline-flex items-center justify-center cursor-pointer ml-1"
+                            title="Delete coupon permanently"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
               )}
             </tbody>
           </table>
@@ -836,10 +981,27 @@ export const SubscriptionManagement: React.FC = () => {
         isOpen={isCouponModalOpen}
         onClose={() => setIsCouponModalOpen(false)}
         title={editingCoupon ? `Edit Coupon Code: ${editingCoupon.code}` : 'Create New Promotional Coupon Code'}
-        subtitle="Introduce discount codes visible & redeemable by Hospital Admins during plan purchase."
+        subtitle="Introduce discount codes for Hospital HMS & CRM subscriptions or external Billing Software suite."
         maxWidth="md"
       >
         <form onSubmit={handleSaveCouponSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Coupon Category / Target Software *</label>
+            <select
+              value={couponForm.category}
+              onChange={(e) => setCouponForm({ ...couponForm, category: e.target.value as CouponCategory })}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              <option value="subscription">Hospital HMS & CRM Subscription (Active Discount)</option>
+              <option value="billing_software">Billing Software Suite (External Partner Project)</option>
+            </select>
+            <p className="text-[11px] text-slate-500 mt-1">
+              {couponForm.category === 'subscription'
+                ? 'Applies discount to Hospital HMS & CRM tier purchases and renewals.'
+                : 'Dummy discount code reserved for external standalone billing software (will be blocked from HMS & CRM subscriptions).'}
+            </p>
+          </div>
+
           <Input
             label="Coupon Code (e.g. Happy_Hospital) *"
             placeholder="Happy_Hospital"
@@ -867,12 +1029,13 @@ export const SubscriptionManagement: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Max Redemptions</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Redemption Cap (Optional)</label>
               <input
                 type="number"
                 min="1"
-                value={couponForm.maxUses}
-                onChange={(e) => setCouponForm({ ...couponForm, maxUses: Number(e.target.value) })}
+                placeholder="No limit (leave blank)"
+                value={couponForm.maxUses !== undefined && couponForm.maxUses !== null ? couponForm.maxUses : ''}
+                onChange={(e) => setCouponForm({ ...couponForm, maxUses: e.target.value ? Number(e.target.value) : undefined })}
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
               />
             </div>
@@ -917,35 +1080,6 @@ export const SubscriptionManagement: React.FC = () => {
       >
         {editingPlan && (
           <form onSubmit={handleSavePlanEdit} className="space-y-5">
-            {/* Plan Enable/Disable Availability Banner */}
-            <div className="flex items-center justify-between p-3.5 bg-purple-50/80 rounded-xl border border-purple-200">
-              <div>
-                <h4 className="text-xs font-bold text-purple-950 flex items-center gap-2">
-                  <span>Plan Availability Status</span>
-                  <span className={`text-[10px] font-mono font-black px-2 py-0.5 rounded-full uppercase ${
-                    editingPlan.isActive !== false ? 'bg-emerald-500 text-slate-950' : 'bg-rose-500 text-white'
-                  }`}>
-                    {editingPlan.isActive !== false ? 'ENABLED (ACTIVE)' : 'DISABLED (INACTIVE)'}
-                  </span>
-                </h4>
-                <p className="text-[11px] text-purple-700 mt-0.5">
-                  Toggle whether this subscription tier is active and visible for hospital onboarding & upgrades.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEditingPlan({ ...editingPlan, isActive: editingPlan.isActive === false ? true : false })}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                  editingPlan.isActive !== false
-                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
-                    : 'bg-rose-600 hover:bg-rose-700 text-white shadow-xs'
-                }`}
-              >
-                {editingPlan.isActive !== false ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
-                {editingPlan.isActive !== false ? 'DISABLE PLAN' : 'ENABLE PLAN'}
-              </button>
-            </div>
-
             {/* Trial Plan Validity Config */}
             {editingPlan.tier === 'trial' && (
               <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-3.5 space-y-2">
@@ -995,175 +1129,158 @@ export const SubscriptionManagement: React.FC = () => {
               />
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+            {/* Pricing Details */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Input
+                label="Monthly Pricing (₹)"
+                type="number"
+                value={editingPlan.priceMonthly}
+                onChange={(e) => setEditingPlan({ ...editingPlan, priceMonthly: Number(e.target.value) })}
+                required
+              />
+              <Input
+                label="Yearly Pricing (₹)"
+                type="number"
+                value={editingPlan.priceYearly}
+                onChange={(e) => setEditingPlan({ ...editingPlan, priceYearly: Number(e.target.value) })}
+                required
+              />
+            </div>
+
+            {/* Plan Limit & Allocation Configuration */}
+            <div className="space-y-3 pt-1">
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Monthly (₹)</label>
-                <input
-                  type="number"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-bold"
-                  value={editingPlan.priceMonthly}
-                  onChange={(e) => setEditingPlan({ ...editingPlan, priceMonthly: Number(e.target.value) })}
-                />
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                  Plan Resource Capacity & Operational Limits
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Configure the exact operational quotas for this hospital plan tier.
+                </p>
               </div>
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Yearly (₹)</label>
-                <input
-                  type="number"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-bold"
-                  value={editingPlan.priceYearly}
-                  onChange={(e) => setEditingPlan({ ...editingPlan, priceYearly: Number(e.target.value) })}
-                />
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-indigo-50/60 p-4 rounded-2xl border border-indigo-200">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Max Patient EHR <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs"
+                    value={editingPlan.maxPatients}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, maxPatients: Number(e.target.value) })}
+                    placeholder="e.g. 5000"
+                    required
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1 font-medium">Digital patient records quota</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Inpatient Beds <span className="text-red-500">*</span>
+                  </label>
+                  {editingPlan.tier === 'basic' ? (
+                    <div className="rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900 shadow-2xs">
+                      <div className="flex items-center gap-1.5 font-bold text-amber-950">
+                        <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>0 Beds (Outpatient OPD Clinic Only)</span>
+                      </div>
+                      <p className="text-[10px] text-amber-800 mt-1 leading-snug">
+                        Starter Clinic is strictly locked to outpatient care. Inpatient admissions, wards & beds are restricted by design (0 Beds).
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type="number"
+                        min="0"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs"
+                        value={editingPlan.maxBeds}
+                        onChange={(e) => setEditingPlan({ ...editingPlan, maxBeds: Number(e.target.value) })}
+                        placeholder="e.g. 100"
+                        required
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1 font-medium">Ward/ICU bed allocation</p>
+                    </>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Max Staff Members <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs"
+                    value={editingPlan.maxStaff}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, maxStaff: Number(e.target.value) })}
+                    placeholder="e.g. 50"
+                    required
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1 font-medium">Nurses, receptionists & staff</p>
+                </div>
               </div>
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Max Patients</label>
-                <input
-                  type="number"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-bold"
-                  value={editingPlan.maxPatients}
-                  onChange={(e) => setEditingPlan({ ...editingPlan, maxPatients: Number(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Max Doctors</label>
-                <input
-                  type="number"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-bold"
-                  value={editingPlan.maxDoctors}
-                  onChange={(e) => setEditingPlan({ ...editingPlan, maxDoctors: Number(e.target.value) })}
-                />
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Max Doctors</label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={editingPlan.maxDoctors}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, maxDoctors: Number(e.target.value) })}
+                  />
+                  <p className="text-[10px] text-slate-500 mt-0.5">Specialists & consulting doctors</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Cloud Storage Vault (GB)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={editingPlan.storageGB}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, storageGB: Number(e.target.value) })}
+                  />
+                  <p className="text-[10px] text-slate-500 mt-0.5">Lab scans & PACS vault size</p>
+                </div>
               </div>
             </div>
 
-            {/* Features Management Section with Catalog Helper and Enable/Disable Toggles */}
-            <div className="space-y-4 pt-2">
+            {/* Active Plan Features Management */}
+            <div className="space-y-3 pt-2">
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">Plan Included Features & Capabilities</h4>
-                  <p className="text-[11px] text-slate-500">Enable or disable specific features for this tier or pick from the recommended platform feature catalog.</p>
+                  <p className="text-[11px] text-slate-500">Active capabilities provisioned for hospitals on this subscription tier.</p>
                 </div>
                 <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full font-mono">
                   {editingPlan.features.length} active
                 </span>
               </div>
 
-              {/* Recommended Feature Catalog Picker for Superadmin */}
-              <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-3.5 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-purple-900 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-purple-600" /> Catalog of Available Features to Add
-                  </span>
-                  <span className="text-[10px] text-purple-600 font-semibold">Select to instantly add to plan</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 max-h-48 overflow-y-auto pr-1">
-                  {[
-                    { title: 'Multi-Department Management', desc: 'Manage OPD, IPD, ICU, Pharmacy, Pathology, and ER seamlessly.' },
-                    { title: 'OPD Consultation Scheduling', desc: 'Doctor slot booking, token queueing, and prescriptions.' },
-                    { title: 'IPD Bed & Ward Allocation System', desc: 'Real-time bed tracking, admission workflows, and daily round notes.' },
-                    { title: 'Electronic Health Records (EHR)', desc: 'Secure cloud patient medical records and diagnostic history.' },
-                    { title: 'Integrated Pharmacy & Dispensary', desc: 'Batch & expiry tracking, POS billing, and inventory alerts.' },
-                    { title: 'Pathology & Radiology Lab Automation', desc: 'Test ordering, sample tracking, and automated PDF lab reports.' },
-                    { title: 'Ambulance Fleet & Driver Dispatch', desc: '911 Emergency dispatch, driver tracking, and trip billing.' },
-                    { title: 'GST Billing & Tax Invoices', desc: 'Multi-line item billing, payment gateways, and GST compliance.' },
-                    { title: 'SMS & WhatsApp Patient Reminders', desc: 'Automated appointment and prescription alerts to patients.' },
-                    { title: 'Custom Domain & Dynamic Website Builder', desc: 'Dedicated public hospital website with custom domain support.' },
-                    { title: 'Advanced Financial Audit & CSV Reports', desc: 'Export billing, collection reports, and departmental revenue metrics.' },
-                    { title: '24/7 Priority Telephonic SLA Support', desc: 'Dedicated account manager with 4-hour response SLA.' },
-                  ].map((catItem, cIdx) => {
-                    const alreadyAdded = editingPlan.features.includes(catItem.title);
-                    return (
-                      <div
-                        key={cIdx}
-                        className={`p-2 rounded-lg border text-xs flex flex-col justify-between transition-all ${
-                          alreadyAdded
-                            ? 'bg-slate-100 border-slate-200 opacity-60'
-                            : 'bg-white border-purple-200 hover:border-purple-400 hover:shadow-xs'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between font-bold text-slate-900">
-                            <span>{catItem.title}</span>
-                            {alreadyAdded ? (
-                              <span className="text-[9px] text-slate-500 font-normal">Added</span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (!alreadyAdded) {
-                                    setEditingPlan({
-                                      ...editingPlan,
-                                      features: [...editingPlan.features, catItem.title],
-                                    });
-                                  }
-                                }}
-                                className="text-[10px] font-bold text-purple-700 hover:text-purple-900 bg-purple-100 hover:bg-purple-200 px-2 py-0.5 rounded transition-colors"
-                              >
-                                + Add
-                              </button>
-                            )}
-                          </div>
-                          <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">{catItem.desc}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Custom Add Feature Input */}
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Or type a custom feature name & hit Enter..."
-                  value={newFeatureInput}
-                  onChange={(e) => setNewFeatureInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddFeature();
-                    }
-                  }}
-                  className="text-xs"
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleAddFeature}
-                  leftIcon={<Plus className="w-3.5 h-3.5" />}
-                  className="shrink-0 font-bold"
-                >
-                  Add Custom Feature
-                </Button>
-              </div>
-
-              {/* Active Plan Features with Enable/Disable Controls */}
+              {/* Active Plan Features with Remove Controls */}
               <div className="max-h-60 overflow-y-auto space-y-2 pr-1 border border-slate-200 rounded-xl p-3 bg-white divide-y divide-slate-100">
                 {editingPlan.features.length === 0 ? (
-                  <p className="text-xs text-slate-400 italic text-center py-2">No features configured for this plan. Select from the catalog above.</p>
+                  <p className="text-xs text-slate-400 italic text-center py-2">No features configured for this plan.</p>
                 ) : (
                   editingPlan.features.map((feat, idx) => (
                     <div key={idx} className="flex items-center justify-between gap-3 pt-2 first:pt-0">
                       <div className="flex items-center gap-2 flex-1">
                         <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                        <input
-                          type="text"
-                          value={feat}
-                          onChange={(e) => {
-                            const updatedFeats = [...editingPlan.features];
-                            updatedFeats[idx] = e.target.value;
-                            setEditingPlan({ ...editingPlan, features: updatedFeats });
-                          }}
-                          className="w-full text-xs font-medium text-slate-800 bg-transparent hover:bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-purple-400 px-2 py-1 rounded transition-all"
-                        />
+                        <span className="text-xs font-medium text-slate-800">{feat}</span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
                           onClick={() => handleRemoveFeature(idx)}
-                          className="px-2 py-1 text-[11px] font-bold text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
-                          title="Disable feature for this plan tier"
+                          className="px-2 py-1 text-[11px] font-bold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+                          title="Remove feature from plan"
                         >
-                          <ToggleLeft className="w-3.5 h-3.5" />
-                          Disable
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Remove
                         </button>
                       </div>
                     </div>

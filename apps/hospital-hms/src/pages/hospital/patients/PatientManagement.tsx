@@ -5,6 +5,7 @@ import {
   Search,
   Filter,
   Eye,
+  EyeOff,
   Edit,
   Trash2,
   Download,
@@ -48,6 +49,7 @@ export const PatientManagement: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -125,10 +127,17 @@ export const PatientManagement: React.FC = () => {
 
   const handleOpenEdit = (patient: Patient) => {
     setSelectedPatient(patient);
+    const existingUsers = MockStorage.getUsers();
+    const patientUser = existingUsers.find(
+      (u) =>
+        (u.patientId && u.patientId === patient.id) ||
+        (patient.email && u.email && u.email.toLowerCase() === patient.email.toLowerCase())
+    );
+    setShowPassword(false);
     setFormData({
       name: patient.name,
       email: patient.email,
-      password: '',
+      password: patientUser?.password || 'Patient@1234',
       phone: patient.phone,
       dateOfBirth: patient.dateOfBirth,
       age: patient.age,
@@ -168,7 +177,43 @@ export const PatientManagement: React.FC = () => {
         medicalHistory: historyArray,
       };
       MockStorage.savePatient(updated);
-      showToast('Patient Record Updated', `${updated.name} profile saved.`);
+
+      // Sync and update/create Patient Portal User login credentials
+      const allUsers = MockStorage.getUsers();
+      let patientUser = allUsers.find(
+        (u) =>
+          (u.patientId && u.patientId === selectedPatient.id) ||
+          (selectedPatient.email && u.email && u.email.toLowerCase() === selectedPatient.email.toLowerCase())
+      );
+
+      if (patientUser) {
+        const updatedUser: User = {
+          ...patientUser,
+          name: formData.name,
+          email: formData.email || patientUser.email,
+          phone: formData.phone || patientUser.phone,
+          password: formData.password || patientUser.password,
+        };
+        MockStorage.saveUser(updatedUser);
+      } else if (formData.email || formData.password) {
+        const newUser: User = {
+          id: `USR-${Date.now().toString(36).substring(2, 7)}`,
+          name: formData.name,
+          email: formData.email || `${selectedPatient.id.toLowerCase()}@hospital.local`,
+          password: formData.password || 'Patient@1234',
+          role: 'patient',
+          portal: 'patient',
+          hospitalId: hospId,
+          hospitalName: currentHospital?.name || 'Hospital',
+          patientId: selectedPatient.id,
+          phone: formData.phone,
+          status: 'active',
+          createdAt: new Date().toISOString(),
+        };
+        MockStorage.saveUser(newUser);
+      }
+
+      showToast('Patient Record Updated', `${updated.name} profile and portal password saved.`);
       setIsEditModalOpen(false);
     } else {
       const uniqueSuffix = `${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
@@ -227,7 +272,28 @@ export const PatientManagement: React.FC = () => {
   };
 
   const handleExport = () => {
-    MockStorage.exportToCSV('Patient_Registry', filtered);
+    const formattedPatients = filtered.map((p) => ({
+      'Patient ID': p.id,
+      'Full Name': p.name,
+      'Date of Birth': p.dateOfBirth ? p.dateOfBirth.split('T')[0] : '',
+      'Age': p.age,
+      'Gender': p.gender,
+      'Blood Group': p.bloodGroup,
+      'Phone': p.phone,
+      'Email': p.email || '',
+      'Address': p.address || '',
+      'Emergency Contact Name': p.emergencyContactName || '',
+      'Emergency Contact Phone': p.emergencyContactPhone || '',
+      'Relationship': p.emergencyContactRelation || '',
+      'Clinical Status': p.status,
+      'Registered Date': p.registeredDate ? p.registeredDate.split('T')[0] : '',
+      'Assigned Specialist': p.assignedDoctorName || 'Unassigned',
+      'Room / Bed': p.roomBedNumber || 'Outpatient',
+      'Allergies': Array.isArray(p.allergies) ? p.allergies.join(', ') : (p.allergies || 'None'),
+      'Medical History': Array.isArray(p.medicalHistory) ? p.medicalHistory.join(', ') : (p.medicalHistory || 'None'),
+      'Vitals': p.vitals ? `BP: ${p.vitals.bloodPressure || 'N/A'} | HR: ${p.vitals.heartRate || 'N/A'} bpm | Temp: ${p.vitals.temperature || 'N/A'}°F | SpO2: ${p.vitals.oxygenLevel || 'N/A'}%` : 'No vitals logged',
+    }));
+    MockStorage.exportToCSV('Patient_Registry', formattedPatients);
     showToast('Export Successful', 'Patient records downloaded.');
   };
 
@@ -515,13 +581,28 @@ export const PatientManagement: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Input
-              label="Patient Portal Password"
-              type="password"
-              value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              placeholder="Default: Patient@1234"
-            />
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-slate-700">Patient Portal Password</label>
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="text-[11px] text-teal-700 hover:text-teal-900 font-semibold flex items-center gap-1"
+                >
+                  {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  {showPassword ? 'Hide Password' : 'Show Password'}
+                </button>
+              </div>
+              <Input
+                type={showPassword ? 'text' : 'password'}
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                placeholder="Portal Password (e.g. Patient@1234)"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Used by patient to sign in to Patient Portal via email or Patient ID.
+              </p>
+            </div>
             <Input
               label="Residential Address"
               value={formData.address}

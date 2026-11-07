@@ -23,8 +23,20 @@ export const CapabilityLockedNotice: React.FC<CapabilityLockedNoticeProps> = ({
   const navigate = useNavigate();
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
 
-  const targetTier: SubscriptionPlanTier = capability.professionalHospital ? 'standard' : 'enterprise';
-  const targetTierName = targetTier === 'standard' ? 'Professional Hospital' : 'Enterprise Health Network';
+  const currentTierNorm = (currentTier || 'basic').toLowerCase().trim();
+  const isBasicTier = currentTierNorm === 'basic' || currentTierNorm.includes('starter') || currentTierNorm.includes('clinic');
+
+  // Determine the upgrade target tier. Higher tier plans never upgrade to lower tiers.
+  const targetTier: SubscriptionPlanTier = capability.id === 'enterprise_multi_branch'
+    ? 'enterprise'
+    : isBasicTier
+    ? 'standard'
+    : 'enterprise';
+
+  const targetTierName =
+    targetTier === 'standard'
+      ? 'Professional Hospital'
+      : 'Enterprise Health Network';
   const currentTierName =
     currentTier === 'basic'
       ? 'Starter Clinic'

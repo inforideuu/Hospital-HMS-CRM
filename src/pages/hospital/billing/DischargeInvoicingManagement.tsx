@@ -108,7 +108,9 @@ export const DischargeInvoicingManagement: React.FC = () => {
       return sum + (catalogItem?.price || 350);
     }, 0);
 
-    const deposit = Number(adm.initialDeposit) || 0;
+    // Initial Admission Deposit: automatically credit the intake deposit or default 3-day bed stay deposit
+    const autoDeposit = bed ? bed.dailyRate * 3 : 1000;
+    const deposit = Number(adm.initialDeposit) > 0 ? Number(adm.initialDeposit) : autoDeposit;
     const subtotal = totalBedCharge + totalDocFee + totalLabCharges;
 
     // Departmental GST rates configured by Hospital Admin in Settings
@@ -663,6 +665,7 @@ export const DischargeInvoicingManagement: React.FC = () => {
                 docGSTRate,
                 labGSTRate,
                 totalTax,
+                grossTotal,
                 netDue,
               } = getInpatientAccruedCharges(adm);
               const isSettled = adm.billingStatus === 'Paid';
@@ -765,9 +768,16 @@ export const DischargeInvoicingManagement: React.FC = () => {
 
                       <div className="pt-1.5 border-t border-indigo-200 flex justify-between items-center font-bold text-indigo-950">
                         <span>Net Inpatient Balance Due:</span>
-                        <span className="font-mono text-indigo-900 text-sm font-extrabold">
-                          ₹{netDue.toLocaleString('en-IN')}
-                        </span>
+                        <div className="text-right">
+                          <span className="font-mono text-indigo-900 text-sm font-extrabold">
+                            ₹{netDue.toLocaleString('en-IN')}
+                          </span>
+                          {deposit > grossTotal && (
+                            <span className="text-[10px] text-emerald-700 block font-normal">
+                              (Refund Due: ₹{(deposit - grossTotal).toLocaleString('en-IN')})
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 

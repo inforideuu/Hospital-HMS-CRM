@@ -34,6 +34,7 @@ import {
   HeartPulse,
   Activity,
   RotateCw,
+  Lock,
   MessageSquare,
   Send,
 } from 'lucide-react';
@@ -61,6 +62,7 @@ import {
 import {
   generateDoctorTimeSlots,
   validateBookingAvailability,
+  timeToMinutes,
   getDayOfWeekName,
   formatDisplayDate,
   getHospitalTodayDate,
@@ -96,7 +98,7 @@ export const AppointmentManagement: React.FC = () => {
   const navigate = useNavigate();
   const { user, currentHospital } = useAuth();
   const { showToast } = useNotification();
-  const hospId = currentHospital?.id || 'HOSP-001';
+  const hospId = currentHospital?.id || user?.hospitalId || 'HOSP-001';
 
   const isHospitalAdmin =
     user?.role === 'hospital_admin' ||
@@ -173,6 +175,9 @@ export const AppointmentManagement: React.FC = () => {
     };
 
     MockStorage.savePatient(updatedPatient);
+    if (selectedIntakeAppointment?.id) {
+      MockStorage.markNotificationAsRead(`notif-checkin-nurse-${selectedIntakeAppointment.id}`);
+    }
     setIsNurseIntakeModalOpen(false);
     showToast(
       'Clinical Intake Saved',
@@ -200,7 +205,7 @@ export const AppointmentManagement: React.FC = () => {
   // Sync state when hospId changes
   useEffect(() => {
     refreshData();
-    MockStorage.syncWithBackend?.().then?.(() => refreshData()).catch?.(() => {});
+    MockStorage.syncWithBackend?.().then?.(() => refreshData()).catch?.(() => { });
     const handleStorageUpdate = () => {
       refreshData();
     };
@@ -235,6 +240,8 @@ export const AppointmentManagement: React.FC = () => {
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [isAddLeaveModalOpen, setIsAddLeaveModalOpen] = useState(false);
   const [confirmDeleteAppointmentId, setConfirmDeleteAppointmentId] = useState<string | null>(null);
+  const [appointmentToCancel, setAppointmentToCancel] = useState<Appointment | null>(null);
+  const [cancellationReasonInput, setCancellationReasonInput] = useState('Patient requested cancellation');
 
   // Step: Patient Online Appointment Requests State
   const [patientRequests, setPatientRequests] = useState<PatientAppointmentRequest[]>(() =>
@@ -469,6 +476,55 @@ export const AppointmentManagement: React.FC = () => {
   const dateConstraints = useMemo(() => {
     return getScheduleDateConstraints(doctorScheduleForBooking, settings, hospitalTimezone);
   }, [doctorScheduleForBooking, settings, hospitalTimezone]);
+
+  // Dynamic Free Follow-Up Policy calculation based on Hospital Settings
+  const followUpFeeCalculation = useMemo(() => {
+    const hospSettings = MockStorage.getHospitalSettings(hospId);
+    const validityDays = hospSettings.followUpValidityDays ?? 7;
+    const isFollowUp = formData.type === 'Follow-up' || !!activeFollowUpRequestId;
+    const doc = doctors.find((d) => d.id === formData.doctorId);
+    const standardFee = doc?.consultationFee || formData.fee || 150;
+
+    if (!isFollowUp) {
+      return { isFollowUp: false, isFree: false, effectiveFee: standardFee, validityDays, message: '' };
+    }
+
+    if (!formData.patientId) {
+      return { isFollowUp: true, isFree: true, effectiveFee: 0, validityDays, message: `Free Follow-Up (Within ${validityDays}-day hospital grace window)` };
+    }
+
+    // Find prior completed/confirmed consultation for this patient with this doctor or department
+    const priorApts = appointments
+      .filter((a) => a.patientId === formData.patientId && (a.doctorId === formData.doctorId || a.departmentId === formData.departmentId) && a.status !== 'Cancelled')
+      .sort((a, b) => b.appointmentDate.localeCompare(a.appointmentDate));
+
+    const lastAppt = priorApts[0];
+    if (!lastAppt) {
+      return { isFollowUp: true, isFree: true, effectiveFee: 0, validityDays, message: `Free Follow-Up (Within ${validityDays}-day hospital grace window)` };
+    }
+
+    const lastDate = new Date(lastAppt.appointmentDate).getTime();
+    const currentDate = new Date(formData.appointmentDate || getHospitalTodayDate(hospitalTimezone)).getTime();
+    const diffDays = Math.round((currentDate - lastDate) / (1000 * 60 * 60 * 24));
+
+    if (diffDays >= 0 && diffDays <= validityDays) {
+      return {
+        isFollowUp: true,
+        isFree: true,
+        effectiveFee: 0,
+        validityDays,
+        message: `Free Follow-Up (${diffDays}d since last visit, within ${validityDays}-day hospital window)`,
+      };
+    }
+
+    return {
+      isFollowUp: true,
+      isFree: false,
+      effectiveFee: standardFee,
+      validityDays,
+      message: `Follow-up window expired (${diffDays}d since last visit > ${validityDays}d limit). Standard fee applies.`,
+    };
+  }, [formData.type, activeFollowUpRequestId, formData.patientId, formData.doctorId, formData.departmentId, formData.appointmentDate, appointments, hospId, doctors, formData.fee, hospitalTimezone]);
 
   const slotGeneration = useMemo(() => {
     if (!isBookModalOpen || !formData.doctorId || !formData.appointmentDate) {
@@ -889,9 +945,10 @@ export const AppointmentManagement: React.FC = () => {
     }
 
     const isFollowUpAppointment = formData.type === 'Follow-up' || !!activeFollowUpRequestId;
+    const resolvedHospitalId = doc.hospitalId || pat.hospitalId || hospId;
     const newApt: Appointment = {
       id: `APT-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
-      hospitalId: hospId,
+      hospitalId: resolvedHospitalId,
       patientId: pat.id,
       patientName: pat.name,
       patientPhone: pat.phone,
@@ -910,9 +967,9 @@ export const AppointmentManagement: React.FC = () => {
       status: 'Confirmed',
       reason: formData.reason,
       notes: formData.notes,
-      fee: doc.consultationFee || formData.fee,
+      fee: followUpFeeCalculation.effectiveFee,
       paymentStatus: 'Paid',
-      createdAt: new Date().toISOString().split('T')[0],
+      createdAt: new Date().toISOString(),
       isFollowUp: isFollowUpAppointment,
       followUpReason: isFollowUpAppointment ? formData.reason : undefined,
     };
@@ -950,7 +1007,7 @@ export const AppointmentManagement: React.FC = () => {
     // Asynchronously sync with Django REST Framework backend
     ApiService.createAppointment({
       id: newApt.id,
-      hospital: hospId,
+      hospital: resolvedHospitalId,
       patient: pat.id,
       doctor: doc.id,
       date: newApt.appointmentDate,
@@ -1015,42 +1072,188 @@ export const AppointmentManagement: React.FC = () => {
       return;
     }
 
-    MockStorage.rescheduleAppointment(
+    const res = MockStorage.rescheduleAppointment(
       appointmentToReschedule.id,
       rescheduleForm.newDate,
       rescheduleForm.newTime,
       rescheduleForm.reason
     );
 
-    showToast(
-      'Appointment Rescheduled',
-      `Appointment ${appointmentToReschedule.id} moved to ${rescheduleForm.newDate} at ${rescheduleForm.newTime}.`
-    );
+    if (res.isLateReschedule && res.penalty) {
+      showToast(
+        'Late Rescheduling Penalty Logged',
+        `Rescheduled within ${res.cutoffHours || 4} hours of original slot. Penalty of ₹${res.penalty} (${res.penaltyPercent}%) logged to patient billing.`,
+        'warning'
+      );
+    } else {
+      showToast(
+        'Appointment Rescheduled',
+        `Appointment ${appointmentToReschedule.id} moved to ${rescheduleForm.newDate} at ${rescheduleForm.newTime}. Penalty-free window applied.`,
+        'success'
+      );
+    }
     setIsRescheduleModalOpen(false);
     setAppointmentToReschedule(null);
     refreshData();
   };
 
-  const handleStatusUpdate = (aptId: string, status: AppointmentStatus) => {
+  const handleStatusUpdate = (aptId: string, status: AppointmentStatus, customReason?: string) => {
     const timestamp = new Date().toISOString();
     const updatePayload = {
       ...(status === 'Checked In' ? { checkedInAt: timestamp } : {}),
       ...(status === 'In Consultation' ? { consultationStartedAt: timestamp } : {}),
       ...(status === 'Completed' ? { consultationCompletedAt: timestamp } : {}),
     };
+
+    if (status === 'Cancelled') {
+      const apt = appointments.find((a) => a.id === aptId);
+      const hospSettings = MockStorage.getHospitalSettings(hospId);
+      const penaltyDeadlineHours = hospSettings.cancellationDeadlineHours ?? 4;
+      const penaltyPercent = hospSettings.cancellationPenaltyPercent !== undefined ? hospSettings.cancellationPenaltyPercent : 50;
+      const aptFee = apt?.fee || 0;
+
+      let isLateCancellation = false;
+      let penalty = 0;
+
+      if (apt && penaltyDeadlineHours > 0) {
+        const slotMins = timeToMinutes(apt.appointmentTime || '09:00 AM');
+        const [year, month, day] = apt.appointmentDate.split('-').map(Number);
+        const slotDate = new Date(year, month - 1, day, Math.floor(slotMins / 60), slotMins % 60);
+        const now = new Date();
+        const diffMs = slotDate.getTime() - now.getTime();
+        const hoursRemaining = diffMs / (1000 * 60 * 60);
+
+        if (hoursRemaining < penaltyDeadlineHours && penaltyPercent > 0) {
+          isLateCancellation = true;
+          // Exceeded penalty-free window: configured penalty % of doctor consultation fee
+          penalty = Math.round((aptFee * penaltyPercent) / 100);
+        }
+      }
+
+      const cancelPayload: Partial<Appointment> = {
+        ...updatePayload,
+        cancelledAt: timestamp,
+        cancellationReason: customReason || 'Cancelled by patient/receptionist',
+        cancellationPenalty: penalty,
+        cancellationPenaltyCollected: false,
+        refundAmount: 0,
+      };
+
+      MockStorage.updateAppointmentStatus(aptId, status, cancelPayload);
+      ApiService.updateAppointmentStatus(aptId, status, cancelPayload).catch(() => {});
+
+      if (isLateCancellation && penalty > 0) {
+        showToast(
+          'Late Cancellation Penalty Logged',
+          `Cancelled within ${penaltyDeadlineHours} hours of slot. Penalty of ₹${penalty} (${penaltyPercent}%) logged to patient record. Will be collected by Accountant at next visit.`,
+          'warning'
+        );
+      } else {
+        showToast(
+          'Appointment Cancelled',
+          `Cancelled within penalty-free window (> ${penaltyDeadlineHours} hrs before slot). Zero penalty charged.`,
+          'info'
+        );
+      }
+      refreshData();
+      return;
+    }
+
     MockStorage.updateAppointmentStatus(aptId, status, updatePayload);
     if (status === 'Checked In') {
       ApiService.checkInAppointment(aptId).catch(() => {
-        ApiService.updateAppointmentStatus(aptId, status, { checked_in_at: timestamp }).catch(() => {});
+        ApiService.updateAppointmentStatus(aptId, status, { checked_in_at: timestamp }).catch(() => { });
       });
     } else {
       ApiService.updateAppointmentStatus(aptId, status, {
         ...(status === 'In Consultation' ? { consultation_started_at: timestamp } : {}),
         ...(status === 'Completed' ? { consultation_completed_at: timestamp } : {}),
-      }).catch(() => {});
+      }).catch(() => { });
     }
     showToast('Status Updated', `Appointment marked as ${status}.`);
     refreshData();
+  };
+
+  // Real-time Cancellation Cutoff & Penalty calculation for modal intimation
+  const cancellationInfo = useMemo(() => {
+    if (!appointmentToCancel) return null;
+    const hospSettings = MockStorage.getHospitalSettings(hospId);
+    const cutoffHours = hospSettings.cancellationDeadlineHours ?? 4;
+    const penaltyPercent = hospSettings.cancellationPenaltyPercent !== undefined ? hospSettings.cancellationPenaltyPercent : 50;
+    const aptFee = appointmentToCancel.fee || 0;
+
+    let hoursRemaining = 0;
+    let isCutoffExceeded = false;
+    let penalty = 0;
+
+    if (cutoffHours > 0) {
+      const slotMins = timeToMinutes(appointmentToCancel.appointmentTime || '09:00 AM');
+      const [year, month, day] = appointmentToCancel.appointmentDate.split('-').map(Number);
+      const slotDate = new Date(year, month - 1, day, Math.floor(slotMins / 60), slotMins % 60);
+      const now = new Date();
+      const diffMs = slotDate.getTime() - now.getTime();
+      hoursRemaining = diffMs / (1000 * 60 * 60);
+
+      if (hoursRemaining < cutoffHours && penaltyPercent > 0) {
+        isCutoffExceeded = true;
+        penalty = Math.round((aptFee * penaltyPercent) / 100);
+      }
+    }
+
+    return {
+      cutoffHours,
+      penaltyPercent,
+      aptFee,
+      hoursRemaining,
+      isCutoffExceeded,
+      penalty,
+    };
+  }, [appointmentToCancel, hospId]);
+
+  // Real-time Rescheduling Cutoff & Penalty calculation for modal intimation
+  const rescheduleInfo = useMemo(() => {
+    if (!appointmentToReschedule) return null;
+    const hospSettings = MockStorage.getHospitalSettings(hospId);
+    const cutoffHours = hospSettings.reschedulingDeadlineHours ?? 4;
+    const penaltyPercent = hospSettings.reschedulingPenaltyPercent !== undefined
+      ? hospSettings.reschedulingPenaltyPercent
+      : (hospSettings.cancellationPenaltyPercent ?? 50);
+    const aptFee = appointmentToReschedule.fee || 0;
+
+    let hoursRemaining = 0;
+    let isCutoffExceeded = false;
+    let penalty = 0;
+
+    if (cutoffHours > 0 && appointmentToReschedule.appointmentDate) {
+      const slotMins = timeToMinutes(appointmentToReschedule.appointmentTime || '09:00 AM');
+      const [year, month, day] = appointmentToReschedule.appointmentDate.split('-').map(Number);
+      const slotDate = new Date(year, month - 1, day, Math.floor(slotMins / 60), slotMins % 60);
+      const now = new Date();
+      const diffMs = slotDate.getTime() - now.getTime();
+      hoursRemaining = diffMs / (1000 * 60 * 60);
+
+      if (hoursRemaining < cutoffHours && penaltyPercent > 0) {
+        isCutoffExceeded = true;
+        penalty = Math.round((aptFee * penaltyPercent) / 100);
+      }
+    }
+
+    return {
+      cutoffHours,
+      penaltyPercent,
+      aptFee,
+      hoursRemaining,
+      isCutoffExceeded,
+      penalty,
+    };
+  }, [appointmentToReschedule, hospId]);
+
+  const handleConfirmCancelAppointment = () => {
+    if (!appointmentToCancel) return;
+    const targetAptId = appointmentToCancel.id;
+    const reason = cancellationReasonInput.trim() || 'Patient requested cancellation';
+    setAppointmentToCancel(null);
+    handleStatusUpdate(targetAptId, 'Cancelled', reason);
   };
 
   const handleViewDetail = (apt: Appointment) => {
@@ -1060,7 +1263,7 @@ export const AppointmentManagement: React.FC = () => {
 
   const handleDeleteAppointment = async (aptId: string) => {
     MockStorage.deleteAppointment(aptId);
-    await ApiService.deleteAppointment(aptId).catch(() => {});
+    await ApiService.deleteAppointment(aptId).catch(() => { });
     showToast('Appointment Removed', 'The appointment record has been permanently deleted.');
     setConfirmDeleteAppointmentId(null);
     refreshData();
@@ -1068,6 +1271,10 @@ export const AppointmentManagement: React.FC = () => {
 
   // Schedule Configuration Handlers
   const handleEditSchedule = () => {
+    if (!isHospitalAdmin) {
+      showToast('Access Restricted', 'Only Hospital Administrators can configure specialist schedules.', 'error');
+      return;
+    }
     const existing = schedules.find((s) => s.doctorId === selectedScheduleDoctorId);
     if (existing) {
       setScheduleForm({ ...existing });
@@ -1183,6 +1390,10 @@ export const AppointmentManagement: React.FC = () => {
   };
 
   const handleDeleteSchedule = async (scheduleId: string, doctorName?: string) => {
+    if (!isHospitalAdmin) {
+      showToast('Access Restricted', 'Only Hospital Administrators have permission to delete specialist schedules.', 'error');
+      return;
+    }
     if (!window.confirm(`Are you sure you want to delete the schedule and roster for ${doctorName || 'this specialist'}? This will remove configured consultation hours and chamber allocations.`)) {
       return;
     }
@@ -1218,7 +1429,7 @@ export const AppointmentManagement: React.FC = () => {
     try {
       for (const s of schedules) {
         MockStorage.deleteDoctorSchedule(s.id);
-        ApiService.deleteDoctorSchedule(s.id).catch(() => {});
+        ApiService.deleteDoctorSchedule(s.id).catch(() => { });
       }
       showToast('All Schedules Deleted', 'All medical specialist schedules have been removed.', 'success');
       refreshData();
@@ -1296,7 +1507,7 @@ export const AppointmentManagement: React.FC = () => {
     };
 
     MockStorage.saveDoctorUnavailability(newPeriod);
-    ApiService.saveDoctorUnavailability(newPeriod).catch(() => {});
+    ApiService.saveDoctorUnavailability(newPeriod).catch(() => { });
     showToast('Unavailability Blocked', `${doc.name} marked unavailable (${newPeriod.type}: ${newPeriod.startDate}).`);
     setIsAddLeaveModalOpen(false);
     refreshData();
@@ -1308,7 +1519,7 @@ export const AppointmentManagement: React.FC = () => {
       return;
     }
     MockStorage.deleteDoctorUnavailability(id);
-    ApiService.deleteDoctorUnavailability(id).catch(() => {});
+    ApiService.deleteDoctorUnavailability(id).catch(() => { });
     showToast('Unblocked', 'Leave / unavailable period removed.');
     refreshData();
   };
@@ -1321,7 +1532,7 @@ export const AppointmentManagement: React.FC = () => {
       return;
     }
     MockStorage.saveAppointmentSettings(settingsForm);
-    ApiService.saveAppointmentSettings(settingsForm).catch(() => {});
+    ApiService.saveAppointmentSettings(settingsForm).catch(() => { });
     showToast('Settings Updated', 'OPD booking limits and cancellation policies updated.');
     refreshData();
   };
@@ -1582,6 +1793,25 @@ export const AppointmentManagement: React.FC = () => {
                                 Rescheduled
                               </span>
                             )}
+                            {Boolean(apt.reschedulingPenalty && apt.reschedulingPenalty > 0) && (
+                              <span
+                                className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                                  apt.reschedulingPenaltyCollected
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                                }`}
+                                title={
+                                  apt.reschedulingPenaltyCollected
+                                    ? `Reschedule penalty of ₹${apt.reschedulingPenalty} collected in invoice ${apt.reschedulingCollectedInvoiceId || ''}`
+                                    : `Late rescheduling penalty of ₹${apt.reschedulingPenalty} pending collection by cashier.`
+                                }
+                              >
+                                Penalty: ₹{apt.reschedulingPenalty}
+                                <span className="text-[9px] font-medium opacity-80">
+                                  {apt.reschedulingPenaltyCollected ? '(Paid)' : '(Unpaid)'}
+                                </span>
+                              </span>
+                            )}
                           </div>
                           <p className="truncate text-slate-700">{apt.reason}</p>
                           {apt.followUpReason && apt.followUpReason !== apt.reason && (
@@ -1595,7 +1825,30 @@ export const AppointmentManagement: React.FC = () => {
                           {apt.status === 'Confirmed' && <Badge variant="info" dot>Confirmed</Badge>}
                           {apt.status === 'Scheduled' && <Badge variant="neutral" dot>Scheduled</Badge>}
                           {apt.status === 'Completed' && <Badge variant="purple" dot>Completed</Badge>}
-                          {apt.status === 'Cancelled' && <Badge variant="error" dot>Cancelled</Badge>}
+                          {apt.status === 'Cancelled' && (
+                            <div className="space-y-1">
+                              <Badge variant="error" dot>Cancelled</Badge>
+                              {Boolean(apt.cancellationPenalty && apt.cancellationPenalty > 0) && (
+                                <span
+                                  className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                                    apt.cancellationPenaltyCollected
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                                  }`}
+                                  title={
+                                    apt.cancellationPenaltyCollected
+                                      ? `Penalty of ₹${apt.cancellationPenalty} collected in invoice ${apt.cancellationCollectedInvoiceId || ''}`
+                                      : `Late cancellation penalty of ₹${apt.cancellationPenalty} pending collection by cashier.`
+                                  }
+                                >
+                                  Penalty: ₹{apt.cancellationPenalty}
+                                  <span className="text-[9px] font-medium opacity-80">
+                                    {apt.cancellationPenaltyCollected ? '(Paid)' : '(Unpaid)'}
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+                          )}
                           {apt.status === 'No Show' && <Badge variant="error" dot>No Show</Badge>}
                         </td>
 
@@ -1630,28 +1883,61 @@ export const AppointmentManagement: React.FC = () => {
                               </Button>
                             )}
 
-                            {apt.status === 'Checked In' && (
-                              <div className="flex items-center gap-1.5">
-                                {isNurseOrAdmin && (
-                                  <Button
-                                    variant="outline"
-                                    size="xs"
-                                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-medium"
-                                    onClick={() => handleOpenNurseIntake(apt)}
-                                  >
-                                    <HeartPulse className="w-3.5 h-3.5 mr-1 text-emerald-600" />
-                                    Clinical Intake
-                                  </Button>
-                                )}
-                                <Button
-                                  variant="primary"
-                                  size="xs"
-                                  onClick={() => navigate(`/hospital/consultation/${apt.id}`)}
-                                >
-                                  Start Consultation
-                                </Button>
-                              </div>
-                            )}
+                            {apt.status === 'Checked In' && (() => {
+                              const patForApt = patients.find((p) => p.id === apt.patientId);
+                              const hospSettings = MockStorage.getHospitalSettings(hospId);
+                              const isVitalsTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+                              const hasTriageVitals = Boolean(
+                                patForApt?.vitals?.bloodPressure ||
+                                patForApt?.vitals?.heartRate ||
+                                patForApt?.vitals?.temperature ||
+                                patForApt?.vitals?.oxygenLevel
+                              );
+                              const isTriagePending = isVitalsTriageMandatory && !hasTriageVitals;
+
+                              return (
+                                <div className="flex items-center gap-1.5">
+                                  {isNurseOrAdmin && (
+                                    <Button
+                                      variant="outline"
+                                      size="xs"
+                                      className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 font-medium"
+                                      onClick={() => handleOpenNurseIntake(apt)}
+                                    >
+                                      <HeartPulse className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                                      {hasTriageVitals ? 'Update Vitals' : 'Clinical Intake'}
+                                    </Button>
+                                  )}
+
+                                  {isTriagePending ? (
+                                    <Button
+                                      variant="outline"
+                                      size="xs"
+                                      className="border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 font-bold"
+                                      onClick={() => {
+                                        showToast(
+                                          'Nursing Vitals Triage Required',
+                                          `Hospital policy requires nurse clinical intake before Dr. ${apt.doctorName} can start consultation.`,
+                                          'error'
+                                        );
+                                      }}
+                                      title="Doctor consultation locked until nurse completes clinical intake"
+                                    >
+                                      <Lock className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                                      Vitals Pending
+                                    </Button>
+                                  ) : (
+                                    <Button
+                                      variant="primary"
+                                      size="xs"
+                                      onClick={() => navigate(`/hospital/consultation/${apt.id}`)}
+                                    >
+                                      Start Consultation
+                                    </Button>
+                                  )}
+                                </div>
+                              );
+                            })()}
 
                             {apt.status === 'In Consultation' && (
                               <Button
@@ -1692,7 +1978,10 @@ export const AppointmentManagement: React.FC = () => {
                                 variant="ghost"
                                 size="xs"
                                 className="text-rose-600 hover:bg-rose-50"
-                                onClick={() => handleStatusUpdate(apt.id, 'Cancelled')}
+                                onClick={() => {
+                                  setAppointmentToCancel(apt);
+                                  setCancellationReasonInput('Patient requested cancellation');
+                                }}
                               >
                                 Cancel
                               </Button>
@@ -2351,14 +2640,16 @@ export const AppointmentManagement: React.FC = () => {
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
                   To configure consultation schedules, working hours, and chamber associations, please onboard a doctor first.
                 </p>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => navigate('/hospital/doctors')}
-                  leftIcon={<Plus className="w-3.5 h-3.5" />}
-                >
-                  Onboard Medical Specialist
-                </Button>
+                {isHospitalAdmin && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => navigate('/hospital/doctors')}
+                    leftIcon={<Plus className="w-3.5 h-3.5" />}
+                  >
+                    Onboard Medical Specialist
+                  </Button>
+                )}
               </div>
             )}
 
@@ -2403,22 +2694,30 @@ export const AppointmentManagement: React.FC = () => {
                         >
                           View All Schedules
                         </Button>
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={handleEditSchedule}
-                          leftIcon={<Edit className="w-3.5 h-3.5" />}
-                        >
-                          Edit Schedule
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => handleDeleteSchedule(savedSchedule.id, savedSchedule.doctorName)}
-                          leftIcon={<Trash2 className="w-3.5 h-3.5" />}
-                        >
-                          Delete Schedule
-                        </Button>
+                        {isHospitalAdmin ? (
+                          <>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={handleEditSchedule}
+                              leftIcon={<Edit className="w-3.5 h-3.5" />}
+                            >
+                              Edit Schedule
+                            </Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => handleDeleteSchedule(savedSchedule.id, savedSchedule.doctorName)}
+                              leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+                            >
+                              Delete Schedule
+                            </Button>
+                          </>
+                        ) : (
+                          <Badge variant="warning" size="sm" dot>
+                            View Only (Admin Required)
+                          </Badge>
+                        )}
                       </div>
                     </div>
 
@@ -2475,11 +2774,10 @@ export const AppointmentManagement: React.FC = () => {
                             return (
                               <span
                                 key={day}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${
-                                  isWorking
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${isWorking
                                     ? 'bg-indigo-600 text-white shadow-xs'
                                     : 'bg-slate-100 text-slate-400 border border-slate-200 line-through'
-                                }`}
+                                  }`}
                               >
                                 {isWorking && <Check className="w-3 h-3" />}
                                 {day}
@@ -2670,11 +2968,10 @@ export const AppointmentManagement: React.FC = () => {
                               type="button"
                               onClick={() => isHospitalAdmin && handleToggleDay(day)}
                               disabled={!isHospitalAdmin}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                                isSelected
+                              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${isSelected
                                   ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-100'
                                   : 'bg-white border border-slate-300 text-slate-600 hover:border-slate-400'
-                              } ${!isHospitalAdmin ? 'opacity-70 cursor-not-allowed' : ''}`}
+                                } ${!isHospitalAdmin ? 'opacity-70 cursor-not-allowed' : ''}`}
                             >
                               {isSelected && <Check className="w-3 h-3" />}
                               {day}
@@ -2847,15 +3144,21 @@ export const AppointmentManagement: React.FC = () => {
                           </>
                         ) : null}
                       </div>
-                      <Button
-                        type="submit"
-                        variant="primary"
-                        size="sm"
-                        disabled={isSavingSchedule}
-                        leftIcon={isSavingSchedule ? undefined : <CheckCircle2 className="w-4 h-4" />}
-                      >
-                        {isSavingSchedule ? 'Saving Schedule...' : 'Save Specialist Consultation Schedule'}
-                      </Button>
+                      {isHospitalAdmin ? (
+                        <Button
+                          type="submit"
+                          variant="primary"
+                          size="sm"
+                          disabled={isSavingSchedule}
+                          leftIcon={isSavingSchedule ? undefined : <CheckCircle2 className="w-4 h-4" />}
+                        >
+                          {isSavingSchedule ? 'Saving Schedule...' : 'Save Specialist Consultation Schedule'}
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-amber-700 font-semibold bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
+                          View Only: Hospital Admin privileges required to save schedules.
+                        </span>
+                      )}
                     </div>
                   </form>
                 );
@@ -3026,10 +3329,10 @@ export const AppointmentManagement: React.FC = () => {
               <div className="p-5 rounded-xl bg-slate-50/80 border border-slate-200 space-y-4">
                 <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5 uppercase tracking-wider">
                   <Clock className="w-4 h-4 text-indigo-600" />
-                  Deadlines & Buffer Management
+                  Cancellation & Rescheduling Deadlines
                 </h4>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <Input
                     label="Cancellation Cutoff (Hours Before)"
                     type="number"
@@ -3045,6 +3348,20 @@ export const AppointmentManagement: React.FC = () => {
                   />
 
                   <Input
+                    label="Late Cancellation Penalty (%)"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={settingsForm.cancellationPenaltyPercent ?? 50}
+                    onChange={(e) =>
+                      setSettingsForm({ ...settingsForm, cancellationPenaltyPercent: Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) })
+                    }
+                    helperText="Fee percentage deducted on cancellation within cutoff window."
+                    disabled={!isHospitalAdmin}
+                  />
+
+                  <Input
                     label="Rescheduling Cutoff (Hours Before)"
                     type="number"
                     min="0"
@@ -3053,24 +3370,24 @@ export const AppointmentManagement: React.FC = () => {
                     onChange={(e) =>
                       setSettingsForm({ ...settingsForm, reschedulingDeadlineHours: parseInt(e.target.value, 10) || 4 })
                     }
-                    helperText="Cutoff window for shifting to a new slot."
+                    helperText="Minimum notice required to reschedule without penalty."
                     disabled={!isHospitalAdmin}
                     required
                   />
 
-                  <Select
-                    label="Inter-Appointment Buffer Time"
-                    value={String(settingsForm.appointmentBufferMinutes)}
+                  <Input
+                    label="Late Rescheduling Penalty (%)"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={settingsForm.reschedulingPenaltyPercent ?? 50}
                     onChange={(e) =>
-                      setSettingsForm({ ...settingsForm, appointmentBufferMinutes: parseInt(e.target.value, 10) || 5 })
+                      setSettingsForm({ ...settingsForm, reschedulingPenaltyPercent: Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) })
                     }
+                    helperText="Fee percentage charged when shifting slot within cutoff window."
                     disabled={!isHospitalAdmin}
-                  >
-                    <option value="0">0 Minutes (Back-to-back)</option>
-                    <option value="5">5 Minutes (Sanitization & Handover)</option>
-                    <option value="10">10 Minutes (Standard buffer)</option>
-                    <option value="15">15 Minutes (Extended buffer)</option>
-                  </Select>
+                  />
                 </div>
               </div>
 
@@ -3314,23 +3631,22 @@ export const AppointmentManagement: React.FC = () => {
                         disabled={!isAvailable}
                         onClick={() => setFormData({ ...formData, appointmentTime: slot.time })}
                         title={slot.reason || slot.time}
-                        className={`py-1.5 px-2 rounded-lg text-xs font-semibold transition-all text-center relative ${
-                          isSelected
+                        className={`py-1.5 px-2 rounded-lg text-xs font-semibold transition-all text-center relative ${isSelected
                             ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-300'
                             : isAvailable
-                            ? 'bg-white border border-slate-200 text-slate-800 hover:border-indigo-400 hover:bg-indigo-50/50'
-                            : slot.status === 'passed' || slot.status === 'outside_hours'
-                            ? 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
-                            : slot.status === 'booked_doctor'
-                            ? 'bg-slate-200/90 border border-slate-300 text-slate-600 cursor-not-allowed'
-                            : slot.status === 'occupied_room'
-                            ? 'bg-purple-50 border border-purple-200 text-purple-600 cursor-not-allowed'
-                            : slot.status === 'break'
-                            ? 'bg-amber-50/80 border border-amber-200 text-amber-700/80 cursor-not-allowed line-through'
-                            : slot.status === 'leave'
-                            ? 'bg-rose-50 border border-rose-200 text-rose-600/80 cursor-not-allowed line-through'
-                            : 'bg-orange-50 border border-orange-200 text-orange-600 cursor-not-allowed'
-                        }`}
+                              ? 'bg-white border border-slate-200 text-slate-800 hover:border-indigo-400 hover:bg-indigo-50/50'
+                              : slot.status === 'passed' || slot.status === 'outside_hours'
+                                ? 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
+                                : slot.status === 'booked_doctor'
+                                  ? 'bg-slate-200/90 border border-slate-300 text-slate-600 cursor-not-allowed'
+                                  : slot.status === 'occupied_room'
+                                    ? 'bg-purple-50 border border-purple-200 text-purple-600 cursor-not-allowed'
+                                    : slot.status === 'break'
+                                      ? 'bg-amber-50/80 border border-amber-200 text-amber-700/80 cursor-not-allowed line-through'
+                                      : slot.status === 'leave'
+                                        ? 'bg-rose-50 border border-rose-200 text-rose-600/80 cursor-not-allowed line-through'
+                                        : 'bg-orange-50 border border-orange-200 text-orange-600 cursor-not-allowed'
+                          }`}
                       >
                         {slot.time}
                         {slot.crossesMidnight && slot.endTimeDisplay && (
@@ -3343,14 +3659,14 @@ export const AppointmentManagement: React.FC = () => {
                             {slot.status === 'passed' || slot.status === 'outside_hours'
                               ? 'Passed'
                               : slot.status === 'booked_doctor'
-                              ? 'Doctor Booked'
-                              : slot.status === 'occupied_room'
-                              ? 'Chamber Occupied'
-                              : slot.status === 'break'
-                              ? 'Scheduled Break'
-                              : slot.status === 'leave'
-                              ? 'Specialist Leave'
-                              : 'Notice Required'}
+                                ? 'Doctor Booked'
+                                : slot.status === 'occupied_room'
+                                  ? 'Chamber Occupied'
+                                  : slot.status === 'break'
+                                    ? 'Scheduled Break'
+                                    : slot.status === 'leave'
+                                      ? 'Specialist Leave'
+                                      : 'Notice Required'}
                           </span>
                         )}
                       </button>
@@ -3415,18 +3731,32 @@ export const AppointmentManagement: React.FC = () => {
             placeholder="Pre-visit preparation notes"
           />
 
-          <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-            <span className="text-xs font-semibold text-slate-600">
-              Consultation Fee:{' '}
-              <span className="text-sm font-bold text-emerald-600">₹{formData.fee}</span>
-            </span>
+          <div className="flex items-center justify-between pt-3 border-t border-slate-100 flex-wrap gap-2">
+            <div className="flex flex-col">
+              <span className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+                Consultation Fee:
+                {followUpFeeCalculation.isFree ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-slate-400 line-through">₹{formData.fee}</span>
+                    <span className="text-sm font-black text-emerald-600">₹0 (Free Follow-Up)</span>
+                  </span>
+                ) : (
+                  <span className="text-sm font-bold text-emerald-600">₹{followUpFeeCalculation.effectiveFee}</span>
+                )}
+              </span>
+              {followUpFeeCalculation.isFollowUp && (
+                <span className={`text-[10px] font-bold mt-0.5 ${followUpFeeCalculation.isFree ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {followUpFeeCalculation.message}
+                </span>
+              )}
+            </div>
 
             <div className="flex items-center gap-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setIsBookModalOpen(false)}>
                 Cancel
               </Button>
               <Button type="submit" variant="primary" size="sm">
-                Confirm Booking (₹{formData.fee})
+                Confirm Booking (₹{followUpFeeCalculation.effectiveFee})
               </Button>
             </div>
           </div>
@@ -3581,6 +3911,76 @@ export const AppointmentManagement: React.FC = () => {
               </div>
             </div>
 
+            {selectedAppointment.status === 'Cancelled' && (
+              <div className="p-3 rounded-xl bg-rose-50/70 border border-rose-200 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-rose-950 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                    Cancellation & Penalty Audit
+                  </span>
+                  <span className="text-[10px] text-rose-700 font-mono">
+                    {selectedAppointment.cancelledAt ? new Date(selectedAppointment.cancelledAt).toLocaleString('en-IN') : ''}
+                  </span>
+                </div>
+                <p className="text-slate-700">
+                  <span className="font-semibold text-slate-900">Reason:</span> {selectedAppointment.cancellationReason || 'Cancelled by patient/receptionist'}
+                </p>
+                {selectedAppointment.cancellationPenalty && selectedAppointment.cancellationPenalty > 0 ? (
+                  <div className="p-2.5 rounded-lg bg-white border border-rose-200 flex items-center justify-between">
+                    <div>
+                      <span className="text-slate-600 text-[11px] block">Late Cancellation Penalty</span>
+                      <span className="text-sm font-bold text-rose-700">₹{selectedAppointment.cancellationPenalty}</span>
+                    </div>
+                    <Badge variant={selectedAppointment.cancellationPenaltyCollected ? 'success' : 'warning'}>
+                      {selectedAppointment.cancellationPenaltyCollected
+                        ? `Collected (${selectedAppointment.cancellationCollectedInvoiceId || 'Paid'})`
+                        : 'Pending Cashier Collection'}
+                    </Badge>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-emerald-700 font-medium">
+                    ✅ Cancelled within penalty-free cutoff window. Zero penalty charged.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {selectedAppointment.rescheduledFromDate && (
+              <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-amber-950 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-600" />
+                    Rescheduling & Penalty Audit
+                  </span>
+                  <span className="text-[10px] text-amber-800 font-mono">
+                    From {selectedAppointment.rescheduledFromDate} ({selectedAppointment.rescheduledFromTime || ''})
+                  </span>
+                </div>
+                {selectedAppointment.rescheduleReason && (
+                  <p className="text-slate-700">
+                    <span className="font-semibold text-slate-900">Reason:</span> {selectedAppointment.rescheduleReason}
+                  </p>
+                )}
+                {selectedAppointment.reschedulingPenalty && selectedAppointment.reschedulingPenalty > 0 ? (
+                  <div className="p-2.5 rounded-lg bg-white border border-amber-300 flex items-center justify-between">
+                    <div>
+                      <span className="text-slate-600 text-[11px] block">Late Rescheduling Penalty</span>
+                      <span className="text-sm font-bold text-rose-700">₹{selectedAppointment.reschedulingPenalty}</span>
+                    </div>
+                    <Badge variant={selectedAppointment.reschedulingPenaltyCollected ? 'success' : 'warning'}>
+                      {selectedAppointment.reschedulingPenaltyCollected
+                        ? `Collected (${selectedAppointment.reschedulingCollectedInvoiceId || 'Paid'})`
+                        : 'Pending Cashier Collection'}
+                    </Badge>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-emerald-700 font-medium">
+                    ✅ Rescheduled within penalty-free cutoff window. Zero penalty charged.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="space-y-1">
               <span className="text-slate-500 font-semibold">Chief Complaint / Reason:</span>
               <p className="p-2.5 rounded-lg bg-white border border-slate-200 text-slate-800">
@@ -3597,7 +3997,22 @@ export const AppointmentManagement: React.FC = () => {
               </div>
             )}
 
-            <div className="pt-2 flex justify-end">
+            <div className="pt-2 flex justify-between items-center">
+              {selectedAppointment.status !== 'Completed' && selectedAppointment.status !== 'Cancelled' ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-rose-600 border-rose-200 hover:bg-rose-50"
+                  onClick={() => {
+                    const apt = selectedAppointment;
+                    setIsDetailModalOpen(false);
+                    setAppointmentToCancel(apt);
+                    setCancellationReasonInput('Patient requested cancellation');
+                  }}
+                >
+                  Cancel Appointment
+                </Button>
+              ) : <div />}
               <Button variant="outline" size="sm" onClick={() => setIsDetailModalOpen(false)}>
                 Close
               </Button>
@@ -3760,6 +4175,153 @@ export const AppointmentManagement: React.FC = () => {
         </div>
       </Modal>
 
+      {/* Appointment Cancellation Confirmation Modal with Real-time Cutoff & Penalty Intimation */}
+      <Modal
+        isOpen={!!appointmentToCancel}
+        onClose={() => setAppointmentToCancel(null)}
+        title={
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-rose-600" />
+            <span>Confirm Appointment Cancellation</span>
+          </div>
+        }
+        subtitle={appointmentToCancel ? `Appointment #${appointmentToCancel.id} — ${appointmentToCancel.patientName}` : undefined}
+      >
+        {appointmentToCancel && cancellationInfo && (
+          <div className="space-y-4">
+            {/* Cutoff & Penalty Intimation Warning Banner */}
+            {cancellationInfo.isCutoffExceeded ? (
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-2">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1.5 flex-1">
+                    <p className="font-bold text-amber-950 text-sm">
+                      ⚠️ Cutoff Exceeded — Late Cancellation Penalty Applies
+                    </p>
+                    <p>
+                      This appointment is scheduled in{' '}
+                      <span className="font-bold">
+                        {cancellationInfo.hoursRemaining <= 0
+                          ? 'the past / starting immediately'
+                          : `${cancellationInfo.hoursRemaining.toFixed(1)} hours`}
+                      </span>
+                      , which has exceeded the hospital&apos;s penalty-free cutoff window of{' '}
+                      <span className="font-bold">{cancellationInfo.cutoffHours} hours</span>.
+                    </p>
+                    <div className="p-2.5 rounded-lg bg-white/90 border border-amber-300 font-medium text-amber-900 space-y-1 mt-1">
+                      <div className="flex justify-between items-center">
+                        <span>Doctor Consultation Fee:</span>
+                        <span className="font-semibold text-slate-900">₹{cancellationInfo.aptFee}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span>Configured Penalty Rate:</span>
+                        <span className="font-semibold text-amber-800">{cancellationInfo.penaltyPercent}%</span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm font-bold text-rose-700 pt-1 border-t border-amber-200">
+                        <span>Calculated Penalty Amount:</span>
+                        <span>₹{cancellationInfo.penalty}</span>
+                      </div>
+                      <p className="text-[11px] text-amber-800 pt-1 border-t border-amber-100">
+                        📍 <strong>Where is it collected?</strong> It is automatically recorded to{' '}
+                        <strong>{appointmentToCancel.patientName}</strong>&apos;s record and will be collected by the{' '}
+                        <strong>Accountant at the Billing Counter</strong> on their next hospital visit.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 space-y-2">
+                <div className="flex items-start gap-2.5">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1 flex-1">
+                    <p className="font-bold text-emerald-950 text-sm">
+                      ✓ Penalty-Free Cancellation Window
+                    </p>
+                    <p>
+                      This appointment is scheduled in{' '}
+                      <span className="font-bold">{cancellationInfo.hoursRemaining.toFixed(1)} hours</span> (greater than the{' '}
+                      {cancellationInfo.cutoffHours}-hour cutoff window).
+                    </p>
+                    <p className="text-emerald-800 font-medium">
+                      Cancelling this appointment will <strong>NOT</strong> incur any penalty. Zero penalty will be charged to the patient.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Appointment Consultation Summary */}
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Patient:</span>
+                <span className="font-semibold text-slate-800">
+                  {appointmentToCancel.patientName} ({appointmentToCancel.patientId})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Physician:</span>
+                <span className="font-semibold text-slate-800">
+                  {appointmentToCancel.doctorName} ({appointmentToCancel.doctorSpecialization})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Scheduled Date & Time:</span>
+                <span className="font-semibold text-indigo-700">
+                  {appointmentToCancel.appointmentDate} at {appointmentToCancel.appointmentTime}
+                </span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-200">
+                <span className="font-medium text-slate-700">Penalty Charge:</span>
+                <span
+                  className={`font-bold ${
+                    cancellationInfo.penalty > 0 ? 'text-rose-600' : 'text-emerald-700'
+                  }`}
+                >
+                  {cancellationInfo.penalty > 0
+                    ? `₹${cancellationInfo.penalty} (${cancellationInfo.penaltyPercent}% penalty)`
+                    : '₹0 (Zero Penalty)'}
+                </span>
+              </div>
+            </div>
+
+            {/* Cancellation Reason Input */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-700">
+                Cancellation Reason:
+              </label>
+              <input
+                type="text"
+                className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-rose-500 bg-white"
+                value={cancellationReasonInput}
+                onChange={(e) => setCancellationReasonInput(e.target.value)}
+                placeholder="e.g. Patient requested cancellation / Scheduling conflict"
+              />
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setAppointmentToCancel(null)}
+              >
+                Keep Appointment
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={handleConfirmCancelAppointment}
+              >
+                {cancellationInfo.penalty > 0
+                  ? `Confirm Cancellation (Apply ₹${cancellationInfo.penalty} Penalty)`
+                  : 'Confirm Cancellation (Zero Penalty)'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* Nurse Clinical Vitals & Medical History Intake Modal (Post Check-In) */}
       <Modal
         isOpen={isNurseIntakeModalOpen}
@@ -3892,6 +4454,42 @@ export const AppointmentManagement: React.FC = () => {
                   </span>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Cutoff & Penalty Intimation Warning Banner for Rescheduling */}
+          {rescheduleInfo?.isCutoffExceeded ? (
+            <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl space-y-2">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-amber-950 text-xs">
+                    ⚠️ Rescheduling Cutoff Exceeded — Late Rescheduling Penalty Applies
+                  </p>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    This consultation is scheduled in{' '}
+                    <strong>{rescheduleInfo.hoursRemaining > 0 ? `${rescheduleInfo.hoursRemaining.toFixed(1)} hours` : 'the past / today'}</strong>, which is within the hospital's minimum notice cutoff of{' '}
+                    <strong>{rescheduleInfo.cutoffHours} hours</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white/80 rounded-lg p-2.5 border border-amber-200/80 flex items-center justify-between font-mono text-[11px]">
+                <span className="text-slate-600">Consultation Fee: ₹{rescheduleInfo.aptFee}</span>
+                <span className="font-bold text-rose-700">
+                  Late Penalty ({rescheduleInfo.penaltyPercent}%): ₹{rescheduleInfo.penalty}
+                </span>
+              </div>
+              <p className="text-[10px] text-amber-700 italic">
+                Notice: Shifting this appointment will record a penalty of ₹{rescheduleInfo.penalty} to the patient's billing record for cashier collection at their next visit.
+              </p>
+            </div>
+          ) : (
+            <div className="p-2.5 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center gap-2 text-[11px] text-emerald-800">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>
+                Penalty-Free Rescheduling: Initiated &gt; {rescheduleInfo?.cutoffHours || 4} hours in advance of the original slot. Zero penalty charged.
+              </span>
             </div>
           )}
 
@@ -4049,23 +4647,22 @@ export const AppointmentManagement: React.FC = () => {
                         disabled={!isAvailable}
                         onClick={() => setRescheduleForm({ ...rescheduleForm, newTime: slot.time })}
                         title={slot.reason || slot.time}
-                        className={`py-1.5 px-2 rounded-lg text-xs font-semibold transition-all text-center relative ${
-                          isSelected
+                        className={`py-1.5 px-2 rounded-lg text-xs font-semibold transition-all text-center relative ${isSelected
                             ? 'bg-teal-600 text-white shadow-sm ring-2 ring-teal-300'
                             : isAvailable
-                            ? 'bg-white border border-slate-200 text-slate-800 hover:border-teal-400 hover:bg-teal-50/50'
-                            : slot.status === 'passed' || slot.status === 'outside_hours'
-                            ? 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
-                            : slot.status === 'booked_doctor'
-                            ? 'bg-slate-200/90 border border-slate-300 text-slate-600 cursor-not-allowed'
-                            : slot.status === 'occupied_room'
-                            ? 'bg-purple-50 border border-purple-200 text-purple-600 cursor-not-allowed'
-                            : slot.status === 'break'
-                            ? 'bg-amber-50/80 border border-amber-200 text-amber-700/80 cursor-not-allowed line-through'
-                            : slot.status === 'leave'
-                            ? 'bg-rose-50 border border-rose-200 text-rose-600/80 cursor-not-allowed line-through'
-                            : 'bg-orange-50 border border-orange-200 text-orange-600 cursor-not-allowed'
-                        }`}
+                              ? 'bg-white border border-slate-200 text-slate-800 hover:border-teal-400 hover:bg-teal-50/50'
+                              : slot.status === 'passed' || slot.status === 'outside_hours'
+                                ? 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'
+                                : slot.status === 'booked_doctor'
+                                  ? 'bg-slate-200/90 border border-slate-300 text-slate-600 cursor-not-allowed'
+                                  : slot.status === 'occupied_room'
+                                    ? 'bg-purple-50 border border-purple-200 text-purple-600 cursor-not-allowed'
+                                    : slot.status === 'break'
+                                      ? 'bg-amber-50/80 border border-amber-200 text-amber-700/80 cursor-not-allowed line-through'
+                                      : slot.status === 'leave'
+                                        ? 'bg-rose-50 border border-rose-200 text-rose-600/80 cursor-not-allowed line-through'
+                                        : 'bg-orange-50 border border-orange-200 text-orange-600 cursor-not-allowed'
+                          }`}
                       >
                         {slot.time}
                         {slot.crossesMidnight && slot.endTimeDisplay && (
@@ -4078,14 +4675,14 @@ export const AppointmentManagement: React.FC = () => {
                             {slot.status === 'passed' || slot.status === 'outside_hours'
                               ? 'Passed'
                               : slot.status === 'booked_doctor'
-                              ? 'Doctor Booked'
-                              : slot.status === 'occupied_room'
-                              ? 'Chamber Occupied'
-                              : slot.status === 'break'
-                              ? 'Scheduled Break'
-                              : slot.status === 'leave'
-                              ? 'Specialist Leave'
-                              : 'Notice Required'}
+                                ? 'Doctor Booked'
+                                : slot.status === 'occupied_room'
+                                  ? 'Chamber Occupied'
+                                  : slot.status === 'break'
+                                    ? 'Scheduled Break'
+                                    : slot.status === 'leave'
+                                      ? 'Specialist Leave'
+                                      : 'Notice Required'}
                           </span>
                         )}
                       </button>
@@ -4228,7 +4825,7 @@ export const AppointmentManagement: React.FC = () => {
                 rows={3}
                 value={declineNoteText}
                 onChange={(e) => setDeclineNoteText(e.target.value)}
-                placeholder="e.g. Dr. Sarah Jenkins is fully booked on this date. Next available slot is tomorrow at 10:00 AM, or Dr. Michael Chang is available today at 2:00 PM."
+                placeholder="e.g. Dr. Praveen is fully booked on this date. Next available slot is tomorrow at 10:00 AM, or Dr. Michael Chang is available today at 2:00 PM."
                 required
               />
             </div>

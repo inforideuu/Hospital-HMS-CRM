@@ -231,7 +231,7 @@ export const WebsiteBuilder: React.FC = () => {
   const [website, setWebsite] = useState<HospitalWebsite | null>(null);
   const [sections, setSections] = useState<WebsiteSection[]>([]);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'sections' | 'template' | 'theme' | 'branding'>('sections');
+  const [activeTab, setActiveTab] = useState<'sections' | 'theme' | 'branding'>('sections');
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
   const [isCompressingLogo, setIsCompressingLogo] = useState(false);
 
@@ -476,7 +476,8 @@ export const WebsiteBuilder: React.FC = () => {
     if (!website) return;
     const updatedWeb: HospitalWebsite = {
       ...website,
-      status: 'draft',
+      status: website.published ? 'published' : 'draft',
+      published: website.published || false,
       updatedAt: new Date().toISOString(),
       draftConfig: {
         templateId: website.templateId,
@@ -494,7 +495,7 @@ export const WebsiteBuilder: React.FC = () => {
     MockStorage.saveWebsite(updatedWeb);
     MockStorage.saveWebsiteSections(website.hospitalId, sections);
     setWebsite(updatedWeb);
-    showToast('Draft Saved', 'Website changes saved as draft. Public visitors will see the published version until you click Publish.', 'info');
+    showToast('Draft Saved', 'Website changes saved as draft successfully. You can safely reload or continue editing.', 'success');
   };
 
   const handlePublish = () => {
@@ -600,34 +601,26 @@ export const WebsiteBuilder: React.FC = () => {
       <div className="flex-1 flex overflow-hidden">
         {/* LEFT COLUMN: Sections & Controls */}
         <aside className="w-80 bg-slate-950 border-r border-slate-800 flex flex-col shrink-0">
-          <div className="flex border-b border-slate-800 text-xs font-semibold text-slate-400 overflow-x-auto">
+          <div className="flex border-b border-slate-800 text-xs font-semibold text-slate-400">
             <button
               onClick={() => setActiveTab('sections')}
-              className={`flex-1 py-3 text-center border-b-2 transition-colors whitespace-nowrap px-2 ${
+              className={`flex-1 py-3 text-center border-b-2 transition-colors whitespace-nowrap px-3 ${
                 activeTab === 'sections' ? 'border-teal-500 text-teal-400 font-bold bg-slate-900/50' : 'border-transparent hover:text-slate-200'
               }`}
             >
               Sections
             </button>
             <button
-              onClick={() => setActiveTab('template')}
-              className={`flex-1 py-3 text-center border-b-2 transition-colors whitespace-nowrap px-2 ${
-                activeTab === 'template' ? 'border-teal-500 text-teal-400 font-bold bg-slate-900/50' : 'border-transparent hover:text-slate-200'
-              }`}
-            >
-              Templates
-            </button>
-            <button
               onClick={() => setActiveTab('theme')}
-              className={`flex-1 py-3 text-center border-b-2 transition-colors whitespace-nowrap px-2 ${
+              className={`flex-1 py-3 text-center border-b-2 transition-colors whitespace-nowrap px-3 ${
                 activeTab === 'theme' ? 'border-teal-500 text-teal-400 font-bold bg-slate-900/50' : 'border-transparent hover:text-slate-200'
               }`}
             >
-              Theme
+              Theme & Palette
             </button>
             <button
               onClick={() => setActiveTab('branding')}
-              className={`flex-1 py-3 text-center border-b-2 transition-colors whitespace-nowrap px-2 ${
+              className={`flex-1 py-3 text-center border-b-2 transition-colors whitespace-nowrap px-3 ${
                 activeTab === 'branding' ? 'border-teal-500 text-teal-400 font-bold bg-slate-900/50' : 'border-transparent hover:text-slate-200'
               }`}
             >
@@ -642,9 +635,7 @@ export const WebsiteBuilder: React.FC = () => {
                   <span>Page Layout Order</span>
                   <span>{sections.filter((s) => s.isEnabled).length} Enabled</span>
                 </div>
-                {sections
-                  .filter((sec) => sec.sectionType !== 'testimonials')
-                  .map((sec, idx) => (
+                {sections.map((sec, idx) => (
                   <div
                     key={sec.id}
                     onClick={() => setActiveSectionId(sec.id)}
@@ -714,51 +705,102 @@ export const WebsiteBuilder: React.FC = () => {
               </div>
             )}
 
-            {activeTab === 'template' && (
-              <div className="space-y-4">
-                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Select Design Template</div>
-                {[
-                  { id: 'premium-healthcare', name: 'Premium Healthcare', desc: 'Sleek white marble, teal accents, and modern clinical card layouts.' },
-                  { id: 'modern-hospital', name: 'Modern Hospital', desc: 'Bold navy typography, broad hero banners, and active emergency stats.' },
-                  { id: 'luxury-medical', name: 'Luxury Medical Center', desc: 'Minimalist luxury spacing with high-contrast specialist rosters.' },
-                ].map((tpl) => (
-                  <div
-                    key={tpl.id}
-                    onClick={() => setWebsite({ ...website, templateId: tpl.id as WebsiteTemplateId })}
-                    className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                      website.templateId === tpl.id
-                        ? 'bg-teal-950/60 border-teal-500 text-white shadow-lg'
-                        : 'bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-bold text-xs text-white">{tpl.name}</h4>
-                      {website.templateId === tpl.id && <Badge variant="success" size="sm">Active</Badge>}
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">{tpl.desc}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-
             {activeTab === 'theme' && (
               <div className="space-y-4 text-xs">
                 <div>
-                  <label className="block text-slate-400 font-semibold mb-1">Theme Palette</label>
-                  <select
-                    value={website.theme || 'Modern Teal'}
-                    onChange={(e) => setWebsite({ ...website, theme: e.target.value as any })}
-                    className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-none cursor-pointer"
-                  >
-                    <option value="Modern Teal" className="bg-slate-900 text-white font-medium">Modern Teal (Vibrant Teal & Dark Slate)</option>
-                    <option value="Deep Ocean" className="bg-slate-900 text-white font-medium">Deep Ocean (Midnight Navy & Indigo)</option>
-                    <option value="Healthcare Classic" className="bg-slate-900 text-white font-medium">Healthcare Classic (Clinical Blue & Soft Ice)</option>
-                    <option value="Clean Minimal" className="bg-slate-900 text-white font-medium">Clean Minimal (Luxury Emerald & Warm Cream)</option>
-                  </select>
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                    Select Luxury Theme Palette
+                  </div>
+                  <div className="space-y-3">
+                    {[
+                      {
+                        id: 'Swiss Royal Sapphire',
+                        name: 'Swiss Royal Sapphire',
+                        tagline: 'Prestige Clinical & Platinum Azure',
+                        desc: 'Prestigious Swiss private hospital aesthetic with pure white marble cards, deep imperial sapphire titles, and platinum accents.',
+                        primary: '#2563eb',
+                        accent: '#0c2340',
+                        canvas: '#f8fafc',
+                        badge: 'Swiss Private Clinic',
+                      },
+                      {
+                        id: 'Nordic Mint & Jade',
+                        name: 'Nordic Mint & Jade',
+                        tagline: 'Biotech Wellness & Scandinavian Calm',
+                        desc: 'Calming Scandinavian healing retreat with soothing sage/mint hues, pure emerald badges, and high-readability charcoal typography.',
+                        primary: '#059669',
+                        accent: '#064e3b',
+                        canvas: '#f0fdf4',
+                        badge: 'Scandinavian Healing',
+                      },
+                      {
+                        id: 'Midnight Obsidian Luxe',
+                        name: 'Midnight Obsidian Luxe',
+                        tagline: 'Elite Concierge & Champagne Gold',
+                        desc: 'VIP private hospital concierge aesthetic with glowing champagne gold borders, radiant warm yellow badges, and clean light porcelain canvas.',
+                        primary: '#f59e0b',
+                        accent: '#78350f',
+                        canvas: '#fffdf5',
+                        badge: 'VIP Concierge Gold',
+                      },
+                      {
+                        id: 'Amethyst Orchid Elegance',
+                        name: 'Amethyst Orchid Elegance',
+                        tagline: 'Creative Modern Specialist & Serenity',
+                        desc: 'Modern maternal, oncology, and specialty clinic with majestic royal amethyst headings, vibrant orchid badges, and clean white cards.',
+                        primary: '#7c3aed',
+                        accent: '#4c1d95',
+                        canvas: '#faf5ff',
+                        badge: 'Creative Specialist Care',
+                      },
+                      {
+                        id: 'Monaco Crimson & Rose',
+                        name: 'Monaco Crimson & Rose',
+                        tagline: 'High-Velocity Cardiac & Emergency Vitality',
+                        desc: 'High-velocity cardiac life-support and emergency care. Features clean pure white cards, rich ruby titles, and zero contrast issues.',
+                        primary: '#dc2626',
+                        accent: '#991b1b',
+                        canvas: '#fff5f5',
+                        badge: 'Emergency Vitality',
+                      },
+                    ].map((th) => {
+                      const isSelected = (website.theme || 'Swiss Royal Sapphire') === th.id;
+                      return (
+                        <div
+                          key={th.id}
+                          onClick={() => setWebsite({ ...website, theme: th.id, primaryColor: th.primary })}
+                          className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                            isSelected
+                              ? 'bg-slate-900 border-teal-500 shadow-md ring-1 ring-teal-500/50'
+                              : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0"
+                                style={{ backgroundColor: th.primary }}
+                              />
+                              <span
+                                className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0"
+                                style={{ backgroundColor: th.accent }}
+                              />
+                              <h4 className="font-bold text-xs text-white">{th.name}</h4>
+                            </div>
+                            {isSelected && <Badge variant="success" size="sm">Active</Badge>}
+                          </div>
+                          <span className="text-[10px] font-semibold text-teal-400 block mb-1">
+                            {th.tagline}
+                          </span>
+                          <p className="text-[11px] text-slate-400 leading-relaxed">{th.desc}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-slate-400 font-semibold mb-1">Primary Color Hex</label>
+                <div className="pt-2 border-t border-slate-800">
+                  <label className="block text-slate-400 font-semibold mb-1">Primary Color Hex (Global Brand Accent & Footer)</label>
                   <div className="flex items-center space-x-2">
                     <input
                       type="color"
@@ -773,6 +815,9 @@ export const WebsiteBuilder: React.FC = () => {
                       className="flex-1 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded text-white text-xs font-mono"
                     />
                   </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Updates the primary brand color applied to the website navbar highlights, action buttons, active pills, and the footer background banner.
+                  </p>
                 </div>
               </div>
             )}
@@ -788,13 +833,125 @@ export const WebsiteBuilder: React.FC = () => {
                     <img
                       src={website.logoUrl || MockStorage.getHospitalById(website.hospitalId)?.logoUrl || 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?w=800&auto=format&fit=crop&q=80'}
                       alt="Logo Preview"
-                      className="w-10 h-10 rounded-lg object-cover border border-slate-700 bg-white p-0.5"
+                      className="h-10 w-auto max-w-[120px] object-contain border border-slate-700 bg-white p-1 rounded-md"
                     />
                     <div className="min-w-0 flex-1">
                       <p className="font-bold text-white text-xs truncate">{website.hospitalName}</p>
-                      <p className="text-[10px] text-teal-400 font-semibold">Live in Navbar & Footer</p>
+                      <p className="text-[10px] text-teal-400 font-semibold">
+                        {website.navbarLogoOnly !== false ? 'Navbar Display: Logo Only' : 'Navbar Display: Logo + Name'}
+                      </p>
                     </div>
                   </div>
+                </div>
+
+                {/* Navbar Branding Style Option */}
+                <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+                  <label className="text-[11px] font-bold text-slate-300 block uppercase tracking-wider">
+                    Navbar Brand Layout
+                  </label>
+                  <p className="text-[10px] text-slate-400">
+                    Choose whether the website navbar shows only the brand logo or includes the hospital name and category tagline.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setWebsite({ ...website, navbarLogoOnly: true })}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        website.navbarLogoOnly !== false
+                          ? 'bg-teal-950/70 border-teal-500 text-white shadow-xs'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <span className="block font-bold text-xs text-white">Logo Only</span>
+                      <span className="block text-[10px] text-teal-400 mt-0.5">
+                        Clean standalone logo on the left (No square border or text)
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWebsite({ ...website, navbarLogoOnly: false })}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        website.navbarLogoOnly === false
+                          ? 'bg-teal-950/70 border-teal-500 text-white shadow-xs'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <span className="block font-bold text-xs text-white">Logo + Name</span>
+                      <span className="block text-[10px] text-slate-400 mt-0.5">
+                        Square photo frame + Hospital title & tagline badge
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Logo Width & Height Customizer */}
+                  {website.navbarLogoOnly !== false && (
+                    <div className="pt-2 border-t border-slate-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-teal-300 uppercase tracking-wider">Logo Dimensions</span>
+                        <button
+                          type="button"
+                          onClick={() => setWebsite({ ...website, navbarLogoHeight: 44, navbarLogoWidth: 0 })}
+                          className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer"
+                        >
+                          Reset Default
+                        </button>
+                      </div>
+
+                      {/* Height Slider & Number Input */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-400">Height:</span>
+                          <span className="font-mono text-teal-400 font-bold">
+                            {website.navbarLogoHeight || 44}px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="24"
+                          max="68"
+                          step="2"
+                          value={website.navbarLogoHeight || 44}
+                          onChange={(e) =>
+                            setWebsite({ ...website, navbarLogoHeight: Number(e.target.value) })
+                          }
+                          className="w-full accent-teal-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg appearance-none"
+                        />
+                        <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+                          <span>24px (Compact)</span>
+                          <span>44px (Standard)</span>
+                          <span>68px (Large)</span>
+                        </div>
+                      </div>
+
+                      {/* Width Customizer: Auto or Custom Max Width */}
+                      <div className="space-y-1 pt-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-400">Width:</span>
+                          <span className="font-mono text-teal-400 font-bold">
+                            {(website.navbarLogoWidth || 0) > 0
+                              ? `${website.navbarLogoWidth}px`
+                              : 'Auto (Preserve Aspect Ratio)'}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="320"
+                          step="10"
+                          value={website.navbarLogoWidth || 0}
+                          onChange={(e) =>
+                            setWebsite({ ...website, navbarLogoWidth: Number(e.target.value) })
+                          }
+                          className="w-full accent-teal-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg appearance-none"
+                        />
+                        <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+                          <span>Auto</span>
+                          <span>160px</span>
+                          <span>320px (Wide)</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* File Upload Button */}
@@ -812,8 +969,8 @@ export const WebsiteBuilder: React.FC = () => {
                           try {
                             setIsCompressingLogo(true);
                             const compressed = await compressImage(file, 800, 800, 0.85);
-                            setWebsite({ ...website, logoUrl: compressed });
-                            showToast('Logo Updated', 'Hospital logo compressed and applied to Navbar and Footer.', 'success');
+                            setWebsite({ ...website, logoUrl: compressed, navbarLogoOnly: true });
+                            showToast('Logo Updated', 'Hospital logo uploaded and applied in Logo Only mode to Navbar.', 'success');
                           } catch (err) {
                             showToast('Upload Error', 'Could not process logo file.', 'error');
                           } finally {
@@ -844,23 +1001,29 @@ export const WebsiteBuilder: React.FC = () => {
                   <label className="text-[11px] font-semibold text-slate-400 block">Quick Select Logo Presets:</label>
                   <div className="grid grid-cols-1 gap-2">
                     {[
+                      {
+                        name: 'Zenelait Medical (Teal Vector Logo)',
+                        url: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 45" height="45" width="240"><g fill="%230d9488"><rect x="10" y="8" width="8" height="28" rx="2"/><rect x="0" y="18" width="28" height="8" rx="2"/><text x="36" y="27" font-family="system-ui, sans-serif" font-weight="900" font-size="20" fill="%230f172a" letter-spacing="-0.5">HEALTH<tspan fill="%230d9488">CORE</tspan></text><text x="37" y="38" font-family="system-ui, sans-serif" font-weight="700" font-size="8" fill="%2364748b" letter-spacing="1.5">HOSPITAL &amp; CLINICAL HMS</text></g></svg>',
+                      },
+                      {
+                        name: 'PulseCare Medical Center (Modern Cross Logo)',
+                        url: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 45" height="45" width="240"><g><circle cx="20" cy="22" r="18" fill="%232563eb"/><path d="M16 22 L24 22 M20 18 L20 26" stroke="white" stroke-width="3" stroke-linecap="round"/><text x="46" y="27" font-family="system-ui, sans-serif" font-weight="900" font-size="18" fill="%231e293b" letter-spacing="-0.5">PULSE<tspan fill="%232563eb">CARE</tspan></text><text x="47" y="38" font-family="system-ui, sans-serif" font-weight="700" font-size="7.5" fill="%2364748b" letter-spacing="1.2">ADVANCED HEALTHCARE</text></g></svg>',
+                      },
                       { name: 'Apex Care Center', url: 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?w=800&auto=format&fit=crop&q=80' },
                       { name: 'Metro Super-Specialty', url: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=800&auto=format&fit=crop&q=80' },
                       { name: 'St. Jude General', url: 'https://images.unsplash.com/photo-1516549655169-df83a0774514?w=800&auto=format&fit=crop&q=80' },
-                      { name: 'City Heart Hospital', url: 'https://images.unsplash.com/photo-1538108149393-fbbd81895907?w=800&auto=format&fit=crop&q=80' },
-                      { name: 'Specialty Clinic', url: 'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=800&auto=format&fit=crop&q=80' },
                     ].map((preset) => (
                       <button
                         key={preset.name}
                         type="button"
-                        onClick={() => setWebsite({ ...website, logoUrl: preset.url })}
+                        onClick={() => setWebsite({ ...website, logoUrl: preset.url, navbarLogoOnly: true })}
                         className={`flex items-center gap-2.5 p-2 rounded-xl border text-left text-xs transition-all cursor-pointer ${
                           website.logoUrl === preset.url
                             ? 'bg-teal-950/60 border-teal-500 text-white font-bold'
                             : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
                         }`}
                       >
-                        <img src={preset.url} alt={preset.name} className="w-7 h-7 rounded-md object-cover bg-white" />
+                        <img src={preset.url} alt={preset.name} className="h-6 w-auto max-w-[48px] object-contain rounded-md bg-white p-0.5" />
                         <span className="truncate">{preset.name}</span>
                       </button>
                     ))}
@@ -1175,7 +1338,7 @@ export const WebsiteBuilder: React.FC = () => {
                     <label className="block text-slate-400 font-semibold mb-1">Powered By Badge Text</label>
                     <input
                       type="text"
-                      placeholder="HEALTHCORE"
+                      placeholder="ZENELAIT"
                       value={(activeSection.settings as any)?.poweredBy || ''}
                       onChange={(e) => updateActiveSectionSettings('poweredBy', e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 px-3 py-1.5 rounded text-white text-xs uppercase tracking-widest focus:ring-1 focus:ring-teal-500"

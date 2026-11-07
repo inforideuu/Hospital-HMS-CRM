@@ -123,32 +123,49 @@ export const HospitalSettings: React.FC = () => {
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-slate-800">Automated SMS Reminders</p>
-                  <p className="text-[11px] text-slate-500">Send appointment reminders 2 hours before OPD slot</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={settings.enableSmsAlerts}
-                  onChange={(e) => setSettings({ ...settings, enableSmsAlerts: e.target.checked })}
-                  className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
-                />
-              </div>
+            {/* Cancellation & Rescheduling Cutoff and Penalty Policies */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+              <Input
+                label="Penalty-Free Cancellation Cutoff (Hours)"
+                type="number"
+                min="0"
+                max="72"
+                value={settings.cancellationDeadlineHours ?? 4}
+                onChange={(e) => setSettings({ ...settings, cancellationDeadlineHours: Math.max(0, Number(e.target.value) || 0) })}
+                helperText="Minimum hours before slot to cancel without penalty."
+              />
+              <Input
+                label="Late Cancellation Penalty (% of Consultation Fee)"
+                type="number"
+                min="0"
+                max="100"
+                step="5"
+                value={settings.cancellationPenaltyPercent ?? 50}
+                onChange={(e) => setSettings({ ...settings, cancellationPenaltyPercent: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                helperText="% of consultation fee charged when cancelled late."
+              />
+            </div>
 
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-slate-800">Email Tax Invoices</p>
-                  <p className="text-[11px] text-slate-500">Automatically dispatch PDF copy upon billing</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={settings.enableEmailInvoices}
-                  onChange={(e) => setSettings({ ...settings, enableEmailInvoices: e.target.checked })}
-                  className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
-                />
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Input
+                label="Penalty-Free Rescheduling Cutoff (Hours)"
+                type="number"
+                min="0"
+                max="72"
+                value={settings.reschedulingDeadlineHours ?? 4}
+                onChange={(e) => setSettings({ ...settings, reschedulingDeadlineHours: Math.max(0, Number(e.target.value) || 0) })}
+                helperText="Minimum hours before slot to reschedule without penalty."
+              />
+              <Input
+                label="Late Rescheduling Penalty (% of Consultation Fee)"
+                type="number"
+                min="0"
+                max="100"
+                step="5"
+                value={settings.reschedulingPenaltyPercent ?? 50}
+                onChange={(e) => setSettings({ ...settings, reschedulingPenaltyPercent: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                helperText="% of consultation fee charged when shifted late within cutoff."
+              />
             </div>
 
             <Textarea

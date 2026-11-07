@@ -89,7 +89,7 @@ export const HospitalPortalGateway: React.FC = () => {
 
   return (
     <div
-      className="min-h-screen bg-cover bg-center bg-no-repeat flex flex-col justify-center text-slate-800 selection:bg-teal-600 selection:text-white relative py-12"
+      className="min-h-screen bg-cover bg-center bg-no-repeat flex flex-col justify-center text-slate-800 selection:bg-[#FF3030] selection:text-white relative py-12"
       style={{ backgroundImage: "url('/login_bg_light_1790316830068.jpg')" }}
     >
       {/* Light Overlay */}
@@ -118,8 +118,8 @@ export const HospitalPortalGateway: React.FC = () => {
 
         {/* Google-Style Domain Search Box */}
         <div className="text-center space-y-6 max-w-2xl mx-auto pt-4">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-teal-100/90 border border-teal-200 text-teal-800 text-xs font-bold shadow-xs">
-            <Globe className="w-4 h-4 text-teal-600" />
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#FF3030]/10 border border-[#FF3030]/30 text-[#FF3030] text-xs font-bold shadow-xs">
+            <Globe className="w-4 h-4 text-[#FF3030]" />
             Hospital Domain & Facility Lookup Engine
           </div>
 
@@ -132,8 +132,8 @@ export const HospitalPortalGateway: React.FC = () => {
 
           {/* Interactive Google-Style Domain Search Bar */}
           <form onSubmit={handleSearchSubmit} className="relative max-w-xl mx-auto pt-2">
-            <div className="relative flex items-center shadow-xl rounded-full border border-slate-300/90 bg-white p-1.5 focus-within:ring-2 focus-within:ring-teal-500 focus-within:border-teal-500 transition-all">
-              <Search className="w-5 h-5 text-teal-600 ml-4 shrink-0" />
+            <div className="relative flex items-center shadow-xl rounded-full border border-slate-300/90 bg-white p-1.5 focus-within:ring-2 focus-within:ring-[#FF3030] focus-within:border-[#FF3030] transition-all">
+              <Search className="w-5 h-5 text-[#FF3030] ml-4 shrink-0" />
               <input
                 type="text"
                 placeholder="Enter domain (e.g. apexmedical, metro.pulsecorehealth.com) or Hospital Name..."
@@ -146,37 +146,14 @@ export const HospitalPortalGateway: React.FC = () => {
               />
               <button
                 type="submit"
-                className="bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs px-6 py-3 rounded-full shadow-md transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+                className="bg-[#FF3030] hover:bg-[#e62222] text-white font-bold text-xs px-6 py-3 rounded-full shadow-md shadow-[#FF3030]/25 transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
               >
                 Search <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </form>
 
-          {/* Helper domain suggestions */}
-          <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs text-slate-500">
-            <span className="font-semibold">Example Domains:</span>
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('apexmedical');
-                setIsSearched(true);
-              }}
-              className="px-2.5 py-1 rounded-full bg-slate-200/80 hover:bg-teal-100 text-slate-700 hover:text-teal-900 font-mono text-[11px] transition-colors cursor-pointer"
-            >
-              apexmedical.pulsecorehealth.com
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('stjude');
-                setIsSearched(true);
-              }}
-              className="px-2.5 py-1 rounded-full bg-slate-200/80 hover:bg-teal-100 text-slate-700 hover:text-teal-900 font-mono text-[11px] transition-colors cursor-pointer"
-            >
-              stjude.pulsecorehealth.com
-            </button>
-          </div>
+          
         </div>
 
         {/* Search Results Display (Only shown when searching or if query matches) */}
@@ -184,7 +161,7 @@ export const HospitalPortalGateway: React.FC = () => {
           <div className="space-y-4 max-w-2xl mx-auto pt-4">
             <div className="flex items-center justify-between px-2 text-xs font-bold text-slate-600 uppercase tracking-wider">
               <span>Domain Search Results ({searchResults.length})</span>
-              <span className="font-mono text-teal-700">Query: "{trimmedQuery}"</span>
+              <span className="font-mono text-[#FF3030]">Query: "{trimmedQuery}"</span>
             </div>
 
             {searchResults.length > 0 ? (
@@ -195,18 +172,18 @@ export const HospitalPortalGateway: React.FC = () => {
                     <div
                       key={hosp.id}
                       onClick={() => handleSelectHospital(hosp)}
-                      className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-md p-5 hover:shadow-xl hover:border-teal-500 transition-all cursor-pointer group flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                      className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-md p-5 hover:shadow-xl hover:border-[#FF3030] transition-all cursor-pointer group flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
                     >
                       <div className="flex items-center gap-4 min-w-0">
-                        <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-teal-600 to-cyan-600 text-white flex items-center justify-center font-bold shadow-md shrink-0">
+                        <div className="w-12 h-12 rounded-xl bg-[#FF3030] text-white flex items-center justify-center font-bold shadow-md shadow-[#FF3030]/25 shrink-0">
                           <Activity className="w-6 h-6" />
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="text-base font-extrabold text-slate-900 group-hover:text-teal-700 transition-colors truncate">
+                            <h3 className="text-base font-extrabold text-slate-900 group-hover:text-[#FF3030] transition-colors truncate">
                               {hosp.name}
                             </h3>
-                            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">
+                            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-red-50 text-[#FF3030] border border-[#FF3030]/25">
                               {hosp.websiteUrl || `https://${hosp.id.toLowerCase()}.pulsecorehealth.com`}
                             </span>
                           </div>
@@ -216,7 +193,7 @@ export const HospitalPortalGateway: React.FC = () => {
                         </div>
                       </div>
 
-                      <Button variant="primary" size="sm" className="bg-teal-600 hover:bg-teal-700 shrink-0 rounded-xl">
+                      <Button variant="coral" size="sm" className="bg-[#FF3030] hover:bg-[#e62222] text-white shrink-0 rounded-xl shadow-md shadow-[#FF3030]/20 border-none">
                         Open Hospital Site <ArrowRight className="w-3.5 h-3.5 ml-1" />
                       </Button>
                     </div>
@@ -238,7 +215,7 @@ export const HospitalPortalGateway: React.FC = () => {
         {/* Privacy Shield Notice */}
         <div className="max-w-xl mx-auto text-center pt-6">
           <div className="p-3.5 rounded-2xl bg-white/80 border border-slate-200 text-slate-600 text-xs flex items-center justify-center gap-2 shadow-xs">
-            <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
+            <ShieldCheck className="w-4 h-4 text-[#FF3030] shrink-0" />
             <span>Protected Multi-Tenant Architecture. Hospital network directory is hidden to preserve tenant privacy.</span>
           </div>
         </div>

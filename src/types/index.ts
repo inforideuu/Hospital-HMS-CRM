@@ -39,6 +39,24 @@ export interface User {
   createdAt: string;
 }
 
+export interface EnterpriseBranchDocument {
+  id: string;
+  hospitalId: string;
+  hospitalName: string;
+  fileName: string;
+  fileSize: number; // in bytes (<= 5 * 1024 * 1024 = 5MB)
+  fileType: string;
+  fileData: string; // Base64 data URL
+  uploadedBy: string;
+  uploadedByEmail?: string;
+  uploadedAt: string;
+  status: 'pending_review' | 'provisioned' | 'rejected';
+  notes?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  provisionedBranchIds?: string[];
+}
+
 export interface Organization {
   id: string; // e.g. "ORG-ABC"
   name: string; // e.g. "ABC Healthcare Group"
@@ -100,11 +118,14 @@ export interface SubscriptionPlan {
   trialDays?: number;
 }
 
+export type CouponCategory = 'subscription' | 'billing_software';
+
 export interface CouponCode {
   id: string;
   code: string;
   discountPercentage: number;
   description: string;
+  category?: CouponCategory; // 'subscription' (Hospital HMS & CRM Subscription) | 'billing_software' (Billing Software - External Suite)
   isActive: boolean;
   validUntil?: string;
   maxUses?: number;
@@ -156,6 +177,7 @@ export interface Hospital {
   adminName?: string;
   adminEmail?: string;
   adminPhone?: string;
+  adminPassword?: string;
   planTier: SubscriptionPlanTier;
   status: HospitalStatus;
   logoUrl?: string;
@@ -169,10 +191,13 @@ export interface Hospital {
   organizationId?: string;
   organizationName?: string;
   isBranch?: boolean;
+  isHeadBranch?: boolean;
+  headBranchId?: string;
   branchCode?: string; // e.g. "ABC-MAA", "ABC-BLR"
   branchAdminId?: string;
   branchAdminEmail?: string;
   branchAdminName?: string;
+  enterpriseDocumentId?: string;
   timezone?: string;
 }
 
@@ -203,17 +228,25 @@ export interface SupportTicket {
   }[];
 }
 
+export type NotificationType = 'info' | 'success' | 'warning' | 'error' | 'emergency';
+
 export interface PlatformNotification {
   id: string;
   title: string;
   message: string;
-  type: 'info' | 'success' | 'warning' | 'error';
+  type: NotificationType;
   timestamp: string;
   read: boolean;
+  roleTarget?: UserRole | 'all' | 'platform' | 'hospital_staff';
+  targetRoles?: UserRole[];
   hospitalId?: string;
   patientId?: string;
+  userId?: string;
+  category?: 'clinical' | 'emergency' | 'billing' | 'onboarding' | 'system' | 'lead' | 'general' | 'support' | 'staff';
   link?: string;
 }
+
+export type AppNotification = PlatformNotification;
 
 // ========================
 // HOSPITAL & PATIENT TYPES
@@ -320,6 +353,15 @@ export interface Appointment {
   rescheduledFromDate?: string;
   rescheduledFromTime?: string;
   rescheduleReason?: string;
+  reschedulingPenalty?: number;
+  reschedulingPenaltyCollected?: boolean;
+  reschedulingCollectedInvoiceId?: string;
+  cancelledAt?: string;
+  cancellationPenalty?: number;
+  cancellationPenaltyCollected?: boolean;
+  cancellationCollectedInvoiceId?: string;
+  refundAmount?: number;
+  cancellationReason?: string;
   createdAt: string;
 }
 
@@ -503,6 +545,8 @@ export interface AppointmentSettings {
   minAdvanceBookingHours: number;
   cancellationDeadlineHours: number;
   reschedulingDeadlineHours: number;
+  cancellationPenaltyPercent?: number;
+  reschedulingPenaltyPercent?: number;
   appointmentBufferMinutes: number;
   allowSameDayBooking: boolean;
   timezone?: string;
@@ -835,6 +879,14 @@ export interface LabOrder {
   nurseExecutionDate?: string;
   nurseExecutionNotes?: string;
   nurseActionStatus?: 'Pending' | 'Completed';
+  criticalAlertAcknowledged?: boolean;
+  criticalAlertAcknowledgedBy?: string;
+  criticalAlertAcknowledgedAt?: string;
+  criticalAlertCommunicationNote?: string;
+  criticalAlertDoctorNotified?: string;
+  careTrailSkipped?: boolean;
+  careTrailSkippedReason?: string;
+  careTrailCompletedAtReview?: boolean;
   fee: number;
 }
 
@@ -912,7 +964,7 @@ export interface HospitalWebsite {
   status: 'published' | 'draft' | 'maintenance';
   published: boolean;
   templateId: WebsiteTemplateId;
-  theme: 'Modern Teal' | 'Deep Ocean' | 'Healthcare Classic' | 'Clean Minimal';
+  theme: 'Swiss Royal Sapphire' | 'Nordic Mint & Jade' | 'Midnight Obsidian Luxe' | 'Amethyst Orchid Elegance' | 'Monaco Crimson & Rose' | 'Modern Teal' | 'Deep Ocean' | 'Healthcare Classic' | 'Emerald Luxury' | 'Crimson Vitality' | string;
   primaryColor: string;
   secondaryColor: string;
   heroTitle: string;
@@ -921,6 +973,9 @@ export interface HospitalWebsite {
   heroBgType?: 'image' | 'video';
   heroBgUrl?: string;
   logoUrl?: string;
+  navbarLogoOnly?: boolean;
+  navbarLogoHeight?: number;
+  navbarLogoWidth?: number;
   seoTitle?: string;
   seoDescription?: string;
   draftConfig?: {
@@ -934,6 +989,9 @@ export interface HospitalWebsite {
     heroBgType?: 'image' | 'video';
     heroBgUrl?: string;
     logoUrl?: string;
+    navbarLogoOnly?: boolean;
+    navbarLogoHeight?: number;
+    navbarLogoWidth?: number;
     seoTitle?: string;
     seoDescription?: string;
     sections: WebsiteSection[];
@@ -967,6 +1025,10 @@ export interface PlatformSettings {
   enableMultiTenantSelfRegistration: boolean;
   enableBillingAddonModule?: boolean;
   maintenanceMode: boolean;
+  broadcastBannerActive?: boolean;
+  broadcastBannerText?: string;
+  broadcastBannerLevel?: 'info' | 'warning' | 'critical';
+  databaseSyncFrequency?: 'realtime' | '15min' | 'hourly';
   defaultPlanTier: SubscriptionPlanTier;
   allowTrialDays: number;
   sessionTimeoutMinutes: number;
@@ -984,11 +1046,11 @@ export interface HospitalSettings {
   address: string;
   operatingHours: string;
   consultationSlotMinutes: number;
-  enableSmsAlerts: boolean;
-  enableEmailInvoices: boolean;
+  enableSmsAlerts?: boolean;
+  enableEmailInvoices?: boolean;
   taxRegistrationNumber: string;
-  defaultCurrency: string;
-  invoiceNotes: string;
+  defaultCurrency?: string;
+  invoiceNotes?: string;
 
   // Hospital-wide GST Percentages (Admin Configured)
   enableGSTBilling?: boolean;
@@ -998,6 +1060,21 @@ export interface HospitalSettings {
   labDiagnosticGSTRate?: number;
   ipdRoomGSTRate?: number;
   gstType?: 'CGST_SGST' | 'IGST';
+
+  // Operational Clinical, Pharmacy & Billing Policies (Fully Functional)
+  appointmentBufferMinutes?: number;
+  followUpValidityDays?: number;
+  pharmacyLowStockThreshold?: number;
+  maxDiscountPercent?: number;
+  mandatoryVitalsTriage?: boolean;
+  requireFullSettlementOnDischarge?: boolean;
+  maxAdvanceBookingDays?: number;
+  allowSameDayBooking?: boolean;
+  minAdvanceBookingHours?: number;
+  cancellationDeadlineHours?: number;
+  cancellationPenaltyPercent?: number;
+  reschedulingDeadlineHours?: number;
+  reschedulingPenaltyPercent?: number;
 }
 
 export interface ActivityLog {
@@ -1299,6 +1376,24 @@ export type ActivityType =
   | 'Note'
   | 'Proposal'
   | 'Follow-up';
+
+export interface DemoRequest {
+  id: string;
+  hospitalName: string;
+  contactPerson: string;
+  designation?: string;
+  email: string;
+  phone: string;
+  city?: string;
+  state?: string;
+  bedCapacity: string;
+  hospitalType: string;
+  preferredDate?: string;
+  preferredTime?: string;
+  message?: string;
+  status: 'new' | 'contacted' | 'scheduled' | 'converted';
+  createdAt: string;
+}
 
 export interface SalesLead {
   id: string; // e.g. "LEAD-1001"

@@ -2,6 +2,8 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { UserRole, PortalType } from '../../types';
+import { MockStorage } from '../../services/mockStorage';
+import { CapabilityLockedNotice } from './CapabilityLockedNotice';
 
 interface ProtectedRouteProps {
   children: React.ReactElement;
@@ -51,6 +53,30 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     return <Navigate to="/unauthorized" replace />;
+  }
+
+  // Enforce Dynamic Subscription Plan Feature Gating on Hospital routes
+  if (user.portal === 'hospital' && location.pathname.startsWith('/hospital')) {
+    const isExemptPath =
+      location.pathname === '/hospital' ||
+      location.pathname === '/hospital/dashboard' ||
+      location.pathname.startsWith('/hospital/settings') ||
+      location.pathname.startsWith('/hospital/support');
+
+    if (!isExemptPath) {
+      const access = MockStorage.checkPathAccess(user.hospitalId, location.pathname);
+      if (!access.allowed && access.capability) {
+        const hosp = MockStorage.getHospitalById(user.hospitalId || '');
+        return (
+          <CapabilityLockedNotice
+            capability={access.capability}
+            currentTier={hosp?.planTier}
+            hospitalId={user.hospitalId}
+            hospitalName={hosp?.name}
+          />
+        );
+      }
+    }
   }
 
   return children;

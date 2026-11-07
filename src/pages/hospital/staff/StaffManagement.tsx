@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   UserCheck,
   UserPlus,
+  Users,
   Search,
   Filter,
   Phone,
@@ -27,24 +28,57 @@ import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { Input } from '../../../components/ui/Input';
+import { compressImage } from '../../../utils/imageCompressor';
 import { Select } from '../../../components/ui/Select';
 import { Modal } from '../../../components/ui/Modal';
 import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
 import { SubscriptionUpgradeModal } from '../../../components/common/SubscriptionUpgradeModal';
 
 export const StaffManagement: React.FC = () => {
-  const { currentHospital } = useAuth();
+  const { currentHospital, user } = useAuth();
   const { showToast } = useNotification();
   const hospId = currentHospital?.id || 'HOSP-001';
 
-  // Subscription plan capabilities for role onboarding
-  const planTier = currentHospital?.planTier || 'trial';
+  const isHospitalAdmin =
+    user?.role === 'hospital_admin' ||
+    user?.role === 'super_admin' ||
+    user?.role === 'super_admin_manager';
+
+  // Subscription plan capabilities and resource limits
+  const planTier = MockStorage.getHospitalActiveTier(hospId);
+  const currentPlan = MockStorage.getHospitalActivePlan(hospId);
   const isPharmacyAllowed = isCapabilityAllowedForTier(planTier, 'pharmacy_stock');
   const isLabAllowed = isCapabilityAllowedForTier(planTier, 'laboratory_diagnostics');
   const isAmbulanceAllowed = isCapabilityAllowedForTier(planTier, 'ambulance_emergency');
 
   const [staffList, setStaffList] = useState<Staff[]>(() => MockStorage.getStaff(hospId));
   const departments = MockStorage.getDepartments(hospId);
+
+  useEffect(() => {
+    refreshData();
+    const handleStorageUpdate = (e?: StorageEvent | CustomEvent) => {
+      refreshData();
+    };
+
+    window.addEventListener('pulse_storage_updated', handleStorageUpdate as EventListener);
+    window.addEventListener('storage', handleStorageUpdate as EventListener);
+
+    let channel: BroadcastChannel | null = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        channel = new BroadcastChannel('pulse_storage_sync');
+        channel.onmessage = () => {
+          refreshData();
+        };
+      }
+    } catch (err) {}
+
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleStorageUpdate as EventListener);
+      window.removeEventListener('storage', handleStorageUpdate as EventListener);
+      if (channel) channel.close();
+    };
+  }, [hospId]);
 
   // Departments list for staff assignment dropdown
   const coreHospitalUnits = [
@@ -91,14 +125,19 @@ export const StaffManagement: React.FC = () => {
     setStaffList(MockStorage.getStaff(hospId));
   };
 
-  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData((prev) => ({ ...prev, avatarUrl: reader.result as string }));
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressed = await compressImage(file, 400, 400, 0.75);
+        setFormData((prev) => ({ ...prev, avatarUrl: compressed }));
+      } catch {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setFormData((prev) => ({ ...prev, avatarUrl: reader.result as string }));
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -112,6 +151,20 @@ export const StaffManagement: React.FC = () => {
   });
 
   const handleOpenAdd = () => {
+    if (!isHospitalAdmin) {
+      showToast('Access Restricted', 'Only Hospital Administrators have permission to onboard new staff members.', 'error');
+      return;
+    }
+    const currentStaffCount = MockStorage.getStaff(hospId).length;
+    if (currentStaffCount >= currentPlan.maxStaff) {
+      showToast(
+        'Staff Quota Limit Reached',
+        `Your hospital is on the "${currentPlan.name}" plan which allows a maximum of ${currentPlan.maxStaff} staff members (${currentStaffCount}/${currentPlan.maxStaff} in use). Upgrade your subscription to onboard more staff.`,
+        'error'
+      );
+      setIsUpgradeModalOpen(true);
+      return;
+    }
     setFormData({
       name: '',
       email: '',
@@ -127,6 +180,10 @@ export const StaffManagement: React.FC = () => {
   };
 
   const handleOpenEdit = (staff: Staff) => {
+    if (!isHospitalAdmin) {
+      showToast('Access Restricted', 'Only Hospital Administrators have permission to modify staff profiles.', 'error');
+      return;
+    }
     setSelectedStaff(staff);
     const isAmbulance = staff.role === 'Ambulance Manager' || staff.role === 'Ambulance Driver';
     setFormData({
@@ -147,6 +204,10 @@ export const StaffManagement: React.FC = () => {
 
   const handleSaveStaff = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isHospitalAdmin) {
+      showToast('Permission Denied', 'Only Hospital Administrators can onboard or modify staff.', 'error');
+      return;
+    }
     if (!formData.name || !formData.email) {
       showToast('Validation Error', 'Name and Email are required', 'error');
       return;
@@ -176,8 +237,11 @@ export const StaffManagement: React.FC = () => {
       };
       const res = MockStorage.saveStaff(updated);
       if (!res.success) {
-        showToast('Subscription Limit Reached', res.message || 'Staff limit exceeded for subscription plan.', 'error');
-        setIsUpgradeModalOpen(true);
+        const isLimit = res.message?.includes('Subscription Limit') || res.message?.includes('Plan Restriction');
+        showToast(isLimit ? 'Subscription Limit' : 'Duplicate Email', res.message || 'Staff limit exceeded for subscription plan.', 'error');
+        if (isLimit) {
+          setIsUpgradeModalOpen(true);
+        }
         return;
       }
 
@@ -225,8 +289,11 @@ export const StaffManagement: React.FC = () => {
       };
       const res = MockStorage.saveStaff(newStaff);
       if (!res.success) {
-        showToast('Subscription Limit Reached', res.message || 'Staff quota limit exceeded for subscription plan.', 'error');
-        setIsUpgradeModalOpen(true);
+        const isLimit = res.message?.includes('Subscription Limit') || res.message?.includes('Plan Restriction');
+        showToast(isLimit ? 'Subscription Limit' : 'Duplicate Email', res.message || 'Staff quota limit exceeded for subscription plan.', 'error');
+        if (isLimit) {
+          setIsUpgradeModalOpen(true);
+        }
         return;
       }
 
@@ -260,6 +327,10 @@ export const StaffManagement: React.FC = () => {
   };
 
   const handleToggleStatus = (staff: Staff) => {
+    if (!isHospitalAdmin) {
+      showToast('Permission Denied', 'Only Hospital Administrators can change staff shift or duty status.', 'error');
+      return;
+    }
     const updated: Staff = {
       ...staff,
       status: staff.status === 'active' ? 'on_leave' : 'active',
@@ -270,6 +341,10 @@ export const StaffManagement: React.FC = () => {
   };
 
   const handleDeleteConfirm = () => {
+    if (!isHospitalAdmin) {
+      showToast('Permission Denied', 'Only Hospital Administrators can delete staff profiles.', 'error');
+      return;
+    }
     if (confirmDeleteId) {
       MockStorage.deleteStaff(confirmDeleteId);
       showToast('Staff Removed', 'Staff profile deleted from directory.');
@@ -285,7 +360,15 @@ export const StaffManagement: React.FC = () => {
         subtitle="Manage nurses, receptionists, pharmacists, accountants, lab technologists, and shift assignments."
         breadcrumbs={[{ label: 'Hospital HMS', href: '/hospital/dashboard' }, { label: 'Staff' }]}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 shadow-2xs ${
+              staffList.length >= currentPlan.maxStaff
+                ? 'bg-amber-50 text-amber-800 border-amber-300'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+            }`}>
+              <Users className="w-3.5 h-3.5 shrink-0" />
+              <span>Staff Quota: {staffList.length} / {currentPlan.maxStaff} in use</span>
+            </div>
             <Button
               variant="outline"
               size="sm"
@@ -294,9 +377,11 @@ export const StaffManagement: React.FC = () => {
             >
               Export Staff
             </Button>
-            <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<UserPlus className="w-3.5 h-3.5" />}>
-              Add Staff Member
-            </Button>
+            {isHospitalAdmin && (
+              <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<UserPlus className="w-3.5 h-3.5" />}>
+                Add Staff Member
+              </Button>
+            )}
           </div>
         }
       />
@@ -388,29 +473,38 @@ export const StaffManagement: React.FC = () => {
                   </td>
 
                   <td className="px-5 py-3.5 text-right space-x-1">
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => handleToggleStatus(s)}
-                    >
-                      {s.status === 'active' ? 'Set Leave' : 'Set Active'}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => handleOpenEdit(s)}
-                      title="Edit Profile"
-                    >
-                      <Edit className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      className="text-rose-600"
-                      onClick={() => setConfirmDeleteId(s.id)}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                    {isHospitalAdmin ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => handleToggleStatus(s)}
+                        >
+                          {s.status === 'active' ? 'Set Leave' : 'Set Active'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => handleOpenEdit(s)}
+                          title="Edit Profile"
+                        >
+                          <Edit className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="text-rose-600 hover:bg-rose-50"
+                          onClick={() => setConfirmDeleteId(s.id)}
+                          title="Delete Staff"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-slate-400 italic bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
+                        View Only
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}

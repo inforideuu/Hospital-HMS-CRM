@@ -1,4 +1,4 @@
-import { SubscriptionPlanTier } from '../types';
+import { SubscriptionPlanTier, SubscriptionPlan } from '../types';
 
 export interface PlanCapability {
   id: string;
@@ -139,6 +139,122 @@ export const PLAN_CAPABILITIES: PlanCapability[] = [
 ];
 
 /**
+ * Check dynamically whether a capability is included in a specific plan's active features list.
+ * This guarantees that when Super Admin adds a feature to any plan tier, hospitals on that plan immediately
+ * get full access, and when Super Admin removes/disables a feature, it is completely restricted.
+ */
+export function isCapabilityInPlan(
+  plan: SubscriptionPlan | undefined,
+  capabilityIdOrName: string,
+  allPlans?: SubscriptionPlan[]
+): boolean {
+  if (!plan) return false;
+  if (plan.isActive === false) return false;
+
+  const norm = capabilityIdOrName.toLowerCase().trim();
+  const cap = PLAN_CAPABILITIES.find(
+    (c) =>
+      c.id.toLowerCase() === norm ||
+      c.name.toLowerCase() === norm ||
+      norm.includes(c.id.toLowerCase()) ||
+      norm.includes(c.name.toLowerCase())
+  );
+
+  if (!cap) return true;
+
+  const planTierNorm = (plan.tier || '').toLowerCase().trim();
+  const isEnterpriseTier = planTierNorm === 'enterprise' || planTierNorm.includes('enterprise');
+  const isTrialTier = !planTierNorm || planTierNorm === 'trial' || planTierNorm.includes('trial');
+
+  // Enterprise multi-branch tools are strictly exclusive to Enterprise tier
+  if (cap.id === 'enterprise_multi_branch') {
+    return isEnterpriseTier;
+  }
+
+  // 1. Trial Tier: Full system access for evaluation (except enterprise multi-branch)
+  if (isTrialTier) {
+    return true;
+  }
+
+  // 2. Foundational Core Baseline (Universal Starter Clinic Capabilities):
+  // Patients & EHR, Appointments & OPD, Doctors/Staff/Departments, OPD Rooms, and Billing & Invoices
+  // are the fundamental building blocks of the HMS platform. They are GUARANTEED UNLOCKED for every
+  // active subscription tier (Starter Clinic, Professional Hospital, Enterprise Health Network, and Trial).
+  // A higher subscription tier (Professional Hospital, Enterprise) must NEVER under any circumstances
+  // have core starter clinic modules locked or restricted.
+  if (cap.starterClinic) {
+    return true;
+  }
+
+  // 3. Starter Clinic (basic tier) Restrictions:
+  // Starter Clinic is strictly an Outpatient OPD Clinic (0 Beds).
+  // Inpatient admissions/beds, central pharmacy, diagnostic laboratory, and emergency ambulance are strictly locked.
+  if (planTierNorm === 'basic' || planTierNorm.includes('starter') || planTierNorm.includes('clinic')) {
+    return false;
+  }
+
+  // 4. Fallback to static defaults if plan.features is empty or uninitialized
+  if (!plan.features || !Array.isArray(plan.features) || plan.features.length === 0) {
+    return isCapabilityAllowedForTier(plan.tier, capabilityIdOrName);
+  }
+
+  // 5. Dynamic check against plan.features for higher tier modules (admissions, pharmacy, lab, ambulance)
+  const capabilitySynonyms: Record<string, string[]> = {
+    patients_ehr: ['patient registration', 'patient record', 'ehr', 'electronic health record', 'medical record', 'chart', 'patient'],
+    appointments_opd: ['appointment', 'opd', 'consultation', 'token', 'scheduling', 'queue'],
+    doctors_staff_departments: ['doctor', 'staff', 'department', 'specialist', 'workforce'],
+    opd_rooms: ['opd room', 'room', 'chamber', 'cubicle', 'chambers', 'opd rooms', 'opd consultation rooms'],
+    admissions_beds: ['admissions & beds', 'admission', 'bed allocation', 'ipd bed', 'ward allocation', 'inpatient', 'ipd', 'bed', 'ward'],
+    pharmacy_stock: ['pharmacy', 'dispensary', 'medicine', 'drug', 'stock', 'prescription', 'dispense'],
+    laboratory_diagnostics: ['laboratory', 'diagnostic', 'pathology', 'radiology', 'lab reports', 'specimen', 'lab'],
+    ambulance_emergency: ['ambulance', 'emergency', '911', 'fleet dispatch', 'trauma'],
+    billing_invoices: ['billing', 'invoice', 'gst', 'cashier', 'receipt'],
+    enterprise_multi_branch: ['enterprise', 'multi-branch', 'multi-facility', 'headquarters'],
+  };
+
+  const synonyms = capabilitySynonyms[cap.id] || [cap.id, cap.name.toLowerCase()];
+
+  const featureMatchesCap = (f: string) => {
+    const fl = f.toLowerCase().trim();
+    if (fl === cap.id.toLowerCase() || fl === cap.name.toLowerCase()) return true;
+    if (fl.includes(cap.id.toLowerCase()) || fl.includes(cap.name.toLowerCase())) return true;
+    return synonyms.some((syn) => fl.includes(syn));
+  };
+
+  if (plan.features.some(featureMatchesCap)) {
+    return true;
+  }
+
+  // 6. Inherited bundle keywords
+  if (plan.features.some((f) => f.toLowerCase().includes('starter clinic') || f.toLowerCase().includes('all starter'))) {
+    if (cap.starterClinic) return true;
+    if (allPlans) {
+      const basicPlan = allPlans.find((p) => (p.tier || '').toLowerCase().includes('basic'));
+      if (basicPlan && basicPlan !== plan && isCapabilityInPlan(basicPlan, capabilityIdOrName, allPlans)) {
+        return true;
+      }
+    }
+  }
+
+  if (plan.features.some((f) => f.toLowerCase().includes('professional hospital') || f.toLowerCase().includes('all professional'))) {
+    if (cap.professionalHospital) return true;
+    if (allPlans) {
+      const stdPlan = allPlans.find((p) => (p.tier || '').toLowerCase().includes('standard'));
+      if (stdPlan && stdPlan !== plan && isCapabilityInPlan(stdPlan, capabilityIdOrName, allPlans)) {
+        return true;
+      }
+    }
+  }
+
+  // 7. Enterprise tier guarantee: All standard hospital capabilities are included in Enterprise
+  if (isEnterpriseTier && cap.professionalHospital) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Check whether a capability is enabled for a given subscription plan tier
  */
 export function isCapabilityAllowedForTier(tier: SubscriptionPlanTier | undefined, capabilityIdOrName: string): boolean {
@@ -153,10 +269,16 @@ export function isCapabilityAllowedForTier(tier: SubscriptionPlanTier | undefine
 
   if (!cap) return true;
 
-  if (!tier || tier === 'trial') return cap.trial;
-  if (tier === 'basic') return cap.starterClinic;
-  if (tier === 'standard') return cap.professionalHospital;
-  if (tier === 'enterprise') return cap.enterpriseHealthNetwork;
+  // Universal baseline: Starter Clinic capabilities are ALWAYS allowed across all subscription tiers
+  if (cap.starterClinic) {
+    return true;
+  }
+
+  const t = (tier || 'trial').toLowerCase().trim();
+  if (t === 'basic' || t.includes('starter') || t.includes('clinic')) return cap.starterClinic;
+  if (t === 'standard' || t.includes('standard') || t.includes('professional')) return cap.professionalHospital;
+  if (t === 'enterprise' || t.includes('enterprise')) return cap.enterpriseHealthNetwork;
+  if (t === 'trial' || t.includes('trial')) return cap.trial;
 
   return true;
 }
@@ -164,23 +286,53 @@ export function isCapabilityAllowedForTier(tier: SubscriptionPlanTier | undefine
 /**
  * Check module path permission against tier
  */
-export function checkPathCapability(pathname: string, tier: SubscriptionPlanTier | undefined): {
+export function checkPathCapability(
+  pathname: string,
+  tier: SubscriptionPlanTier | undefined,
+  plan?: SubscriptionPlan,
+  allPlans?: SubscriptionPlan[]
+): {
   allowed: boolean;
   capability?: PlanCapability;
   requiredTierName: string;
 } {
-  const targetCap = PLAN_CAPABILITIES.find((c) => c.routePath && pathname.startsWith(c.routePath));
+  let targetCap: PlanCapability | undefined;
+
+  if (pathname.includes('/billing/discharges') || pathname.includes('/doctor/inpatients')) {
+    targetCap = PLAN_CAPABILITIES.find((c) => c.id === 'admissions_beds');
+  } else {
+    targetCap = PLAN_CAPABILITIES.find((c) => c.routePath && pathname.startsWith(c.routePath));
+  }
 
   if (!targetCap) {
     return { allowed: true, requiredTierName: 'Starter Clinic' };
   }
 
-  const allowed = isCapabilityAllowedForTier(tier, targetCap.id);
-  const requiredTierName = targetCap.starterClinic
-    ? 'Starter Clinic'
-    : targetCap.professionalHospital
-    ? 'Professional Hospital'
-    : 'Enterprise Health Network';
+  const allowed = plan
+    ? isCapabilityInPlan(plan, targetCap.id, allPlans)
+    : isCapabilityAllowedForTier(tier, targetCap.id);
+
+  const currentTierNorm = (tier || plan?.tier || 'basic').toLowerCase().trim();
+
+  // Determine the correct upgrade tier name - it must NEVER be lower than or equal to current tier
+  let requiredTierName = 'Professional Hospital';
+  if (targetCap.id === 'enterprise_multi_branch') {
+    requiredTierName = 'Enterprise Health Network';
+  } else if (!targetCap.starterClinic && targetCap.professionalHospital) {
+    if (currentTierNorm === 'basic' || currentTierNorm.includes('starter') || currentTierNorm.includes('clinic')) {
+      requiredTierName = 'Professional Hospital';
+    } else {
+      requiredTierName = 'Enterprise Health Network';
+    }
+  } else if (targetCap.starterClinic) {
+    if (currentTierNorm === 'basic' || currentTierNorm.includes('starter') || currentTierNorm.includes('clinic')) {
+      requiredTierName = 'Starter Clinic';
+    } else if (currentTierNorm === 'standard' || currentTierNorm.includes('standard') || currentTierNorm.includes('professional')) {
+      requiredTierName = 'Professional Hospital';
+    } else {
+      requiredTierName = 'Enterprise Health Network';
+    }
+  }
 
   return {
     allowed,

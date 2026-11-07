@@ -419,7 +419,11 @@ export const PlatformUsers: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredUsers.map((u) => {
-                  const isSuperAdminScope = u.portal === 'platform' || u.role.startsWith('super_admin');
+                  const isPlatformGlobalScope =
+                    u.portal === 'platform' ||
+                    u.portal === 'sales' ||
+                    u.role.startsWith('super_admin') ||
+                    u.role === 'sales_executive';
                   return (
                     <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="px-5 py-3.5">
@@ -435,7 +439,7 @@ export const PlatformUsers: React.FC = () => {
                           <div>
                             <p className="font-bold text-slate-900 leading-tight flex items-center gap-1.5">
                               {u.name}
-                              {isSuperAdminScope && (
+                              {isPlatformGlobalScope && (
                                 <span className="p-0.5 rounded bg-indigo-50 text-indigo-600" title="Platform HQ Staff">
                                   <Shield className="w-3 h-3" />
                                 </span>
@@ -453,6 +457,8 @@ export const PlatformUsers: React.FC = () => {
                               ? 'bg-purple-50 text-purple-700 border-purple-200'
                               : u.role === 'super_admin_manager'
                               ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                              : u.role === 'sales_executive'
+                              ? 'bg-sky-50 text-sky-700 border-sky-200'
                               : 'bg-teal-50 text-teal-700 border-teal-200'
                           }`}
                         >
@@ -461,7 +467,7 @@ export const PlatformUsers: React.FC = () => {
                       </td>
 
                       <td className="px-4 py-3.5">
-                        {isSuperAdminScope ? (
+                        {isPlatformGlobalScope ? (
                           <span className="text-indigo-600 font-semibold flex items-center gap-1">
                             <Shield className="w-3.5 h-3.5 shrink-0" /> Platform Global HQ
                           </span>

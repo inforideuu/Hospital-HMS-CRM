@@ -91,6 +91,8 @@ export const AdmissionsManagement: React.FC = () => {
       return;
     }
 
+    const targetBed = beds.find((b) => b.bedNumber === formData.bedNumber);
+
     const newAdmission: Admission = {
       id: `ADM-50${10 + admissions.length}`,
       hospitalId: hospId,
@@ -106,7 +108,10 @@ export const AdmissionsManagement: React.FC = () => {
       reason: formData.reason,
       notes: formData.notes,
       status: 'Active',
-      initialDeposit: formData.initialDeposit,
+      initialDeposit:
+        Number(formData.initialDeposit) > 0
+          ? Number(formData.initialDeposit)
+          : (targetBed ? targetBed.dailyRate * 3 : 1500),
     };
 
     MockStorage.saveAdmission(newAdmission);

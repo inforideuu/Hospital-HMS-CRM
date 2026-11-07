@@ -139,6 +139,15 @@ export const MedicineCombobox: React.FC<MedicineComboboxProps> = ({
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-slate-900 text-xs truncate">{selectedMedicine.name}</span>
+                {selectedMedicine.requiresPrescription ? (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-bold border border-rose-200">
+                    Rx Required
+                  </span>
+                ) : (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold border border-emerald-200">
+                    OTC
+                  </span>
+                )}
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-emerald-800 border border-emerald-200 font-mono">
                   {selectedMedicine.batchNumber}
                 </span>
@@ -256,6 +265,15 @@ export const MedicineCombobox: React.FC<MedicineComboboxProps> = ({
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-slate-900 truncate">{med.name}</span>
+                          {med.requiresPrescription ? (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 font-bold border border-rose-200">
+                              Rx Required
+                            </span>
+                          ) : (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
+                              OTC
+                            </span>
+                          )}
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 font-mono">
                             {med.batchNumber}
                           </span>

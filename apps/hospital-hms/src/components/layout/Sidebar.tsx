@@ -25,6 +25,7 @@ import {
   Layers,
   Truck,
   Ambulance,
+  HeartPulse,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { MockStorage } from '../../services/mockStorage';
@@ -57,6 +58,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const location = useLocation();
 
   const hospId = user?.hospitalId || currentHospital?.id;
+  const activeHospital = currentHospital || (hospId ? MockStorage.getHospitalById(hospId) : null);
+  const [logoImgFailed, setLogoImgFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setLogoImgFailed(false);
+  }, [activeHospital?.id, activeHospital?.logoUrl, activeHospital?.image]);
+
   const patientCount = hospId ? MockStorage.getPatients(hospId).length : MockStorage.getPatients().length;
 
   const activeTicketCount = MockStorage.getSupportTickets().filter(
@@ -67,11 +75,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { label: 'Overview', path: '/platform/dashboard', icon: <LayoutDashboard className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Hospital Management', path: '/platform/hospitals', icon: <Building2 className="w-4 h-4" />, badge: String(MockStorage.getHospitals().length), roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Subscriptions & Plans', path: '/platform/subscriptions', icon: <CreditCard className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
-    { label: 'Users & Access', path: '/platform/users', icon: <Users className="w-4 h-4" />, roles: ['super_admin'] },
+    { label: 'Users & Access', path: '/platform/users', icon: <Users className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Hospital Website Builder', path: '/platform/websites', icon: <Globe className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Support Center', path: '/platform/support', icon: <HelpCircle className="w-4 h-4" />, badge: activeTicketCount > 0 ? String(activeTicketCount) : undefined, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Reports & Analytics', path: '/platform/reports', icon: <BarChart3 className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
-    { label: 'Platform Settings', path: '/platform/settings', icon: <Settings className="w-4 h-4" />, roles: ['super_admin'] },
+    { label: 'Platform Settings', path: '/platform/settings', icon: <Settings className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
   ];
 
   const hospitalNavItems: NavItem[] = [
@@ -205,17 +213,81 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Brand Header */}
         <div className="flex items-center justify-between h-16 px-4 border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 via-brand-500 to-teal-400 flex items-center justify-center text-white shadow-lg shadow-brand-500/30 shrink-0">
-              <Activity className="w-6 h-6 stroke-[2.5]" />
-            </div>
+            {portalType === 'hospital' ? (
+              (activeHospital?.logoUrl || activeHospital?.image) && !logoImgFailed ? (
+                <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center shadow-md shadow-black/20 shrink-0 overflow-hidden">
+                  <img
+                    src={activeHospital.logoUrl || activeHospital.image}
+                    alt={activeHospital.name || 'Hospital Logo'}
+                    className="w-full h-full object-cover rounded-lg"
+                    onError={() => setLogoImgFailed(true)}
+                  />
+                </div>
+              ) : (
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-600 to-brand-700 text-white flex items-center justify-center shadow-md shadow-brand-900/30 shrink-0 font-bold">
+                  <Building2 className="w-5 h-5 text-white" />
+                </div>
+              )
+            ) : portalType === 'patient' && activeHospital ? (
+              (activeHospital?.logoUrl || activeHospital?.image) && !logoImgFailed ? (
+                <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center shadow-md shadow-black/20 shrink-0 overflow-hidden">
+                  <img
+                    src={activeHospital.logoUrl || activeHospital.image}
+                    alt={activeHospital.name || 'Hospital Logo'}
+                    className="w-full h-full object-cover rounded-lg"
+                    onError={() => setLogoImgFailed(true)}
+                  />
+                </div>
+              ) : (
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-600 to-teal-700 text-white flex items-center justify-center shadow-md shadow-teal-900/30 shrink-0">
+                  <HeartPulse className="w-5 h-5 text-white" />
+                </div>
+              )
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center shadow-md shadow-black/20 shrink-0">
+                <img src="/logo.png" alt="Zenelait" className="w-full h-full object-contain" />
+              </div>
+            )}
+
             {!isCollapsed && (
               <div className="flex flex-col min-w-0">
-                <span className="font-extrabold text-base text-white tracking-tight leading-none truncate">
-                  PulseCore
-                </span>
-                <span className="text-[10px] font-mono tracking-wider text-brand-400 uppercase truncate mt-1">
-                  {portalType === 'platform' ? 'Platform HQ' : portalType === 'patient' ? 'Patient Health Portal' : currentHospital?.name || 'HMS Workspace'}
-                </span>
+                {portalType === 'hospital' ? (
+                  <>
+                    <span className="font-extrabold text-base text-white tracking-tight leading-none truncate" title={activeHospital?.name || 'Hospital Portal'}>
+                      {activeHospital?.name || 'Hospital Portal'}
+                    </span>
+                    <span className="text-[10px] font-mono tracking-wider text-brand-400 uppercase truncate mt-1">
+                      {activeHospital?.type || (activeHospital?.city ? `${activeHospital.city} Portal` : 'Hospital Portal')}
+                    </span>
+                  </>
+                ) : portalType === 'platform' ? (
+                  <>
+                    <span className="font-extrabold text-base text-white tracking-tight leading-none truncate">
+                      Zenelait
+                    </span>
+                    <span className="text-[10px] font-mono tracking-wider text-[#FF3030] font-bold uppercase truncate mt-1">
+                      Platform HQ
+                    </span>
+                  </>
+                ) : portalType === 'patient' ? (
+                  <>
+                    <span className="font-extrabold text-base text-white tracking-tight leading-none truncate" title={activeHospital?.name || 'Zenelait Health'}>
+                      {activeHospital?.name || 'Zenelait Health'}
+                    </span>
+                    <span className="text-[10px] font-mono tracking-wider text-teal-400 uppercase truncate mt-1">
+                      Patient Health Portal
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-extrabold text-base text-white tracking-tight leading-none truncate" title={activeHospital?.name || 'Emergency Fleet'}>
+                      {activeHospital?.name || 'Emergency Desk'}
+                    </span>
+                    <span className="text-[10px] font-mono tracking-wider text-rose-400 uppercase truncate mt-1">
+                      Ambulance Dispatch
+                    </span>
+                  </>
+                )}
               </div>
             )}
           </div>

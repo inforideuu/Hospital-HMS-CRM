@@ -44,7 +44,7 @@ export const WebsiteBuilder: React.FC = () => {
   const [website, setWebsite] = useState<HospitalWebsite | null>(null);
   const [sections, setSections] = useState<WebsiteSection[]>([]);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'sections' | 'template' | 'theme' | 'seo'>('sections');
+  const [activeTab, setActiveTab] = useState<'sections' | 'theme' | 'seo'>('sections');
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
 
   const isSuperAdmin = user?.role === 'super_admin';
@@ -280,20 +280,12 @@ export const WebsiteBuilder: React.FC = () => {
               Sections
             </button>
             <button
-              onClick={() => setActiveTab('template')}
-              className={`flex-1 py-3 text-center border-b-2 transition-colors ${
-                activeTab === 'template' ? 'border-teal-500 text-teal-400 font-bold bg-slate-900/50' : 'border-transparent hover:text-slate-200'
-              }`}
-            >
-              Templates
-            </button>
-            <button
               onClick={() => setActiveTab('theme')}
               className={`flex-1 py-3 text-center border-b-2 transition-colors ${
                 activeTab === 'theme' ? 'border-teal-500 text-teal-400 font-bold bg-slate-900/50' : 'border-transparent hover:text-slate-200'
               }`}
             >
-              Theme
+              Theme & Palette
             </button>
           </div>
 
@@ -351,46 +343,20 @@ export const WebsiteBuilder: React.FC = () => {
               </div>
             )}
 
-            {activeTab === 'template' && (
-              <div className="space-y-4">
-                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Select Design Template</div>
-                {[
-                  { id: 'premium-healthcare', name: 'Premium Healthcare', desc: 'Sleek white marble, teal accents, and modern clinical card layouts.' },
-                  { id: 'modern-hospital', name: 'Modern Hospital', desc: 'Bold navy typography, broad hero banners, and active emergency stats.' },
-                  { id: 'luxury-medical', name: 'Luxury Medical Center', desc: 'Minimalist luxury spacing with high-contrast specialist rosters.' },
-                ].map((tpl) => (
-                  <div
-                    key={tpl.id}
-                    onClick={() => setWebsite({ ...website, templateId: tpl.id as WebsiteTemplateId })}
-                    className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                      website.templateId === tpl.id
-                        ? 'bg-teal-950/60 border-teal-500 text-white shadow-lg'
-                        : 'bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-bold text-xs text-white">{tpl.name}</h4>
-                      {website.templateId === tpl.id && <Badge variant="success" size="sm">Active</Badge>}
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">{tpl.desc}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-
             {activeTab === 'theme' && (
               <div className="space-y-4 text-xs">
                 <div>
                   <label className="block text-slate-400 font-semibold mb-1">Theme Palette</label>
                   <Select
-                    value={website.theme}
+                    value={website.theme || 'Swiss Royal Sapphire'}
                     onChange={(e) => setWebsite({ ...website, theme: e.target.value as any })}
                     className="bg-slate-900 border-slate-800 text-white text-xs"
                   >
-                    <option value="Modern Teal">Modern Teal</option>
-                    <option value="Deep Ocean">Deep Ocean</option>
-                    <option value="Healthcare Classic">Healthcare Classic</option>
-                    <option value="Clean Minimal">Clean Minimal</option>
+                    <option value="Swiss Royal Sapphire">Swiss Royal Sapphire (Prestige Clinical & Platinum Azure)</option>
+                    <option value="Nordic Mint & Jade">Nordic Mint & Jade (Biotech Wellness & Scandinavian Calm)</option>
+                    <option value="Midnight Obsidian Luxe">Midnight Obsidian Luxe (Elite Concierge & Champagne Gold)</option>
+                    <option value="Amethyst Orchid Elegance">Amethyst Orchid Elegance (Creative Modern Specialist & Serenity)</option>
+                    <option value="Monaco Crimson & Rose">Monaco Crimson & Rose (High-Velocity Cardiac & Emergency Vitality)</option>
                   </Select>
                 </div>
 

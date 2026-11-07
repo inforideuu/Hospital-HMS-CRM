@@ -152,7 +152,7 @@ export const PlatformUsers: React.FC = () => {
     setFormData({
       name: '',
       email: '',
-      password: `PulseAdmin@${Math.floor(1000 + Math.random() * 9000)}`,
+      password: '',
       role: 'super_admin_manager',
       portal: 'platform',
       department: 'Platform Operations & Support',
@@ -161,7 +161,7 @@ export const PlatformUsers: React.FC = () => {
       hospitalName: defaultHosp ? defaultHosp.name : '',
       avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
     });
-    setShowPassword(false);
+    setShowPassword(true);
     setIsAddModalOpen(true);
   };
 
@@ -170,7 +170,7 @@ export const PlatformUsers: React.FC = () => {
     setFormData({
       name: user.name,
       email: user.email,
-      password: user.password || '••••••••',
+      password: user.password || '',
       role: user.role,
       portal: user.portal,
       department: user.department || (user.role === 'hospital_admin' ? 'Hospital Executive Management' : 'Platform Engineering'),
@@ -179,7 +179,7 @@ export const PlatformUsers: React.FC = () => {
       hospitalName: user.hospitalName || '',
       avatar: user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
     });
-    setShowPassword(false);
+    setShowPassword(true);
     setIsEditModalOpen(true);
   };
 
@@ -198,20 +198,44 @@ export const PlatformUsers: React.FC = () => {
   };
 
   const generateRandomPassword = () => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
-    let pwd = 'Pulse@';
+    const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const lowercase = 'abcdefghijkmnopqrstuvwxyz';
+    const numbers = '23456789';
+    const symbols = '!@#$%&*';
+    const allChars = uppercase + lowercase + numbers + symbols;
+
+    let pwd = '';
+    pwd += uppercase.charAt(Math.floor(Math.random() * uppercase.length));
+    pwd += lowercase.charAt(Math.floor(Math.random() * lowercase.length));
+    pwd += numbers.charAt(Math.floor(Math.random() * numbers.length));
+    pwd += symbols.charAt(Math.floor(Math.random() * symbols.length));
+
     for (let i = 0; i < 6; i++) {
-      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
+      pwd += allChars.charAt(Math.floor(Math.random() * allChars.length));
     }
+
+    pwd = pwd.split('').sort(() => Math.random() - 0.5).join('');
+
     setFormData((prev) => ({ ...prev, password: pwd }));
     setShowPassword(true);
-    showToast('Password Generated', 'Secure temporary password generated.');
+    showToast('Dynamic Password Generated', 'A random secure password has been generated. You can also customize or type your own.');
   };
 
   const handleSaveUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.email) {
       showToast('Validation Error', 'Full Name and Email Address are required', 'error');
+      return;
+    }
+
+    const customPassword = formData.password.trim();
+    if (!customPassword) {
+      showToast('Validation Error', 'Account Login Password is required. Enter your custom password or click Generate.', 'error');
+      return;
+    }
+
+    if (customPassword.length < 6) {
+      showToast('Validation Error', 'Password must be at least 6 characters long.', 'error');
       return;
     }
 
@@ -241,7 +265,7 @@ export const PlatformUsers: React.FC = () => {
         hospitalId: formData.role === 'hospital_admin' ? formData.hospitalId : undefined,
         hospitalName: formData.role === 'hospital_admin' ? assignedHospitalName : undefined,
         avatar: finalAvatar,
-        password: formData.password && formData.password !== '••••••••' ? formData.password : selectedUser.password,
+        password: customPassword,
       };
       const userRes = MockStorage.saveUser(updated);
       if (!userRes.success) {
@@ -256,6 +280,7 @@ export const PlatformUsers: React.FC = () => {
           adminName: formData.name,
           adminEmail: formData.email,
           adminPhone: formData.phone || selectedHospital.adminPhone,
+          adminPassword: customPassword,
         };
         MockStorage.saveHospital(updatedHospital);
       }
@@ -274,7 +299,7 @@ export const PlatformUsers: React.FC = () => {
         hospitalId: formData.role === 'hospital_admin' ? formData.hospitalId : undefined,
         hospitalName: formData.role === 'hospital_admin' ? assignedHospitalName : undefined,
         avatar: finalAvatar,
-        password: formData.password || 'PulseAdmin@2026',
+        password: customPassword,
         status: 'active',
         createdAt: new Date().toISOString().split('T')[0],
       };
@@ -291,6 +316,7 @@ export const PlatformUsers: React.FC = () => {
           adminName: formData.name,
           adminEmail: formData.email,
           adminPhone: formData.phone || selectedHospital.adminPhone,
+          adminPassword: customPassword,
         };
         MockStorage.saveHospital(updatedHospital);
       }
@@ -427,7 +453,11 @@ export const PlatformUsers: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredUsers.map((u) => {
-                  const isSuperAdminScope = u.portal === 'platform' || u.role.startsWith('super_admin');
+                  const isPlatformGlobalScope =
+                    u.portal === 'platform' ||
+                    u.portal === 'sales' ||
+                    u.role.startsWith('super_admin') ||
+                    u.role === 'sales_executive';
                   return (
                     <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="px-5 py-3.5">
@@ -443,7 +473,7 @@ export const PlatformUsers: React.FC = () => {
                           <div>
                             <p className="font-bold text-slate-900 leading-tight flex items-center gap-1.5">
                               {u.name}
-                              {isSuperAdminScope && (
+                              {isPlatformGlobalScope && (
                                 <span className="p-0.5 rounded bg-indigo-50 text-indigo-600" title="Platform HQ Staff">
                                   <Shield className="w-3 h-3" />
                                 </span>
@@ -461,6 +491,8 @@ export const PlatformUsers: React.FC = () => {
                               ? 'bg-purple-50 text-purple-700 border-purple-200'
                               : u.role === 'super_admin_manager'
                               ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                              : u.role === 'sales_executive'
+                              ? 'bg-sky-50 text-sky-700 border-sky-200'
                               : 'bg-teal-50 text-teal-700 border-teal-200'
                           }`}
                         >
@@ -469,7 +501,7 @@ export const PlatformUsers: React.FC = () => {
                       </td>
 
                       <td className="px-4 py-3.5">
-                        {isSuperAdminScope ? (
+                        {isPlatformGlobalScope ? (
                           <span className="text-indigo-600 font-semibold flex items-center gap-1">
                             <Shield className="w-3.5 h-3.5 shrink-0" /> Platform Global HQ
                           </span>
@@ -540,7 +572,7 @@ export const PlatformUsers: React.FC = () => {
         subtitle="Provision login credentials and configure role permissions synced across platform facilities"
         maxWidth="lg"
       >
-        <form onSubmit={handleSaveUser} className="space-y-4">
+        <form onSubmit={handleSaveUser} className="space-y-4" autoComplete="off">
           {/* Avatar / Profile Photo Upload Section */}
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/90 space-y-3">
             <div className="flex items-center justify-between">
@@ -685,9 +717,12 @@ export const PlatformUsers: React.FC = () => {
                 <div className="relative flex-1">
                   <input
                     type={showPassword ? 'text' : 'password'}
+                    name="admin_user_account_password"
+                    id="admin_user_account_password"
+                    autoComplete="new-password"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    placeholder="Enter login password"
+                    placeholder="Type custom password (or click Generate)"
                     className="w-full text-xs py-2 pl-3 pr-8 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
                     required
                   />
@@ -705,13 +740,16 @@ export const PlatformUsers: React.FC = () => {
                   variant="outline"
                   size="sm"
                   onClick={generateRandomPassword}
-                  title="Generate Random Secure Password"
+                  title="Generate Random Dynamic Secure Password"
                   leftIcon={<Zap className="w-3.5 h-3.5 text-amber-500" />}
                   className="shrink-0 text-xs font-bold bg-amber-50/50 hover:bg-amber-100 border-amber-300 text-amber-900"
                 >
                   Generate
                 </Button>
               </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Freely type any custom login password, or click <strong>Generate</strong> for a dynamic randomized password.
+              </p>
             </div>
           </div>
 

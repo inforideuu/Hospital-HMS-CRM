@@ -317,53 +317,79 @@ export const SubscriptionManagement: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {subscriptions.map((sub) => {
-                const hosp = hospitals.find((h) => h.id === sub.hospitalId);
+              {(() => {
+                // Deduplicate subscriptions strictly per hospital (keeping latest / upgraded subscription)
+                const dedupedSubs = subscriptions.reduce<HospitalSubscription[]>((acc, sub) => {
+                  const existingIdx = acc.findIndex(
+                    (s) => (s.hospitalId || '').trim().toLowerCase() === (sub.hospitalId || '').trim().toLowerCase()
+                  );
+                  if (existingIdx === -1) {
+                    acc.push(sub);
+                  } else {
+                    const existing = acc[existingIdx];
+                    if (sub.paymentStatus === 'pending_approval' && existing.paymentStatus !== 'pending_approval') {
+                      acc[existingIdx] = sub;
+                    } else if (existing.paymentStatus !== 'pending_approval') {
+                      const subDate = sub.upgradedDate || sub.activatedDate || sub.startDate || '';
+                      const existDate = existing.upgradedDate || existing.activatedDate || existing.startDate || '';
+                      if (Boolean(sub.upgradedDate) && !Boolean(existing.upgradedDate)) {
+                        acc[existingIdx] = sub;
+                      } else if (subDate >= existDate) {
+                        acc[existingIdx] = sub;
+                      }
+                    }
+                  }
+                  return acc;
+                }, []);
 
-                return (
-                  <tr key={sub.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="px-5 py-4">
-                      <p className="font-bold text-slate-900 leading-tight">{hosp?.name || sub.hospitalId}</p>
-                      <p className="text-[11px] text-slate-400 font-mono mt-0.5">{sub.hospitalId} • {sub.paymentMethod}</p>
-                    </td>
+                return dedupedSubs.map((sub) => {
+                  const hosp = hospitals.find(
+                    (h) => h.id === sub.hospitalId || (h.id || '').trim().toLowerCase() === (sub.hospitalId || '').trim().toLowerCase()
+                  );
 
-                    <td className="px-4 py-4">
-                      <span className="capitalize px-2.5 py-1 rounded-md text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
-                        {sub.planName}
-                      </span>
-                    </td>
+                  return (
+                    <tr key={sub.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="px-5 py-4">
+                        <p className="font-bold text-slate-900 leading-tight">{hosp?.name || sub.hospitalId}</p>
+                        <p className="text-[11px] text-slate-400 font-mono mt-0.5">{sub.hospitalId} • {sub.paymentMethod}</p>
+                      </td>
 
-                    <td className="px-4 py-4">
-                      <p className="font-bold text-slate-900">₹{sub.amount.toLocaleString('en-IN')}</p>
-                      <p className="text-[11px] text-slate-500 capitalize">{sub.interval} interval</p>
-                    </td>
-
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                        <span className="font-semibold text-slate-800">
-                          {sub.upgradedDate || sub.activatedDate || sub.startDate || '—'}
+                      <td className="px-4 py-4">
+                        <span className="capitalize px-2.5 py-1 rounded-md text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                          {sub.planName}
                         </span>
-                      </div>
-                      <p className="text-[10px] text-teal-700 font-medium flex items-center gap-1 mt-0.5">
-                        <Sparkles className="w-3 h-3 text-teal-500 shrink-0" />
-                        {sub.upgradedDate ? 'Plan Upgraded' : sub.status === 'trialing' ? 'Trial Started' : 'Plan Activated'}
-                      </p>
-                    </td>
+                      </td>
 
-                    <td className="px-4 py-4">
-                      <p className="font-medium text-slate-800">{sub.renewalDate}</p>
-                      <p className="text-[10px] text-slate-400">Auto-Renew: {sub.autoRenew ? 'Yes' : 'No'}</p>
-                    </td>
+                      <td className="px-4 py-4">
+                        <p className="font-bold text-slate-900">₹{sub.amount.toLocaleString('en-IN')}</p>
+                        <p className="text-[11px] text-slate-500 capitalize">{sub.interval} interval</p>
+                      </td>
 
-                    <td className="px-4 py-4">
-                      {sub.status === 'active' && <Badge variant="success" dot>Active</Badge>}
-                      {sub.status === 'trialing' && <Badge variant="cyan" dot>Trialing</Badge>}
-                      {sub.status === 'past_due' && <Badge variant="warning" dot>Past Due</Badge>}
-                      {sub.status === 'canceled' && <Badge variant="error" dot>Canceled</Badge>}
-                    </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                          <span className="font-semibold text-slate-800">
+                            {sub.upgradedDate || sub.activatedDate || sub.startDate || '—'}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-teal-700 font-medium flex items-center gap-1 mt-0.5">
+                          <Sparkles className="w-3 h-3 text-teal-500 shrink-0" />
+                          {sub.upgradedDate ? 'Plan Upgraded' : sub.status === 'trialing' ? 'Trial Started' : 'Plan Activated'}
+                        </p>
+                      </td>
 
-                    <td className="px-5 py-4 text-right">
+                      <td className="px-4 py-4">
+                        <p className="font-semibold text-slate-800">{sub.renewalDate}</p>
+                      </td>
+
+                      <td className="px-4 py-4">
+                        {sub.status === 'active' && <Badge variant="success" dot>Active</Badge>}
+                        {sub.status === 'trialing' && <Badge variant="cyan" dot>Trialing</Badge>}
+                        {sub.status === 'past_due' && <Badge variant="warning" dot>Past Due</Badge>}
+                        {sub.status === 'canceled' && <Badge variant="error" dot>Canceled</Badge>}
+                      </td>
+
+                      <td className="px-5 py-4 text-right">
                       <Button
                         variant="outline"
                         size="xs"
@@ -375,8 +401,9 @@ export const SubscriptionManagement: React.FC = () => {
                     </td>
                   </tr>
                 );
-              })}
-            </tbody>
+              });
+            })()}
+          </tbody>
           </table>
         </div>
       </Card>

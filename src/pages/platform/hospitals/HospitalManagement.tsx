@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Building2,
   Plus,
@@ -23,9 +23,14 @@ import {
   Upload,
   Image as ImageIcon,
   Zap,
+  FileText,
+  Network,
+  Layers,
+  ArrowRight,
+  Lock,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
-import { Hospital, HospitalType, SubscriptionPlanTier, HospitalStatus, ConvertedCustomer } from '../../../types';
+import { Hospital, HospitalType, SubscriptionPlanTier, HospitalStatus, ConvertedCustomer, EnterpriseBranchDocument } from '../../../types';
 import { PageHeader } from '../../../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
@@ -37,17 +42,30 @@ import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
 import { Pagination } from '../../../components/ui/Pagination';
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { useNotification } from '../../../context/NotificationContext';
+import { useAuth } from '../../../context/AuthContext';
 import { compressImage } from '../../../utils/imageCompressor';
 import { UserCheck, Sparkles } from 'lucide-react';
+import { OnboardSubBranchModal } from '../../../components/platform/OnboardSubBranchModal';
 
 export const HospitalManagement: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { showToast } = useNotification();
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
+  const isPlatformAdmin = user?.role === 'super_admin' || user?.role === 'super_admin_manager';
+
+  const currentTab = (searchParams.get('tab') as 'facilities' | 'enterprise_requests') || 'facilities';
+  const setActiveTab = (tab: 'facilities' | 'enterprise_requests') => {
+    setSearchParams({ tab });
+  };
 
   const [hospitals, setHospitals] = useState<Hospital[]>(() => MockStorage.getHospitals());
   const [convertedCustomers, setConvertedCustomers] = useState<ConvertedCustomer[]>(() => MockStorage.getConvertedCustomers());
+  const [enterpriseDocs, setEnterpriseDocs] = useState<EnterpriseBranchDocument[]>(() => MockStorage.getEnterpriseBranchDocuments());
   const [selectedCustomerToOnboard, setSelectedCustomerToOnboard] = useState<ConvertedCustomer | null>(null);
   const [isOnboardModalOpen, setIsOnboardModalOpen] = useState(false);
+  const [isOnboardBranchModalOpen, setIsOnboardBranchModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [planFilter, setPlanFilter] = useState<string>('all');
@@ -59,6 +77,23 @@ export const HospitalManagement: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedHospital, setSelectedHospital] = useState<Hospital | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Sub-Branch Provisioning Modal State (Super Admin & Super Admin Manager)
+  const [selectedDocForProvision, setSelectedDocForProvision] = useState<EnterpriseBranchDocument | null>(null);
+  const [isProvisionBranchModalOpen, setIsProvisionBranchModalOpen] = useState(false);
+  const [branchFormData, setBranchFormData] = useState({
+    branchName: '',
+    branchCode: '',
+    city: '',
+    state: '',
+    country: 'India',
+    address: '',
+    totalBeds: 50,
+    branchAdminName: '',
+    branchAdminEmail: '',
+    branchAdminPassword: 'Admin@123',
+    branchAdminPhone: '',
+  });
 
   // Form State
   const [formData, setFormData] = useState({
@@ -74,12 +109,16 @@ export const HospitalManagement: React.FC = () => {
     postalCode: '',
     planTier: 'trial' as SubscriptionPlanTier,
     totalBeds: 20,
+    adminName: '',
+    adminEmail: '',
+    adminPassword: '',
     logoUrl: 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?w=800&auto=format&fit=crop&q=80',
   });
 
   const refreshData = () => {
     setHospitals(MockStorage.getHospitals());
     setConvertedCustomers(MockStorage.getConvertedCustomers());
+    setEnterpriseDocs(MockStorage.getEnterpriseBranchDocuments());
   };
 
   const pendingOnboardingCustomers = convertedCustomers.filter(
@@ -87,6 +126,10 @@ export const HospitalManagement: React.FC = () => {
   );
 
   const handleOpenOnboardModal = (cust: ConvertedCustomer) => {
+    if (!isSuperAdmin) {
+      showToast('Access Denied', 'Only Super Administrator has authorization to onboard hospital facilities.', 'error');
+      return;
+    }
     setSelectedCustomerToOnboard(cust);
     const validTiers: SubscriptionPlanTier[] = ['trial', 'basic', 'standard', 'enterprise'];
     const matchedTier = validTiers.find((t) => t.toLowerCase() === cust.interestedPlan?.toLowerCase()) || 'trial';
@@ -103,7 +146,10 @@ export const HospitalManagement: React.FC = () => {
       country: 'United States',
       postalCode: '10001',
       planTier: matchedTier,
-      totalBeds: plan?.maxBeds || 20,
+      totalBeds: plan?.tier === 'basic' ? 0 : (plan?.maxBeds ?? 20),
+      adminName: cust.contactPerson || '',
+      adminEmail: cust.email || '',
+      adminPassword: 'Admin@123',
       logoUrl: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=800&auto=format&fit=crop&q=80',
     });
     setIsOnboardModalOpen(true);
@@ -111,6 +157,10 @@ export const HospitalManagement: React.FC = () => {
 
   const handleConfirmOnboarding = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isSuperAdmin) {
+      showToast('Access Denied', 'Only Super Administrator has authorization to onboard hospital facilities.', 'error');
+      return;
+    }
     if (!selectedCustomerToOnboard) return;
 
     const photo = formData.logoUrl || 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=800&auto=format&fit=crop&q=80';
@@ -177,7 +227,12 @@ export const HospitalManagement: React.FC = () => {
   const paginatedHospitals = filteredHospitals.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const handleOpenAddModal = () => {
-    const trialPlan = MockStorage.getPlanByTier('trial');
+    if (!isSuperAdmin) {
+      showToast('Access Denied', 'Only Super Administrator has authorization to register hospital facilities.', 'error');
+      return;
+    }
+    const defaultTier = MockStorage.getPlatformSettings().defaultPlanTier || 'trial';
+    const initialPlan = MockStorage.getPlanByTier(defaultTier) || MockStorage.getPlanByTier('trial');
     setFormData({
       name: '',
       regNumber: `MED-2026-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -189,8 +244,11 @@ export const HospitalManagement: React.FC = () => {
       state: '',
       country: 'United States',
       postalCode: '',
-      planTier: 'trial',
-      totalBeds: trialPlan?.maxBeds || 20,
+      planTier: defaultTier,
+      totalBeds: initialPlan?.maxBeds || 20,
+      adminName: '',
+      adminEmail: '',
+      adminPassword: 'Admin@123',
       logoUrl: 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?w=800&auto=format&fit=crop&q=80',
     });
     setIsAddModalOpen(true);
@@ -211,7 +269,10 @@ export const HospitalManagement: React.FC = () => {
       country: hosp.country,
       postalCode: hosp.postalCode,
       planTier: hosp.planTier || 'trial',
-      totalBeds: hosp.totalBeds || plan?.maxBeds || 20,
+      totalBeds: hosp.planTier === 'basic' ? 0 : (hosp.totalBeds ?? (plan?.maxBeds ?? 20)),
+      adminName: hosp.adminName || '',
+      adminEmail: hosp.adminEmail || '',
+      adminPassword: '',
       logoUrl: hosp.logoUrl || hosp.image || 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?w=800&auto=format&fit=crop&q=80',
     });
     setIsEditModalOpen(true);
@@ -219,19 +280,25 @@ export const HospitalManagement: React.FC = () => {
 
   const handleSaveHospital = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isSuperAdmin) {
+      showToast('Access Denied', 'Only Super Administrator has authorization to register or update hospital facilities.', 'error');
+      return;
+    }
     if (!formData.name || !formData.email) {
       showToast('Validation Error', 'Hospital Name and Contact Email are required', 'error');
       return;
     }
 
+    const defaultTier = MockStorage.getPlatformSettings().defaultPlanTier || 'trial';
+    const activeTier = isEditModalOpen && selectedHospital ? selectedHospital.planTier : defaultTier;
+    const plan = MockStorage.getPlanByTier(activeTier);
     const photo = formData.logoUrl || 'https://images.unsplash.com/photo-1587351021759-3e566b6af7cc?w=800&auto=format&fit=crop&q=80';
-    const plan = MockStorage.getPlanByTier(formData.planTier);
 
     if (isEditModalOpen && selectedHospital) {
       const updated: Hospital = {
         ...selectedHospital,
         ...formData,
-        planTier: formData.planTier || selectedHospital.planTier || 'trial',
+        planTier: selectedHospital.planTier,
         totalBeds: formData.totalBeds !== undefined && formData.totalBeds > 0 ? formData.totalBeds : (plan ? plan.maxBeds : 20),
         totalDoctors: plan ? plan.maxDoctors : (selectedHospital.totalDoctors || 3),
         logoUrl: photo,
@@ -242,10 +309,17 @@ export const HospitalManagement: React.FC = () => {
       setIsEditModalOpen(false);
     } else {
       const slug = formData.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const adminName = formData.adminName?.trim() || `${formData.name} Admin`;
+      const adminEmail = formData.adminEmail?.trim() || formData.email || `admin@${slug || 'hospital'}.com`;
+      const adminPassword = formData.adminPassword?.trim() || 'Admin@123';
+
       const newHospital: Hospital = {
         id: `HOSP-00${hospitals.length + 1}`,
         ...formData,
-        planTier: formData.planTier || 'trial',
+        adminName,
+        adminEmail,
+        adminPassword,
+        planTier: defaultTier,
         status: 'active',
         totalDoctors: plan ? plan.maxDoctors : 3,
         totalPatients: 0,
@@ -260,7 +334,7 @@ export const HospitalManagement: React.FC = () => {
 
       showToast(
         'Hospital Registered',
-        `${newHospital.name} provisioned on ${plan?.name || `${MockStorage.getTrialDays()}-Day Free Trial`}. Create Hospital Admin credentials in Users & RBAC.`
+        `${newHospital.name} provisioned on ${plan?.name || `${MockStorage.getTrialDays()}-Day Free Trial`}.`
       );
       setIsAddModalOpen(false);
     }
@@ -309,6 +383,93 @@ export const HospitalManagement: React.FC = () => {
     showToast('Export Successful', 'Hospital records downloaded as CSV.');
   };
 
+  const pendingDocsCount = enterpriseDocs.filter((d) => d.status === 'pending_review').length;
+
+  const handleDownloadManifestDoc = (doc: EnterpriseBranchDocument) => {
+    if (!doc.fileData) {
+      showToast('Download Error', 'No file data available for this document.', 'error');
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = doc.fileData;
+    link.download = doc.fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Download Started', `Downloading manifest: ${doc.fileName}`);
+  };
+
+  const handleOpenProvisionBranchModal = (doc: EnterpriseBranchDocument) => {
+    if (!isSuperAdmin) {
+      showToast('Access Denied', 'Super Admin Manager is restricted from onboarding hospital facilities. Only Super Administrator can provision sub-branches.', 'error');
+      return;
+    }
+    setSelectedDocForProvision(doc);
+    setBranchFormData({
+      branchName: `${doc.hospitalName} - `,
+      branchCode: '',
+      city: '',
+      state: '',
+      country: 'India',
+      address: '',
+      totalBeds: 50,
+      branchAdminName: '',
+      branchAdminEmail: '',
+      branchAdminPassword: `Admin@${Math.floor(100 + Math.random() * 900)}`,
+      branchAdminPhone: '',
+    });
+    setIsProvisionBranchModalOpen(true);
+  };
+
+  const handleProvisionBranchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isSuperAdmin) {
+      showToast('Access Denied', 'Super Admin Manager is restricted from onboarding hospital facilities. Only Super Administrator can provision sub-branches.', 'error');
+      return;
+    }
+    if (!selectedDocForProvision) return;
+
+    if (!branchFormData.branchName.trim() || !branchFormData.branchCode.trim() || !branchFormData.branchAdminEmail.trim()) {
+      showToast('Validation Error', 'Sub-Branch Name, Branch Code, and Branch Admin Email are required.', 'error');
+      return;
+    }
+
+    const headHosp = MockStorage.getHospitalById(selectedDocForProvision.hospitalId);
+    const orgId = headHosp?.organizationId || selectedDocForProvision.hospitalId;
+
+    const res = MockStorage.createBranch({
+      organizationId: orgId,
+      branchName: branchFormData.branchName,
+      branchCode: branchFormData.branchCode,
+      city: branchFormData.city || 'City',
+      state: branchFormData.state || 'State',
+      country: branchFormData.country || 'India',
+      address: branchFormData.address || 'Sub-Branch Address',
+      totalBeds: Number(branchFormData.totalBeds) || 50,
+      contactPerson: branchFormData.branchAdminName,
+      contactEmail: branchFormData.branchAdminEmail,
+      contactPhone: branchFormData.branchAdminPhone || headHosp?.phone || '+91 98765 43210',
+      branchAdminName: branchFormData.branchAdminName,
+      branchAdminEmail: branchFormData.branchAdminEmail,
+      branchAdminPhone: branchFormData.branchAdminPhone,
+      initialPassword: branchFormData.branchAdminPassword || 'Admin@123',
+      docId: selectedDocForProvision.id,
+    });
+
+    if (res.success && res.branch) {
+      showToast(
+        'Sub-Branch Provisioned',
+        `${res.branch.name} (${res.branch.branchCode}) provisioned with public website and dedicated Branch Admin credentials.`,
+        'success'
+      );
+      setIsProvisionBranchModalOpen(false);
+      setSelectedDocForProvision(null);
+      refreshData();
+    } else {
+      showToast('Provisioning Failed', res.message || 'Unable to create branch.', 'error');
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
@@ -320,14 +481,70 @@ export const HospitalManagement: React.FC = () => {
             <Button variant="outline" size="sm" onClick={handleExport} leftIcon={<Download className="w-3.5 h-3.5" />}>
               Export List
             </Button>
-            <Button variant="primary" size="sm" onClick={handleOpenAddModal} leftIcon={<Plus className="w-3.5 h-3.5" />}>
-              Register Hospital
-            </Button>
+            {isSuperAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsOnboardBranchModalOpen(true)}
+                leftIcon={<Building2 className="w-3.5 h-3.5 text-purple-600" />}
+                className="border-purple-300 text-purple-700 hover:bg-purple-50 font-bold"
+              >
+                Onboard Sub-Branch
+              </Button>
+            )}
+            {isSuperAdmin && (
+              <Button variant="coral" size="sm" onClick={handleOpenAddModal} leftIcon={<Plus className="w-3.5 h-3.5" />}>
+                Register Hospital
+              </Button>
+            )}
           </div>
         }
       />
 
-      {/* Summary KPI Cards */}
+      {/* Platform Navigation Tabs */}
+      <div className="flex items-center gap-2 border-b border-slate-200">
+        <button
+          onClick={() => setActiveTab('facilities')}
+          className={`pb-3 px-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+            currentTab === 'facilities'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Building2 className="w-4 h-4" />
+          <span>Hospital Facilities</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold">
+            {hospitals.length}
+          </span>
+        </button>
+
+        {isPlatformAdmin && (
+          <button
+            onClick={() => setActiveTab('enterprise_requests')}
+            className={`pb-3 px-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+              currentTab === 'enterprise_requests'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Enterprise Sub-Branch Manifests</span>
+            {pendingDocsCount > 0 ? (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold animate-pulse">
+                {pendingDocsCount} Pending
+              </span>
+            ) : (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold">
+                {enterpriseDocs.length}
+              </span>
+            )}
+          </button>
+        )}
+      </div>
+
+      {currentTab === 'facilities' ? (
+        <>
+          {/* Summary KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-4 rounded-xl bg-white border border-slate-200/80 shadow-xs flex items-center justify-between">
           <div>
@@ -476,7 +693,19 @@ export const HospitalManagement: React.FC = () => {
                             </label>
                           </div>
                           <div>
-                            <p className="font-bold text-slate-900 leading-tight">{hosp.name}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="font-bold text-slate-900 leading-tight">{hosp.name}</p>
+                              {hosp.isHeadBranch && (
+                                <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200">
+                                  Head Branch
+                                </span>
+                              )}
+                              {hosp.isBranch && (
+                                <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200">
+                                  Sub-Branch {hosp.branchCode ? `(${hosp.branchCode})` : ''}
+                                </span>
+                              )}
+                            </div>
                             <p className="text-[11px] text-slate-500 mt-0.5">{hosp.city}, {hosp.state} • <span className="font-mono text-indigo-600 font-semibold">{hosp.id}</span></p>
                             <p className="text-[10px] text-slate-400">{hosp.type}</p>
                           </div>
@@ -612,6 +841,323 @@ export const HospitalManagement: React.FC = () => {
           onPageChange={(p) => setCurrentPage(p)}
         />
       </Card>
+    </>
+  ) : (
+    /* Enterprise Sub-Branch Manifest Requests Desk (Super Admin & Super Admin Manager Only) */
+    <div className="space-y-4">
+      <div className="p-4 rounded-xl bg-purple-50/60 border border-purple-100 flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div className="p-2.5 rounded-xl bg-purple-100 text-purple-700 shrink-0 mt-0.5">
+            <Network className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-purple-950">
+              Enterprise Health Network – Sub-Branch Provisioning Desk
+            </h3>
+            <p className="text-xs text-purple-800 mt-0.5 max-w-3xl leading-relaxed">
+              When a hospital upgrades to <strong>Enterprise Health Network</strong>, it uploads a specification document (up to 5 MB) detailing proposed sub-branches. As Super Admin or Super Admin Manager, review the manifest specifications below and click <strong>Provision Sub-Branch</strong> to instantiate branches under the hospital&apos;s network and generate their websites.
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-purple-200 text-purple-800 text-xs font-bold shadow-xs">
+          <ShieldCheck className="w-4 h-4 text-purple-600" />
+          <span>Platform HQ Access Only</span>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader
+          title="Enterprise Sub-Branch Manifest Documents"
+          subtitle="Hospital network submissions awaiting review and branch creation"
+        />
+        {enterpriseDocs.length === 0 ? (
+          <EmptyState
+            title="No Sub-Branch Manifests Submitted Yet"
+            description="When hospitals upgrade to the Enterprise Health Network tier and attach a sub-branch specification file, it will appear here for Super Admin provisioning."
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-500 font-semibold uppercase tracking-wider">
+                  <th className="px-5 py-3.5">Hospital Network (Head Branch)</th>
+                  <th className="px-4 py-3.5">Manifest Specification File</th>
+                  <th className="px-4 py-3.5">Uploaded By</th>
+                  <th className="px-4 py-3.5">Provisioning Status</th>
+                  <th className="px-4 py-3.5">Linked Sub-Branches</th>
+                  <th className="px-5 py-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {enterpriseDocs.map((doc) => {
+                  const linkedBranches = hospitals.filter(
+                    (h) => doc.provisionedBranchIds && doc.provisionedBranchIds.includes(h.id)
+                  );
+
+                  return (
+                    <tr key={doc.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-2">
+                          <Building2 className="w-4 h-4 text-purple-600 shrink-0" />
+                          <div>
+                            <p className="font-bold text-slate-900 leading-tight">{doc.hospitalName}</p>
+                            <span className="inline-block mt-0.5 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-200">
+                              Head Branch
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-900 truncate max-w-xs">{doc.fileName}</p>
+                            <p className="text-[10px] text-slate-500">
+                              {(doc.fileSize / 1024).toFixed(1)} KB • {new Date(doc.uploadedAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-4 text-slate-600">
+                        <p className="font-medium text-slate-900">{doc.uploadedBy}</p>
+                        <p className="text-[11px] text-slate-500">{doc.uploadedByEmail || 'admin@hospital.org'}</p>
+                      </td>
+
+                      <td className="px-4 py-4">
+                        {doc.status === 'pending_review' && (
+                          <Badge variant="warning" dot>Pending Review</Badge>
+                        )}
+                        {doc.status === 'provisioned' && (
+                          <Badge variant="success" dot>Branches Provisioned</Badge>
+                        )}
+                        {doc.status === 'rejected' && (
+                          <Badge variant="error" dot>Rejected</Badge>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-4">
+                        {linkedBranches.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {linkedBranches.map((b) => (
+                              <span
+                                key={b.id}
+                                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200"
+                              >
+                                {b.name} ({b.branchCode || b.id})
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-[11px] italic">No sub-branches created yet</span>
+                        )}
+                      </td>
+
+                      <td className="px-5 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => handleDownloadManifestDoc(doc)}
+                            leftIcon={<Download className="w-3.5 h-3.5 text-slate-600" />}
+                            title="Download uploaded manifest file"
+                          >
+                            Download
+                          </Button>
+                          <Button
+                            variant="coral"
+                            size="xs"
+                            onClick={() => handleOpenProvisionBranchModal(doc)}
+                            leftIcon={<Plus className="w-3.5 h-3.5" />}
+                          >
+                            Provision Sub-Branch
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  )}
+
+  {/* Provision Sub-Branch Modal (Super Admin & Manager) */}
+  <Modal
+    isOpen={isProvisionBranchModalOpen && !!selectedDocForProvision}
+    onClose={() => {
+      setIsProvisionBranchModalOpen(false);
+      setSelectedDocForProvision(null);
+    }}
+    title="Provision Sub-Branch Facility from Manifest"
+    subtitle={`Instantiating sub-branch under ${selectedDocForProvision?.hospitalName} Health Network`}
+    maxWidth="2xl"
+  >
+    <form onSubmit={handleProvisionBranchSubmit} className="space-y-4">
+      <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Parent Hospital Network</p>
+          <p className="text-sm font-bold text-slate-900 mt-0.5">{selectedDocForProvision?.hospitalName}</p>
+        </div>
+        <span className="px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200">
+          Designated Head Branch
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Input
+          label="Sub-Branch Facility Name *"
+          value={branchFormData.branchName}
+          onChange={(e) => setBranchFormData({ ...branchFormData, branchName: e.target.value })}
+          placeholder="e.g. ABC Hospital - Mumbai"
+          required
+        />
+        <Input
+          label="Branch Code / Identifier *"
+          value={branchFormData.branchCode}
+          onChange={(e) => setBranchFormData({ ...branchFormData, branchCode: e.target.value.toUpperCase() })}
+          placeholder="e.g. ABC-BOM"
+          className="font-mono uppercase"
+          required
+        />
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <Input
+          label="City *"
+          value={branchFormData.city}
+          onChange={(e) => setBranchFormData({ ...branchFormData, city: e.target.value })}
+          placeholder="e.g. Mumbai"
+          required
+        />
+        <Input
+          label="State / Province *"
+          value={branchFormData.state}
+          onChange={(e) => setBranchFormData({ ...branchFormData, state: e.target.value })}
+          placeholder="e.g. Maharashtra"
+          required
+        />
+        <Input
+          label="Country *"
+          value={branchFormData.country}
+          onChange={(e) => setBranchFormData({ ...branchFormData, country: e.target.value })}
+          placeholder="e.g. India"
+          required
+        />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="sm:col-span-2">
+          <Input
+            label="Street Address *"
+            value={branchFormData.address}
+            onChange={(e) => setBranchFormData({ ...branchFormData, address: e.target.value })}
+            placeholder="e.g. Plot 45, Bandra Kurla Complex"
+            required
+          />
+        </div>
+        <Input
+          label="Inpatient Bed Allocation *"
+          type="number"
+          min={1}
+          value={branchFormData.totalBeds}
+          onChange={(e) => setBranchFormData({ ...branchFormData, totalBeds: Number(e.target.value) })}
+          required
+        />
+      </div>
+
+      {/* Sub-Branch Administrator Credentials */}
+      <div className="p-3.5 bg-blue-50/50 rounded-xl border border-blue-100 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-xs font-bold text-slate-900">Dedicated Sub-Branch Administrator</h4>
+            <p className="text-[10px] text-slate-500">
+              Role: <span className="font-bold text-blue-700">Hospital Admin</span> (Restricted strictly to this sub-branch)
+            </p>
+          </div>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200">
+            Single-Branch Boundary
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Input
+            label="Branch Admin Name *"
+            value={branchFormData.branchAdminName}
+            onChange={(e) => setBranchFormData({ ...branchFormData, branchAdminName: e.target.value })}
+            placeholder="e.g. Dr. Rajesh Sharma"
+            required
+          />
+          <Input
+            label="Official Email *"
+            type="email"
+            value={branchFormData.branchAdminEmail}
+            onChange={(e) => setBranchFormData({ ...branchFormData, branchAdminEmail: e.target.value })}
+            placeholder="admin.mumbai@abchospital.com"
+            required
+          />
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Login Password *
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={branchFormData.branchAdminPassword}
+                onChange={(e) => setBranchFormData({ ...branchFormData, branchAdminPassword: e.target.value })}
+                className="w-full text-xs py-2 px-3 border border-slate-300 rounded-lg bg-white font-mono"
+                required
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setBranchFormData({ ...branchFormData, branchAdminPassword: `Admin@${Math.floor(100 + Math.random() * 900)}` })}
+                className="shrink-0 text-[11px] px-2 py-1 font-bold"
+              >
+                Gen
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-2.5 rounded-lg bg-white border border-blue-200 text-[11px] text-slate-600 flex items-start gap-2">
+          <Lock className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+          <p>
+            <strong>Security Isolation:</strong> This branch admin can <em>only</em> access and operate <strong>{branchFormData.branchName || 'this sub-branch'}</strong>. They cannot log into the Head Branch or other branches. The Head Branch Network Admin will have full multi-branch switching access.
+          </p>
+        </div>
+      </div>
+
+      <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800 flex items-center gap-2">
+        <Globe className="w-4 h-4 text-emerald-600 shrink-0" />
+        <span>
+          <strong>Public Website:</strong> A dedicated draft website will be initialized at <span className="font-mono font-bold">https://{(branchFormData.branchCode || 'branch').toLowerCase()}.pulsecorehealth.com</span>.
+        </span>
+      </div>
+
+      <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+        <Button
+          type="button"
+          variant="outline"
+          size="md"
+          onClick={() => {
+            setIsProvisionBranchModalOpen(false);
+            setSelectedDocForProvision(null);
+          }}
+        >
+          Cancel
+        </Button>
+        <Button type="submit" variant="coral" size="md">
+          Provision Sub-Branch & Website
+        </Button>
+      </div>
+    </form>
+  </Modal>
 
       {/* Add / Edit Hospital Modal */}
       <Modal
@@ -675,40 +1221,40 @@ export const HospitalManagement: React.FC = () => {
             </Select>
 
             <div>
-              <Select
-                label="Subscription Tier (Synced with Platform Billing)"
-                value={formData.planTier}
-                onChange={(e) => {
-                  const newTier = e.target.value as SubscriptionPlanTier;
-                  const selectedPlan = MockStorage.getPlanByTier(newTier);
-                  setFormData({
-                    ...formData,
-                    planTier: newTier,
-                    totalBeds: selectedPlan ? selectedPlan.maxBeds : 0,
-                  });
-                }}
-              >
-                {MockStorage.getPlans().map((plan) => (
-                  <option key={plan.id} value={plan.tier}>
-                    {plan.name} ({plan.priceMonthly === 0 ? `${plan.name} (₹0)` : `₹${plan.priceMonthly.toLocaleString('en-IN')}/mo`})
-                  </option>
-                ))}
-              </Select>
-              {(() => {
-                const plan = MockStorage.getPlanByTier(formData.planTier);
-                return (
-                  <div className="mt-1.5 p-2 rounded-lg bg-slate-50 border border-slate-200/80 text-[11px] text-slate-600 flex items-center justify-between gap-2 flex-wrap">
-                    <span className="font-semibold text-slate-800">Plan Allocation:</span>
-                    <span><strong className="text-indigo-600">{plan.maxBeds} Beds</strong></span>
-                    <span>•</span>
-                    <span><strong className="text-indigo-600">{plan.maxDoctors} Docs</strong></span>
-                    <span>•</span>
-                    <span><strong className="text-indigo-600">{plan.maxPatients.toLocaleString('en-IN')} EHR</strong></span>
-                    <span>•</span>
-                    <span><strong className="text-indigo-600">{plan.storageGB} GB</strong></span>
-                  </div>
-                );
-              })()}
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Subscription Tier (Auto-Configured)
+              </label>
+              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-indigo-700">
+                    {MockStorage.getPlanByTier(isEditModalOpen && selectedHospital ? selectedHospital.planTier : (MockStorage.getPlatformSettings().defaultPlanTier || 'trial')).name}
+                  </span>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    {isEditModalOpen ? 'Current Plan' : 'Auto-Assigned'}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  {isEditModalOpen
+                    ? 'Subscription tiers are managed and upgraded securely via Platform Billing.'
+                    : `Auto-assigned from Platform Settings (Default Tier on Signup: ${MockStorage.getPlatformSettings().defaultPlanTier || 'trial'}). Upgrades happen via Billing.`
+                  }
+                </p>
+                {(() => {
+                  const activePlanTier = isEditModalOpen && selectedHospital ? selectedHospital.planTier : (MockStorage.getPlatformSettings().defaultPlanTier || 'trial');
+                  const plan = MockStorage.getPlanByTier(activePlanTier);
+                  return (
+                    <div className="mt-2 pt-2 border-t border-slate-200/80 text-[11px] text-slate-600 flex items-center justify-between gap-1 flex-wrap">
+                      <span><strong className="text-indigo-600">{plan.maxBeds} Beds</strong></span>
+                      <span>•</span>
+                      <span><strong className="text-indigo-600">{plan.maxDoctors} Docs</strong></span>
+                      <span>•</span>
+                      <span><strong className="text-indigo-600">{plan.maxPatients.toLocaleString('en-IN')} EHR</strong></span>
+                      <span>•</span>
+                      <span><strong className="text-indigo-600">{plan.storageGB} GB</strong></span>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
           </div>
 
@@ -888,7 +1434,7 @@ export const HospitalManagement: React.FC = () => {
             >
               Cancel
             </Button>
-            <Button type="submit" variant="primary" size="md">
+            <Button type="submit" variant="coral" size="md">
               {isEditModalOpen ? 'Save Changes' : 'Provision Hospital'}
             </Button>
           </div>
@@ -903,6 +1449,15 @@ export const HospitalManagement: React.FC = () => {
         title="Delete Hospital Tenant Workspace?"
         message="Are you sure you want to permanently delete this hospital? All associated tenant records, staff profiles, and simulated EHR data will be purged."
         confirmText="Yes, Delete Tenant"
+      />
+
+      {/* Manual Onboard Sub-Branch Modal */}
+      <OnboardSubBranchModal
+        isOpen={isOnboardBranchModalOpen}
+        onClose={() => setIsOnboardBranchModalOpen(false)}
+        onSuccess={() => {
+          refreshData();
+        }}
       />
     </div>
   );

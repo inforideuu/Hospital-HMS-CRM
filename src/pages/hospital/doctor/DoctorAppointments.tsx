@@ -17,6 +17,7 @@ import {
   Download,
   Activity,
   UserCheck,
+  Lock,
 } from 'lucide-react';
 import { MockStorage } from '../../../services/mockStorage';
 import { ApiService } from '../../../services/apiService';
@@ -143,6 +144,25 @@ export const DoctorAppointments: React.FC = () => {
   const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const handleStartConsultation = async (apt: Appointment) => {
+    const hospSettings = MockStorage.getHospitalSettings(apt.hospitalId || hospId);
+    const isVitalsTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+    const pat = MockStorage.getPatientById(apt.patientId);
+    const hasVitals = Boolean(
+      pat?.vitals?.bloodPressure ||
+      pat?.vitals?.heartRate ||
+      pat?.vitals?.temperature ||
+      pat?.vitals?.oxygenLevel
+    );
+
+    if (isVitalsTriageMandatory && !hasVitals) {
+      showToast(
+        'Nursing Vitals Triage Pending',
+        `Hospital policy requires nurse clinical vitals triage before beginning consultation for ${apt.patientName}. Nurse must complete vitals intake first.`,
+        'warning'
+      );
+      return;
+    }
+
     try {
       const timestamp = new Date().toISOString();
       MockStorage.updateAppointmentStatus(apt.id, 'In Consultation', {
@@ -360,17 +380,51 @@ export const DoctorAppointments: React.FC = () => {
                             <Eye className="w-3.5 h-3.5" />
                           </Button>
 
-                          {apt.status === 'Checked In' && (
-                            <Button
-                              variant="primary"
-                              size="xs"
-                              onClick={() => handleStartConsultation(apt)}
-                              leftIcon={<Play className="w-3 h-3" />}
-                              className="bg-brand-600 hover:bg-brand-700 text-white font-semibold"
-                            >
-                              Start
-                            </Button>
-                          )}
+                          {apt.status === 'Checked In' && (() => {
+                            const pat = MockStorage.getPatientById(apt.patientId);
+                            const hospSettings = MockStorage.getHospitalSettings(apt.hospitalId || hospId);
+                            const isVitalsTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+                            const hasNurseVitals = Boolean(
+                              pat?.vitals?.bloodPressure ||
+                              pat?.vitals?.heartRate ||
+                              pat?.vitals?.temperature ||
+                              pat?.vitals?.oxygenLevel
+                            );
+                            const isVitalsPending = isVitalsTriageMandatory && !hasNurseVitals;
+
+                            if (isVitalsPending) {
+                              return (
+                                <Button
+                                  variant="outline"
+                                  size="xs"
+                                  className="border-amber-300 text-amber-700 bg-amber-50 cursor-not-allowed opacity-90 font-medium"
+                                  onClick={() => {
+                                    showToast(
+                                      'Nursing Vitals Triage Pending',
+                                      `Hospital policy requires nurse clinical vitals triage before starting consultation for ${apt.patientName}.`,
+                                      'warning'
+                                    );
+                                  }}
+                                  title="Locked: Nurse must record vital signs first"
+                                >
+                                  <Lock className="w-3 h-3 mr-1 text-amber-600" />
+                                  Vitals Pending
+                                </Button>
+                              );
+                            }
+
+                            return (
+                              <Button
+                                variant="primary"
+                                size="xs"
+                                onClick={() => handleStartConsultation(apt)}
+                                leftIcon={<Play className="w-3 h-3" />}
+                                className="bg-brand-600 hover:bg-brand-700 text-white font-semibold"
+                              >
+                                Start
+                              </Button>
+                            );
+                          })()}
 
                           {apt.status === 'In Consultation' && (
                             <Button
@@ -505,19 +559,52 @@ export const DoctorAppointments: React.FC = () => {
               >
                 Open Patient EHR
               </Button>
-              {selectedAppointment.status === 'Checked In' && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    setIsDetailModalOpen(false);
-                    handleStartConsultation(selectedAppointment);
-                  }}
-                  leftIcon={<Play className="w-3.5 h-3.5" />}
-                >
-                  Start Consultation
-                </Button>
-              )}
+              {selectedAppointment.status === 'Checked In' && (() => {
+                const pat = MockStorage.getPatientById(selectedAppointment.patientId);
+                const hospSettings = MockStorage.getHospitalSettings(selectedAppointment.hospitalId || hospId);
+                const isVitalsTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+                const hasNurseVitals = Boolean(
+                  pat?.vitals?.bloodPressure ||
+                  pat?.vitals?.heartRate ||
+                  pat?.vitals?.temperature ||
+                  pat?.vitals?.oxygenLevel
+                );
+                const isVitalsPending = isVitalsTriageMandatory && !hasNurseVitals;
+
+                if (isVitalsPending) {
+                  return (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-amber-300 text-amber-700 bg-amber-50 cursor-not-allowed font-medium"
+                      onClick={() => {
+                        showToast(
+                          'Nursing Vitals Triage Pending',
+                          `Hospital policy requires nurse vitals triage before starting consultation for ${selectedAppointment.patientName}. Nurse must record vitals first.`,
+                          'warning'
+                        );
+                      }}
+                      leftIcon={<Lock className="w-3.5 h-3.5 text-amber-600" />}
+                    >
+                      Vitals Pending (Locked)
+                    </Button>
+                  );
+                }
+
+                return (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      setIsDetailModalOpen(false);
+                      handleStartConsultation(selectedAppointment);
+                    }}
+                    leftIcon={<Play className="w-3.5 h-3.5" />}
+                  >
+                    Start Consultation
+                  </Button>
+                );
+              })()}
             </div>
           </div>
         </Modal>

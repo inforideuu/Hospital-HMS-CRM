@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   User,
   HeartPulse,
   Activity,
   AlertTriangle,
+  AlertCircle,
   Calendar,
   BedDouble,
   Receipt,
@@ -21,6 +22,7 @@ import {
   Download,
   Plus,
   Printer,
+  Lock,
 } from 'lucide-react';
 import { printPrescription } from '../../../utils/prescriptionPrint';
 import { MockStorage } from '../../../services/mockStorage';
@@ -70,6 +72,12 @@ export const PatientDetail: React.FC = () => {
   const labOrders = MockStorage.getLabOrders(hospId).filter((l) => l.patientId === id);
 
   const [activeTab, setActiveTab] = useState('appointments');
+  const pendingPenalties = MockStorage.getPendingCancellationPenalties(patient?.id || '', hospId);
+  const totalPendingPenalty = pendingPenalties.reduce((sum, p) => {
+    const cPen = (!p.cancellationPenaltyCollected ? p.cancellationPenalty : 0) || 0;
+    const rPen = (!p.reschedulingPenaltyCollected ? p.reschedulingPenalty : 0) || 0;
+    return sum + cPen + rPen;
+  }, 0);
   const currentTier = currentHospital?.planTier;
   const hasBedCapability = isCapabilityAllowedForTier(currentTier, 'admissions_beds');
 
@@ -147,6 +155,10 @@ export const PatientDetail: React.FC = () => {
     };
     MockStorage.savePatient(updated);
     setPatient(updated);
+    const checkedInAppt = appointments.find((a) => a.status === 'Checked In');
+    if (checkedInAppt) {
+      MockStorage.markNotificationAsRead(`notif-checkin-nurse-${checkedInAppt.id}`);
+    }
     setIsVitalsModalOpen(false);
     showToast('Clinical Intake Recorded', `Vitals and clinical warnings for ${patient.name} successfully saved to EHR.`);
   };
@@ -217,6 +229,29 @@ export const PatientDetail: React.FC = () => {
           </div>
         }
       />
+
+      {/* Late Cancellation Penalty Intimation Banner for Staff */}
+      {totalPendingPenalty > 0 && (
+        <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-amber-950">
+                Outstanding Late Cancellation Penalty: ₹{totalPendingPenalty}
+              </p>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                This patient incurred an uncollected penalty from {pendingPenalties.length} late-cancelled appointment(s).
+                The cashier desk will automatically append this charge upon generating their next billing invoice.
+              </p>
+            </div>
+          </div>
+          <Link to={`/hospital/billing`}>
+            <Button size="xs" variant="outline" className="border-amber-300 text-amber-900 hover:bg-amber-100 font-bold shrink-0">
+              Go to Billing Desk
+            </Button>
+          </Link>
+        </div>
+      )}
 
       {/* Real-Time Clinical Vitals Strip */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -403,14 +438,45 @@ export const PatientDetail: React.FC = () => {
                           <span>{apt.appointmentDate} at {apt.appointmentTime}</span>
                           <div className="flex items-center gap-2">
                             <span>Fee: ₹{apt.fee} ({apt.paymentStatus})</span>
-                            {apt.status === 'Checked In' && (
-                              <button
-                                onClick={() => navigate(`/hospital/consultation/${apt.id}`)}
-                                className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg transition-colors"
-                              >
-                                Start Consultation
-                              </button>
-                            )}
+                            {apt.status === 'Checked In' && (() => {
+                              const hospSettings = MockStorage.getHospitalSettings(apt.hospitalId || patient.hospitalId || 'hosp-1');
+                              const isVitalsTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+                              const hasNurseVitals = Boolean(
+                                patient?.vitals?.bloodPressure ||
+                                patient?.vitals?.heartRate ||
+                                patient?.vitals?.temperature ||
+                                patient?.vitals?.oxygenLevel
+                              );
+                              const isVitalsPending = isVitalsTriageMandatory && !hasNurseVitals;
+
+                              if (isVitalsPending) {
+                                return (
+                                  <button
+                                    onClick={() => {
+                                      showToast(
+                                        'Nursing Vitals Triage Pending',
+                                        `Hospital policy requires nurse clinical vitals triage before starting consultation for ${patient.name}. Nurse must record vitals first.`,
+                                        'warning'
+                                      );
+                                    }}
+                                    className="px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-300 font-medium rounded-lg text-xs flex items-center gap-1 cursor-not-allowed"
+                                    title="Locked: Nurse must record vital signs first"
+                                  >
+                                    <Lock className="w-3 h-3 text-amber-600" />
+                                    Vitals Pending
+                                  </button>
+                                );
+                              }
+
+                              return (
+                                <button
+                                  onClick={() => navigate(`/hospital/consultation/${apt.id}`)}
+                                  className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg transition-colors"
+                                >
+                                  Start Consultation
+                                </button>
+                              );
+                            })()}
                             {apt.status === 'In Consultation' && (
                               <button
                                 onClick={() => navigate(`/hospital/consultation/${apt.id}`)}

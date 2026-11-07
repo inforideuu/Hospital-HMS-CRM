@@ -5,7 +5,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
-from django.db.models import Sum, Count
+from django.db import models
+from django.db.models import Sum, Count, Q
 from django.utils.text import slugify
 
 def parse_time_to_minutes(time_str):
@@ -72,6 +73,7 @@ from .models import (
     PatientTestimonial,
     HospitalSetting,
     PlatformSetting,
+    DemoRequest,
 )
 from .serializers import (
     OrganizationSerializer,
@@ -117,6 +119,7 @@ from .serializers import (
     PatientTestimonialSerializer,
     HospitalSettingSerializer,
     PlatformSettingSerializer,
+    DemoRequestSerializer,
 )
 
 class UpsertModelViewSetMixin:
@@ -320,9 +323,14 @@ class UserProfileViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         email = instance.email
-        if email and instance.role == 'doctor':
+        if email:
             normalized_email = email.strip().lower()
-            Doctor.objects.filter(email__iexact=normalized_email).delete()
+            if instance.role == 'doctor':
+                Doctor.objects.filter(email__iexact=normalized_email).delete()
+            elif instance.role == 'patient':
+                Patient.objects.filter(email__iexact=normalized_email).delete()
+            else:
+                Staff.objects.filter(email__iexact=normalized_email).delete()
         instance.delete()
 
 def get_request_hospital_context(request):
@@ -396,6 +404,13 @@ class PatientViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         return super().create(request, *args, **kwargs)
 
+    def perform_destroy(self, instance):
+        email = instance.email
+        if email:
+            normalized_email = email.strip().lower()
+            UserProfile.objects.filter(normalized_email=normalized_email, role='patient').delete()
+        instance.delete()
+
 class DoctorViewSet(viewsets.ModelViewSet):
     queryset = Doctor.objects.all()
     serializer_class = DoctorSerializer
@@ -467,6 +482,10 @@ class AppointmentViewSet(viewsets.ModelViewSet):
 
         doctor_id = request.data.get('doctor') or request.data.get('doctor_id')
         hospital_id = request.data.get('hospital') or request.data.get('hospital_id')
+        if doctor_id:
+            doc_obj = Doctor.objects.filter(id=doctor_id).first()
+            if doc_obj and doc_obj.hospital:
+                hospital_id = doc_obj.hospital_id
         date = request.data.get('date')
         time = request.data.get('time')
         opd_room_id = request.data.get('opd_room_id')
@@ -499,14 +518,16 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 3. Reject booking for passed slots on the current date
+        # 3. Reject booking for passed slots on the current date (allow reception walk-ins / confirmed bookings)
         if date and time and str(date) == today_hospital_str:
-            slot_mins = parse_time_to_minutes(time)
-            if slot_mins is not None and slot_mins <= now_minutes:
-                return Response(
-                    {'error': 'Selected consultation slot has already passed.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            req_status = request.data.get('status')
+            if req_status not in ['Confirmed', 'Checked In']:
+                slot_mins = parse_time_to_minutes(time)
+                if slot_mins is not None and slot_mins <= now_minutes:
+                    return Response(
+                        {'error': 'Selected consultation slot has already passed.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
         # 4. Check doctor overlapping appointment
         if doctor_id and date and time:
@@ -580,6 +601,22 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             elif new_status == 'Completed' and not instance.consultation_completed_at:
                 instance.consultation_completed_at = dj_timezone.now()
 
+            # Chamber occupancy automatic synchronization
+            room_id = instance.opd_room_id or (instance.doctor.opd_room_id if instance.doctor else None)
+            if room_id:
+                if new_status == 'In Consultation':
+                    OPDRoom.objects.filter(id=room_id, hospital=instance.hospital).update(status='Occupied')
+                elif new_status in ['Completed', 'Cancelled', 'No Show']:
+                    other_active = Appointment.objects.filter(
+                        hospital=instance.hospital,
+                        status='In Consultation'
+                    ).exclude(id=instance.id)
+                    has_other = other_active.filter(
+                        models.Q(opd_room_id=room_id) | models.Q(doctor__opd_room_id=room_id)
+                    ).exists()
+                    if not has_other:
+                        OPDRoom.objects.filter(id=room_id, hospital=instance.hospital).update(status='Available')
+
         return super().partial_update(request, *args, **kwargs)
 
     @action(detail=True, methods=['post'])
@@ -636,10 +673,34 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
 
+        # Check mandatory vitals triage if configured for this hospital
+        hosp = appointment.hospital
+        hosp_setting_obj = HospitalSetting.objects.filter(hospital_id=hosp.id).first() if hosp else None
+        hosp_settings = hosp_setting_obj.data if hosp_setting_obj and isinstance(hosp_setting_obj.data, dict) else {}
+        mandatory_vitals = hosp_settings.get('mandatoryVitalsTriage', True)
+        if mandatory_vitals:
+            patient_vitals = appointment.patient.vitals if appointment.patient else {}
+            has_vitals = bool(
+                patient_vitals.get('bloodPressure') or
+                patient_vitals.get('heartRate') or
+                patient_vitals.get('temperature') or
+                patient_vitals.get('oxygenLevel')
+            )
+            if not has_vitals:
+                return Response(
+                    {'error': 'Mandatory Nursing Vitals Triage pending: A nurse must record clinical vitals before doctor consultation can begin.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         appointment.status = 'In Consultation'
         if not appointment.consultation_started_at:
             appointment.consultation_started_at = dj_timezone.now()
         appointment.save()
+
+        # Update OPD Room status to Occupied
+        room_id = appointment.opd_room_id or (appointment.doctor.opd_room_id if appointment.doctor else None)
+        if room_id:
+            OPDRoom.objects.filter(id=room_id, hospital=appointment.hospital).update(status='Occupied')
 
         # Retrieve or initialize draft consultation
         consultation = Consultation.objects.filter(appointment=appointment).first()
@@ -708,6 +769,13 @@ class ConsultationViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         return super().create(request, *args, **kwargs)
 
+    def perform_destroy(self, instance):
+        email = instance.email
+        if email:
+            normalized_email = email.strip().lower()
+            UserProfile.objects.filter(normalized_email=normalized_email, role='patient').delete()
+        instance.delete()
+
     def perform_create(self, serializer):
         appointment_id = self.request.data.get('appointment') or self.request.data.get('appointment_id')
         appointment = None
@@ -768,6 +836,19 @@ class ConsultationViewSet(viewsets.ModelViewSet):
             apt.status = 'Completed'
             apt.consultation_completed_at = finalized_at
             apt.save()
+
+            # Update OPD Room back to Available if no other active consultation
+            room_id = apt.opd_room_id or (apt.doctor.opd_room_id if apt.doctor else None)
+            if room_id:
+                other_active = Appointment.objects.filter(
+                    hospital=apt.hospital,
+                    status='In Consultation'
+                ).exclude(id=apt.id)
+                has_other = other_active.filter(
+                    models.Q(opd_room_id=room_id) | models.Q(doctor__opd_room_id=room_id)
+                ).exists()
+                if not has_other:
+                    OPDRoom.objects.filter(id=room_id, hospital=apt.hospital).update(status='Available')
 
         # 2. Update Patient EHR:
         patient = consultation.patient
@@ -1057,6 +1138,13 @@ def auth_login(request):
 
     # 2. Authenticate based on resolved tenant scope
     if hospital:
+        # Check facility suspension status
+        if hospital.status and hospital.status.lower() in ['suspended', 'inactive', 'rejected']:
+            return Response({
+                'success': False,
+                'message': f'Facility Access Suspended: "{hospital.name}" has been suspended by system administration. Access is temporarily revoked.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
         # Hospital-specific login: strictly look up by (hospital, normalized_email)
         user = UserProfile.objects.filter(hospital=hospital, normalized_email=normalized_email).first()
         if not user:
@@ -1152,6 +1240,12 @@ def auth_login(request):
             }, status=status.HTTP_200_OK)
 
         user = valid_users[0]
+
+        if user.hospital and user.hospital.status and user.hospital.status.lower() in ['suspended', 'inactive', 'rejected'] and user.role not in ['super_admin', 'super_admin_manager']:
+            return Response({
+                'success': False,
+                'message': f'Facility Access Suspended: "{user.hospital.name}" has been suspended by system administration. Access is temporarily revoked.'
+            }, status=status.HTTP_403_FORBIDDEN)
 
         if getattr(user, 'status', 'active') != 'active':
             return Response({
@@ -1355,6 +1449,13 @@ class StaffViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(role=role_param)
         return queryset
 
+    def perform_destroy(self, instance):
+        email = instance.email
+        if email:
+            normalized_email = email.strip().lower()
+            UserProfile.objects.filter(normalized_email=normalized_email).exclude(role__in=['super_admin', 'super_admin_manager']).delete()
+        instance.delete()
+
 
 class ActivityLogViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
     queryset = ActivityLog.objects.all()
@@ -1465,6 +1566,80 @@ class CouponCodeViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
     queryset = CouponCode.objects.all().order_by('-created_at')
     serializer_class = CouponCodeSerializer
 
+    @action(detail=False, methods=['post'], url_path='validate')
+    def validate_coupon(self, request):
+        code = str(request.data.get('code', '')).strip()
+        hospital_id = str(request.data.get('hospital_id', '') or request.data.get('hospitalId', '')).strip()
+
+        if not code:
+            return Response({'valid': False, 'message': 'Coupon code is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            coupon = CouponCode.objects.get(code__iexact=code)
+        except CouponCode.DoesNotExist:
+            return Response({'valid': False, 'message': 'Invalid or inactive promotional coupon code.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not coupon.is_active:
+            return Response({'valid': False, 'message': 'This coupon code is currently disabled.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from datetime import date
+        if coupon.valid_until and coupon.valid_until < date.today():
+            return Response({'valid': False, 'message': 'This coupon code has expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if coupon.max_uses and coupon.used_count >= coupon.max_uses:
+            return Response({'valid': False, 'message': 'Coupon usage limit has been reached.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        category = coupon.category or 'subscription'
+        target_scope = str(request.data.get('target_scope', '') or request.data.get('targetScope', '') or 'subscription').strip()
+        if target_scope == 'subscription' and category == 'billing_software':
+            return Response({
+                'valid': False,
+                'message': f'Promo code "{coupon.code}" belongs to the Billing Software Suite category (external partner software). It has no function inside this HMS & CRM project and provides ₹0 discount for subscription plans.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        used_by = coupon.used_by_hospitals or []
+        if hospital_id:
+            norm_id = hospital_id.lower().replace('-', '')
+            if any(str(h).lower().replace('-', '') == norm_id for h in used_by):
+                return Response({'valid': False, 'message': 'This coupon code has already been redeemed by your hospital and cannot be reused.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'valid': True,
+            'discountPercentage': float(coupon.discount_percentage),
+            'discount_percentage': float(coupon.discount_percentage),
+            'message': f"{coupon.discount_percentage}% discount applied!",
+            'coupon': CouponCodeSerializer(coupon).data
+        })
+
+    @action(detail=False, methods=['post'], url_path='redeem')
+    def redeem_coupon(self, request):
+        code = str(request.data.get('code', '')).strip()
+        hospital_id = str(request.data.get('hospital_id', '') or request.data.get('hospitalId', '')).strip()
+
+        if not code or not hospital_id:
+            return Response({'success': False, 'message': 'Both code and hospital_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            coupon = CouponCode.objects.get(code__iexact=code)
+        except CouponCode.DoesNotExist:
+            return Response({'success': False, 'message': 'Coupon not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        used_by = list(coupon.used_by_hospitals or [])
+        norm_id = hospital_id.lower().replace('-', '')
+        if any(str(h).lower().replace('-', '') == norm_id for h in used_by):
+            return Response({'success': False, 'message': 'This coupon code has already been redeemed by your hospital and cannot be reused.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        used_by.append(hospital_id)
+        coupon.used_by_hospitals = used_by
+        coupon.used_count = (coupon.used_count or 0) + 1
+        coupon.save()
+
+        return Response({
+            'success': True,
+            'message': f'Coupon {coupon.code} redeemed successfully for hospital {hospital_id}.',
+            'coupon': CouponCodeSerializer(coupon).data
+        })
+
 
 class BranchCreationRequestViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
     queryset = BranchCreationRequest.objects.all().order_by('-created_at')
@@ -1567,6 +1742,12 @@ class HospitalSettingViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
 class PlatformSettingViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
     queryset = PlatformSetting.objects.all()
     serializer_class = PlatformSettingSerializer
+
+
+class DemoRequestViewSet(UpsertModelViewSetMixin, viewsets.ModelViewSet):
+    queryset = DemoRequest.objects.all().order_by('-created_at')
+    serializer_class = DemoRequestSerializer
+
 
 
 

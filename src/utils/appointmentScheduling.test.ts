@@ -54,7 +54,7 @@ const baseSettings: AppointmentSettings = {
   minAdvanceBookingHours: 2,
   cancellationDeadlineHours: 4,
   reschedulingDeadlineHours: 4,
-  appointmentBufferMinutes: 5,
+  appointmentBufferMinutes: 0,
   allowSameDayBooking: true,
 };
 
@@ -846,7 +846,9 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
       overnightSchedule,
       [],
       [],
-      baseSettings
+      baseSettings,
+      'Asia/Kolkata',
+      new Date('2026-10-26T13:30:00+05:30')
     );
     assert.equal(valBreak.isValid, false);
     assert.match(valBreak.errorMessage || '', /break/i);
@@ -861,7 +863,9 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
       overnightSchedule,
       [],
       [],
-      baseSettings
+      baseSettings,
+      'Asia/Kolkata',
+      new Date('2026-10-26T13:30:00+05:30')
     );
     assert.equal(valAvailable.isValid, true);
 
@@ -875,7 +879,9 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
       overnightSchedule,
       [],
       [],
-      baseSettings
+      baseSettings,
+      'Asia/Kolkata',
+      new Date('2026-10-26T13:30:00+05:30')
     );
     assert.equal(valMondayEvening.isValid, true);
 
@@ -965,7 +971,9 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
       schedule45Min,
       [],
       [],
-      baseSettings
+      baseSettings,
+      'Asia/Kolkata',
+      new Date('2026-10-26T13:30:00+05:30')
     );
     assert.equal(val1130.isValid, true);
 
@@ -975,7 +983,9 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
       schedule45Min,
       [],
       [],
-      baseSettings
+      baseSettings,
+      'Asia/Kolkata',
+      new Date('2026-10-26T13:30:00+05:30')
     );
     assert.equal(val1215.isValid, true);
 
@@ -985,9 +995,170 @@ describe('OPD Appointment Scheduling & Availability Logic', () => {
       schedule45Min,
       [],
       [],
-      baseSettings
+      baseSettings,
+      'Asia/Kolkata',
+      new Date('2026-10-26T13:30:00+05:30')
     );
     assert.equal(val1200.isValid, false);
     assert.match(val1200.errorMessage || '', /outside doctor's consultation hours/i);
+  });
+
+  // Test 17: Staggered Slot Generation with Buffer & 0-Min Back-to-Back Turnaround
+  test('Requirement 17: Enforces continuous staggered slot generation with buffer (09:00 -> 09:35) and 0-minute back-to-back', () => {
+    const testDate = '2026-11-02'; // A Monday
+    const scheduleDay: DoctorSchedule = {
+      ...baseSchedule,
+      workingDays: ['Monday'],
+      consultationStartTime: '09:00 AM',
+      consultationEndTime: '01:00 PM', // 4 hours
+      slotDurationMinutes: 30,
+      breaks: [],
+      effectiveStartDate: '2026-01-01',
+      effectiveEndDate: '2026-12-31',
+    };
+
+    // Scenario A: 5-minute buffer between 30-min consultations
+    // Slots step by 35 mins: 09:00, 09:35, 10:10, 10:45, 11:20, 11:55, 12:30
+    const settingsWith5mBuffer: AppointmentSettings = {
+      ...baseSettings,
+      appointmentBufferMinutes: 5,
+    };
+
+    const existingAppts: Appointment[] = [
+      {
+        id: 'APT-900',
+        hospitalId: 'HOSP-001',
+        patientId: 'PAT-900',
+        patientName: 'John Patient',
+        patientPhone: '555-0900',
+        patientAge: 40,
+        patientGender: 'Male',
+        doctorId: scheduleDay.doctorId,
+        doctorName: 'Dr. Specialist',
+        doctorSpecialization: 'Cardiology',
+        departmentId: 'DEP-1',
+        departmentName: 'Cardiology',
+        appointmentDate: testDate,
+        appointmentTime: '09:00 AM',
+        type: 'Consultation',
+        status: 'Confirmed',
+        reason: 'Routine checkup',
+        paymentStatus: 'Paid',
+        fee: 100,
+        createdAt: '2026-10-01',
+      },
+    ];
+
+    const result5m = generateDoctorTimeSlots(
+      scheduleDay,
+      testDate,
+      existingAppts,
+      [],
+      undefined,
+      settingsWith5mBuffer,
+      'Asia/Kolkata',
+      new Date('2026-10-26T12:00:00+05:30')
+    );
+
+    // Slot 1 (09:00 AM) is booked
+    assert.equal(result5m.slots[0].time, '09:00 AM');
+    assert.equal(result5m.slots[0].isAvailable, false);
+    assert.equal(result5m.slots[0].status, 'booked_doctor');
+
+    // Slot 2 (09:35 AM) is immediately available (NOT blocked as 1-hour wait!)
+    assert.equal(result5m.slots[1].time, '09:35 AM');
+    assert.equal(result5m.slots[1].isAvailable, true);
+    assert.equal(result5m.slots[1].status, 'available');
+
+    // Slot 3 (10:10 AM) is available
+    assert.equal(result5m.slots[2].time, '10:10 AM');
+    assert.equal(result5m.slots[2].isAvailable, true);
+
+    // Scenario B: 0-minute buffer (Back-to-back consultations)
+    // Slots step by 30 mins: 09:00, 09:30, 10:00, 10:30, 11:00, 11:30, 12:00, 12:30 (8 slots)
+    const settings0mBuffer: AppointmentSettings = {
+      ...baseSettings,
+      appointmentBufferMinutes: 0,
+    };
+
+    const result0m = generateDoctorTimeSlots(
+      scheduleDay,
+      testDate,
+      existingAppts,
+      [],
+      undefined,
+      settings0mBuffer,
+      'Asia/Kolkata',
+      new Date('2026-10-26T12:00:00+05:30')
+    );
+
+    assert.equal(result0m.slots.length, 8);
+    assert.equal(result0m.slots[0].time, '09:00 AM');
+    assert.equal(result0m.slots[0].isAvailable, false);
+    // 09:30 AM is back-to-back available
+    assert.equal(result0m.slots[1].time, '09:30 AM');
+    assert.equal(result0m.slots[1].isAvailable, true);
+  });
+
+  // Test 18: Maximum Advance Booking Horizon (Days) enforcement
+  test('Requirement 18: Enforces Maximum Advance Booking Horizon according to configuration', () => {
+    const today = getHospitalTodayDate('Asia/Kolkata', new Date('2026-10-26T10:00:00+05:30'));
+    const settings7Days: AppointmentSettings = {
+      ...baseSettings,
+      maxAdvanceBookingDays: 7,
+    };
+
+    // 1. Date constraints check
+    const constraints = getScheduleDateConstraints(baseSchedule, settings7Days, 'Asia/Kolkata', new Date('2026-10-26T10:00:00+05:30'));
+    const expectedMaxDate = addDays(today, 7);
+    assert.equal(constraints.maxDate, expectedMaxDate);
+
+    // 2. Exactly on Day 7 (within window) -> valid slots returned
+    const validDate = addDays(today, 7);
+    // ensure valid day is not weekend/off if necessary, but schedule has daily shifts
+    const withinResult = generateDoctorTimeSlots(
+      baseSchedule,
+      validDate,
+      [],
+      [],
+      undefined,
+      settings7Days,
+      'Asia/Kolkata',
+      new Date('2026-10-26T10:00:00+05:30')
+    );
+    assert.equal(withinResult.outsideAdvanceWindow, undefined);
+
+    // 3. Beyond Day 7 (Day 8) -> blocked
+    const beyondDate = addDays(today, 8);
+    const beyondResult = generateDoctorTimeSlots(
+      baseSchedule,
+      beyondDate,
+      [],
+      [],
+      undefined,
+      settings7Days,
+      'Asia/Kolkata',
+      new Date('2026-10-26T10:00:00+05:30')
+    );
+    assert.equal(beyondResult.outsideAdvanceWindow, true);
+    assert.equal(beyondResult.slots.length, 0);
+    assert.match(beyondResult.message || '', /Advance bookings are limited to 7 days/);
+
+    // 4. Pre-save validation rejects
+    const valResult = validateBookingAvailability(
+      {
+        doctorId: baseSchedule.doctorId,
+        appointmentDate: beyondDate,
+        appointmentTime: '10:00 AM',
+      },
+      baseSchedule,
+      [],
+      [],
+      settings7Days,
+      'Asia/Kolkata',
+      new Date('2026-10-26T10:00:00+05:30')
+    );
+    assert.equal(valResult.isValid, false);
+    assert.match(valResult.errorMessage || '', /Advance bookings are limited to 7 days in advance/);
   });
 });

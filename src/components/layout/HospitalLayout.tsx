@@ -3,7 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { useAuth } from '../../context/AuthContext';
-import { Building2, ShieldCheck, Lock, AlertTriangle, ArrowRight, RefreshCw } from 'lucide-react';
+import { Building2, ShieldCheck, ShieldAlert, Lock, AlertTriangle, ArrowRight, RefreshCw, Wrench, Megaphone } from 'lucide-react';
 import { MockStorage } from '../../services/mockStorage';
 import { SubscriptionUpgradeModal } from '../common/SubscriptionUpgradeModal';
 import { CapabilityLockedNotice } from '../common/CapabilityLockedNotice';
@@ -14,7 +14,7 @@ export const HospitalLayout: React.FC = () => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
-  const { currentHospital, user } = useAuth();
+  const { currentHospital, user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -24,9 +24,116 @@ export const HospitalLayout: React.FC = () => {
   const isHospitalAdmin = user?.role === 'hospital_admin';
   const isSubscriptionPage = location.pathname === '/hospital/settings';
   const isAccessBlocked = !subStatus.allowed;
+  const isHospitalSuspended = Boolean(
+    currentHospital?.status &&
+    (currentHospital.status.toLowerCase() === 'suspended' ||
+      currentHospital.status.toLowerCase() === 'inactive' ||
+      currentHospital.status.toLowerCase() === 'rejected')
+  );
+
+  const [platformSettings, setPlatformSettings] = useState(() => MockStorage.getPlatformSettings());
+
+  React.useEffect(() => {
+    const handleUpdate = () => {
+      setPlatformSettings(MockStorage.getPlatformSettings());
+    };
+    window.addEventListener('pulse_storage_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex relative">
+      {/* Hospital Facility Suspended Overlay */}
+      {isHospitalSuspended && user?.role !== 'super_admin' && user?.role !== 'super_admin_manager' && (
+        <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-8 text-center shadow-2xl border border-rose-300 animate-in zoom-in-95 duration-200 space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto border border-rose-200">
+              <ShieldAlert className="w-8 h-8 animate-pulse text-rose-600" />
+            </div>
+            <div>
+              <span className="text-[10px] font-mono font-bold tracking-wider px-2.5 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-200 uppercase">
+                Facility Suspended
+              </span>
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900 mt-2">
+                Hospital Account Suspended
+              </h2>
+              <p className="text-xs text-slate-600 mt-2 leading-relaxed font-medium">
+                Access to <strong>{currentHospital?.name}</strong> has been suspended by system administration. All clinical, administrative, and patient portal operations for this facility are currently blocked.
+              </p>
+            </div>
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 text-left">
+              <p className="font-semibold text-rose-900 mb-1">Administrative Notice:</p>
+              Please contact the Super Admin platform team or your organization headquarters to resolve compliance, billing, or governance matters.
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full mt-4"
+              onClick={() => {
+                logout();
+                navigate('/login');
+              }}
+            >
+              Sign Out
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Platform Maintenance Mode Overlay for Tenant Users */}
+      {platformSettings.maintenanceMode && user?.role !== 'super_admin' && user?.role !== 'super_admin_manager' && (
+        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-8 text-center shadow-2xl border border-amber-200 animate-in zoom-in-95 duration-200 space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto border border-amber-200">
+              <Wrench className="w-8 h-8 animate-pulse" />
+            </div>
+            <div>
+              <span className="text-[10px] font-mono font-bold tracking-wider px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200 uppercase">
+                Platform Scheduled Maintenance
+              </span>
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900 mt-2">
+                System Under Maintenance
+              </h2>
+              <p className="text-xs text-slate-600 mt-2 leading-relaxed font-medium">
+                Zenelait HMS & CRM is currently undergoing scheduled platform upgrades and database maintenance. Normal clinical operations and patient portals will resume shortly.
+              </p>
+            </div>
+
+            {platformSettings.broadcastBannerActive && platformSettings.broadcastBannerText && (
+              <div className={`p-4 rounded-xl border text-xs text-left flex items-start gap-3 ${
+                platformSettings.broadcastBannerLevel === 'critical'
+                  ? 'bg-rose-50 border-rose-200 text-rose-900'
+                  : platformSettings.broadcastBannerLevel === 'warning'
+                  ? 'bg-amber-50 border-amber-200 text-amber-900'
+                  : 'bg-blue-50 border-blue-200 text-blue-900'
+              }`}>
+                <Megaphone className="w-4 h-4 shrink-0 mt-0.5 text-current" />
+                <div>
+                  <span className="font-bold block uppercase text-[10px] tracking-wider mb-0.5">
+                    Broadcast Announcement:
+                  </span>
+                  <p className="font-semibold">{platformSettings.broadcastBannerText}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="pt-2 flex items-center justify-center gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.location.reload()}
+                leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
+              >
+                Refresh System Status
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Non-Admin Full-Screen Lock Overlay if Subscription Expired */}
       {isAccessBlocked && !isHospitalAdmin && (
         <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
@@ -140,7 +247,7 @@ export const HospitalLayout: React.FC = () => {
               </div>
             </div>
           ) : (() => {
-            const pathCheck = checkPathCapability(location.pathname, currentHospital?.planTier);
+            const pathCheck = MockStorage.checkPathAccess(currentHospital?.id || hospId, location.pathname);
             if (!pathCheck.allowed && pathCheck.capability) {
               return (
                 <CapabilityLockedNotice

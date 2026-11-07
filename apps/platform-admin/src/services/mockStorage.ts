@@ -477,6 +477,16 @@ export const MockStorage = {
         return false;
       }
       return true;
+    }).map((u) => {
+      if (u.role === 'sales_executive' && (u.portal !== 'sales' || u.hospitalId || u.hospitalName)) {
+        return {
+          ...u,
+          portal: 'sales',
+          hospitalId: undefined,
+          hospitalName: undefined,
+        };
+      }
+      return u;
     });
 
     return users;
@@ -967,6 +977,13 @@ export const MockStorage = {
     if (plan.isActive === false) return false;
 
     const searchKey = featureName.toLowerCase();
+
+    // Foundational core capabilities are always guaranteed unlocked for active plans
+    const coreCapabilities = ['patients_ehr', 'appointments_opd', 'doctors_staff_departments', 'opd_rooms', 'billing_invoices'];
+    if (coreCapabilities.includes(searchKey)) {
+      return true;
+    }
+
     const hasFeature = plan.features.some(
       (f) => f.toLowerCase().includes(searchKey) || searchKey.includes(f.toLowerCase())
     );
@@ -1315,15 +1332,63 @@ export const MockStorage = {
     return this.getStaff().find((s) => s.id === id);
   },
 
-  saveStaff(staff: Staff): void {
+  saveStaff(staff: Staff): { success: boolean; message?: string } {
     const list = getStored<Staff[]>(STORAGE_KEYS.STAFF, initialStaff);
     const idx = list.findIndex((s) => s.id === staff.id);
+
+    const normalizedEmail = (staff.email || '').trim().toLowerCase();
+    if (normalizedEmail) {
+      // 1. Enforce global uniqueness: staff emails cannot duplicate any staff in any hospital
+      const existingStaff = list.find(
+        (s) => (s.email || '').trim().toLowerCase() === normalizedEmail && s.id !== staff.id
+      );
+      if (existingStaff) {
+        return {
+          success: false,
+          message: `Duplicate Email: A staff member with email "${staff.email.trim()}" is already registered in the system (${existingStaff.role || 'Staff'}). Staff emails must be globally unique across all hospitals.`,
+        };
+      }
+
+      // 2. Enforce global uniqueness against doctors
+      const doctors = this.getDoctors();
+      const existingDoc = doctors.find(
+        (d) => (d.email || '').trim().toLowerCase() === normalizedEmail
+      );
+      if (existingDoc) {
+        return {
+          success: false,
+          message: `Duplicate Email: A medical specialist with email "${staff.email.trim()}" is already registered in the system (${existingDoc.specialization || 'Doctor'}). Staff emails must be globally unique.`,
+        };
+      }
+
+      // 3. Enforce global uniqueness against platform HQ staff, hospital admins, and other tenant users
+      const users = this.getUsers();
+      const duplicateUser = users.find(
+        (u) =>
+          (u.email || '').trim().toLowerCase() === normalizedEmail &&
+          (u.hospitalId !== staff.hospitalId ||
+            u.role === 'super_admin' ||
+            u.role === 'super_admin_manager' ||
+            u.role === 'sales_executive' ||
+            u.role === 'hospital_admin' ||
+            u.role === 'doctor')
+      );
+      if (duplicateUser) {
+        const scope = duplicateUser.hospitalName || duplicateUser.hospitalId || 'Platform Global HQ';
+        return {
+          success: false,
+          message: `Duplicate Email: An account with email "${staff.email.trim()}" is already registered in ${scope} (${duplicateUser.role.replace(/_/g, ' ')}). Staff emails must be globally unique.`,
+        };
+      }
+    }
+
     if (idx >= 0) {
       list[idx] = staff;
     } else {
       list.unshift(staff);
     }
     setStored(STORAGE_KEYS.STAFF, list);
+    return { success: true };
   },
 
   deleteStaff(id: string): void {
@@ -1445,6 +1510,196 @@ export const MockStorage = {
     }
   },
 
+  initiateDoctorDischarge(
+    admissionId: string,
+    data: {
+      dischargeDate: string;
+      dischargeSummary: string;
+      dischargeAdvice: string;
+      dischargePrescriptions: string;
+      doctorId: string;
+      doctorName: string;
+    }
+  ): { success: boolean } {
+    const list = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const adm = list.find((a) => a.id === admissionId);
+    if (!adm) return { success: false };
+
+    const effectiveDischargeDate = data.dischargeDate || new Date().toISOString().split('T')[0];
+    adm.status = 'Discharge Initiated';
+    adm.dischargeDate = effectiveDischargeDate;
+    adm.dischargeInitiatedAt = new Date().toISOString();
+    adm.dischargeDoctorId = data.doctorId;
+    adm.dischargeDoctorName = data.doctorName;
+    adm.dischargeSummary = data.dischargeSummary;
+    adm.dischargeAdvice = data.dischargeAdvice;
+    adm.dischargePrescriptions = data.dischargePrescriptions;
+    adm.billingStatus = 'Pending';
+    adm.invoiceId = undefined;
+
+    setStored(STORAGE_KEYS.ADMISSIONS, list);
+
+    this.logActivity(
+      'Doctor Initiated Discharge',
+      `Dr. ${data.doctorName} initiated medical discharge for ${adm.patientName} (${adm.bedNumber}). Patient info ready for manual billing by accountant.`,
+      'patient',
+      'Doctor',
+      data.doctorName,
+      adm.hospitalId
+    );
+
+    // Call backend API to persist status and discharge date immediately!
+    try {
+      fetch(`${API_BASE_URL}/admissions/${admissionId}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'Discharge Initiated',
+          discharge_date: effectiveDischargeDate,
+        }),
+      }).catch(() => {});
+    } catch (e) {}
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
+
+    return { success: true };
+  },
+
+  linkAdmissionInvoice(
+    admissionId: string,
+    invoiceId: string,
+    totalAmount: number,
+    paidAmount: number
+  ): void {
+    const list = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const adm = list.find((a) => a.id === admissionId);
+    if (adm) {
+      adm.invoiceId = invoiceId;
+      adm.finalBilledAmount = totalAmount;
+      adm.finalPaidAmount = paidAmount;
+      adm.billingStatus = paidAmount >= totalAmount && totalAmount > 0 ? 'Paid' : 'Pending';
+      setStored(STORAGE_KEYS.ADMISSIONS, list);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('pulse_storage_updated'));
+      }
+    }
+  },
+
+  settleInpatientBilling(admissionId: string, invoiceId?: string): void {
+    const list = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const adm = list.find((a) => a.id === admissionId);
+    if (adm) {
+      adm.billingStatus = 'Paid';
+      setStored(STORAGE_KEYS.ADMISSIONS, list);
+
+      const targetInvId = invoiceId || adm.invoiceId;
+      if (targetInvId) {
+        const invoices = this.getInvoices(adm.hospitalId);
+        const inv = invoices.find((i) => i.id === targetInvId);
+        if (inv) {
+          inv.status = 'Paid';
+          inv.amountPaid = inv.totalAmount;
+          inv.paymentMethod = 'UPI';
+          this.saveInvoice(inv);
+        }
+      }
+
+      this.logActivity(
+        'Inpatient Billing Settled',
+        `Final bill settled for ${adm.patientName} (${adm.bedNumber})`,
+        'billing',
+        'Staff',
+        'Cashier Desk',
+        adm.hospitalId
+      );
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('pulse_storage_updated'));
+      }
+    }
+  },
+
+  completeFinalDischarge(
+    admissionId: string,
+    dischargedBy?: string,
+    dischargedRole?: 'Nurse' | 'Receptionist' | 'Admin'
+  ): { success: boolean; error?: string } {
+    const list = getStored<Admission[]>(STORAGE_KEYS.ADMISSIONS, initialAdmissions);
+    const adm = list.find((a) => a.id === admissionId);
+    if (!adm) return { success: false, error: 'Admission record not found' };
+
+    if (adm.status !== 'Discharge Initiated') {
+      return {
+        success: false,
+        error: 'Doctor has not yet initiated medical discharge. Attending specialist must evaluate health and create discharge summary first.',
+      };
+    }
+
+    adm.status = 'Discharged';
+    adm.dischargeDate = new Date().toISOString().split('T')[0];
+    adm.finalDischargedBy = dischargedBy || 'Hospital Staff';
+    adm.finalDischargedRole = dischargedRole || 'Receptionist';
+    setStored(STORAGE_KEYS.ADMISSIONS, list);
+
+    // Call backend API to persist status and discharge date
+    try {
+      fetch(`${API_BASE_URL}/admissions/${admissionId}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'Discharged',
+          discharge_date: adm.dischargeDate,
+        }),
+      }).catch(() => {});
+    } catch (e) {}
+
+    // Release the bed
+    const allBeds = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
+    const normBedNumber = (adm.bedNumber || '').trim().toLowerCase();
+    const bed =
+      allBeds.find(
+        (b) =>
+          b.bedNumber &&
+          b.bedNumber.trim().toLowerCase() === normBedNumber &&
+          (!adm.hospitalId || !b.hospitalId || b.hospitalId === adm.hospitalId)
+      ) || allBeds.find((b) => b.bedNumber && b.bedNumber.trim().toLowerCase() === normBedNumber);
+
+    if (bed) {
+      bed.status = 'Available';
+      bed.currentPatientId = undefined;
+      bed.currentPatientName = undefined;
+      setStored(STORAGE_KEYS.BEDS, allBeds);
+
+      try {
+        fetch(`${API_BASE_URL}/beds/${bed.id}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: 'Available',
+            current_patient: null,
+          }),
+        }).catch(() => {});
+      } catch (e) {}
+    }
+
+    this.logActivity(
+      'Completed Patient Discharge & Bed Released',
+      `${adm.patientName} discharged from ${adm.bedNumber} by ${dischargedRole || 'Staff'} ${dischargedBy || ''}. Bed released.`,
+      'patient',
+      dischargedRole || 'Staff',
+      dischargedBy || 'Hospital Staff',
+      adm.hospitalId
+    );
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
+
+    return { success: true };
+  },
+
   // Billing & Invoices
   getInvoices(hospitalId?: string, patientId?: string): Invoice[] {
     let list = getStored<Invoice[]>(STORAGE_KEYS.INVOICES, initialInvoices);
@@ -1492,7 +1747,7 @@ export const MockStorage = {
 
   // Medicines
   getMedicines(hospitalId?: string): Medicine[] {
-    const list = getStored<Medicine[]>(STORAGE_KEYS.MEDICINES, initialMedicines);
+    const list = getStored<Medicine[]>(STORAGE_KEYS.MEDICINES, []);
     if (hospitalId) {
       return list.filter((m) => m.hospitalId === hospitalId);
     }
@@ -1566,6 +1821,27 @@ export const MockStorage = {
     }
     setStored(STORAGE_KEYS.LAB_ORDERS, list);
     this.logActivity(idx >= 0 ? 'Updated Lab Diagnostic Report' : 'Ordered Lab Diagnostic', `${order.testName} for ${order.patientName}`, 'clinical', 'Liam Zhang', 'Lab Technician', order.hospitalId);
+  },
+
+  acknowledgeCriticalAlert(
+    orderId: string,
+    acknowledgedBy: string,
+    communicationNote?: string,
+    doctorNotified?: string
+  ): LabOrder | null {
+    const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
+    const order = list.find((o) => o.id === orderId);
+    if (!order) return null;
+
+    order.criticalAlertAcknowledged = true;
+    order.criticalAlertAcknowledgedBy = acknowledgedBy;
+    order.criticalAlertAcknowledgedAt = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    order.criticalAlertCommunicationNote = communicationNote || 'Telephonic notification completed to ordering physician.';
+    order.criticalAlertDoctorNotified = doctorNotified || order.doctorName || 'Ordering Physician';
+
+    setStored(STORAGE_KEYS.LAB_ORDERS, list);
+    this.logActivity('Critical Panic Alert Acknowledged', `Critical panic alert for ${order.patientName} (${order.testName}) acknowledged by ${acknowledgedBy}. Doctor ${order.criticalAlertDoctorNotified} telephonically notified.`, 'clinical', acknowledgedBy, 'Lab Staff', order.hospitalId);
+    return order;
   },
 
   // Websites & Section Builder
@@ -1787,9 +2063,15 @@ export const MockStorage = {
   // ===================================
 
   getAmbulances(hospitalId?: string): Ambulance[] {
-    const list = getStored<Ambulance[]>(STORAGE_KEYS.AMBULANCES, initialAmbulances);
-    if (hospitalId) {
-      return list.filter((a) => a.hospitalId === hospitalId);
+    const HARDCODED_AMB_IDS = ['AMB-101', 'AMB-102', 'AMB-103', 'AMB-104', 'AMB-201'];
+    const stored = getStored<Ambulance[]>(STORAGE_KEYS.AMBULANCES, initialAmbulances);
+    const list = stored.filter((a) => a && a.id && !HARDCODED_AMB_IDS.includes(a.id));
+    if (list.length !== stored.length) {
+      setStored(STORAGE_KEYS.AMBULANCES, list);
+    }
+    if (hospitalId !== undefined) {
+      if (!hospitalId || !hospitalId.trim()) return [];
+      return list.filter((a) => (a.hospitalId || '').toLowerCase() === hospitalId.trim().toLowerCase());
     }
     return list;
   },
@@ -1821,9 +2103,15 @@ export const MockStorage = {
 
   // Ambulance Drivers
   getAmbulanceDrivers(hospitalId?: string): AmbulanceDriver[] {
-    const list = getStored<AmbulanceDriver[]>(STORAGE_KEYS.AMBULANCE_DRIVERS, initialAmbulanceDrivers);
-    if (hospitalId) {
-      return list.filter((d) => d.hospitalId === hospitalId);
+    const HARDCODED_DRV_IDS = ['DRV-201', 'DRV-202', 'DRV-203'];
+    const stored = getStored<AmbulanceDriver[]>(STORAGE_KEYS.AMBULANCE_DRIVERS, initialAmbulanceDrivers);
+    const list = stored.filter((d) => d && d.id && !HARDCODED_DRV_IDS.includes(d.id));
+    if (list.length !== stored.length) {
+      setStored(STORAGE_KEYS.AMBULANCE_DRIVERS, list);
+    }
+    if (hospitalId !== undefined) {
+      if (!hospitalId || !hospitalId.trim()) return [];
+      return list.filter((d) => (d.hospitalId || '').toLowerCase() === hospitalId.trim().toLowerCase());
     }
     return list;
   },
@@ -1850,9 +2138,15 @@ export const MockStorage = {
 
   // Emergency Requests
   getEmergencyRequests(hospitalId?: string, patientId?: string): EmergencyRequest[] {
-    let list = getStored<EmergencyRequest[]>(STORAGE_KEYS.EMERGENCY_REQUESTS, initialEmergencyRequests);
-    if (hospitalId) {
-      list = list.filter((r) => r.hospitalId === hospitalId);
+    const HARDCODED_EMR_IDS = ['EMR-7001', 'EMR-7002', 'EMR-7003'];
+    const stored = getStored<EmergencyRequest[]>(STORAGE_KEYS.EMERGENCY_REQUESTS, initialEmergencyRequests);
+    let list = stored.filter((r) => r && r.id && !HARDCODED_EMR_IDS.includes(r.id));
+    if (list.length !== stored.length) {
+      setStored(STORAGE_KEYS.EMERGENCY_REQUESTS, list);
+    }
+    if (hospitalId !== undefined) {
+      if (!hospitalId || !hospitalId.trim()) return [];
+      list = list.filter((r) => (r.hospitalId || '').toLowerCase() === hospitalId.trim().toLowerCase());
     }
     if (patientId) {
       list = list.filter((r) => r.patientId === patientId);
@@ -1973,9 +2267,15 @@ export const MockStorage = {
 
   // Ambulance Trips
   getAmbulanceTrips(hospitalId?: string, driverId?: string): AmbulanceTrip[] {
-    let list = getStored<AmbulanceTrip[]>(STORAGE_KEYS.AMBULANCE_TRIPS, initialAmbulanceTrips);
-    if (hospitalId) {
-      list = list.filter((t) => t.hospitalId === hospitalId);
+    const HARDCODED_TRIP_IDS = ['TRP-9001', 'TRP-9002'];
+    const stored = getStored<AmbulanceTrip[]>(STORAGE_KEYS.AMBULANCE_TRIPS, initialAmbulanceTrips);
+    let list = stored.filter((t) => t && t.id && !HARDCODED_TRIP_IDS.includes(t.id));
+    if (list.length !== stored.length) {
+      setStored(STORAGE_KEYS.AMBULANCE_TRIPS, list);
+    }
+    if (hospitalId !== undefined) {
+      if (!hospitalId || !hospitalId.trim()) return [];
+      list = list.filter((t) => (t.hospitalId || '').toLowerCase() === hospitalId.trim().toLowerCase());
     }
     if (driverId) {
       list = list.filter((t) => t.driverId === driverId);
@@ -1985,9 +2285,15 @@ export const MockStorage = {
 
   // Ambulance Maintenance
   getAmbulanceMaintenance(hospitalId?: string): AmbulanceMaintenance[] {
-    const list = getStored<AmbulanceMaintenance[]>(STORAGE_KEYS.AMBULANCE_MAINTENANCE, initialAmbulanceMaintenance);
-    if (hospitalId) {
-      return list.filter((m) => m.hospitalId === hospitalId);
+    const HARDCODED_MNT_IDS = ['MNT-301'];
+    const stored = getStored<AmbulanceMaintenance[]>(STORAGE_KEYS.AMBULANCE_MAINTENANCE, initialAmbulanceMaintenance);
+    const list = stored.filter((m) => m && m.id && !HARDCODED_MNT_IDS.includes(m.id));
+    if (list.length !== stored.length) {
+      setStored(STORAGE_KEYS.AMBULANCE_MAINTENANCE, list);
+    }
+    if (hospitalId !== undefined) {
+      if (!hospitalId || !hospitalId.trim()) return [];
+      return list.filter((m) => (m.hospitalId || '').toLowerCase() === hospitalId.trim().toLowerCase());
     }
     return list;
   },
@@ -2043,5 +2349,60 @@ export const MockStorage = {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  },
+
+  getHospitalStorageUsage(hospitalId?: string) {
+    const hosp = hospitalId ? this.getHospitalById(hospitalId) : undefined;
+    const plan = hosp ? this.getPlanByTier(hosp.planTier) : this.getPlanByTier('standard');
+    const maxStorageGB = plan?.storageGB || (hosp?.planTier === 'enterprise' ? 2000 : hosp?.planTier === 'standard' ? 250 : hosp?.planTier === 'basic' ? 50 : 10);
+    const maxBytes = maxStorageGB * 1024 * 1024 * 1024;
+
+    const patients = hospitalId ? this.getPatients(hospitalId) : [];
+    const labOrders = hospitalId ? this.getLabOrders(hospitalId) : [];
+    const invoices = hospitalId ? this.getInvoices(hospitalId) : [];
+    const admissions = hospitalId ? this.getAdmissions(hospitalId) : [];
+
+    const dbRecordBytes = (patients.length * 256000) + (labOrders.length * 51200) + (invoices.length * 32000) + (admissions.length * 64000);
+
+    const totalUsedBytes = dbRecordBytes;
+    const usedMB = totalUsedBytes / (1024 * 1024);
+    const usedGB = totalUsedBytes / (1024 * 1024 * 1024);
+    const percentageUsed = Math.min(100, Number(((totalUsedBytes / maxBytes) * 100).toFixed(1)));
+    const remainingGB = Math.max(0, Number((maxStorageGB - usedGB).toFixed(2)));
+    const usedFormatted = usedGB >= 1 ? `${usedGB.toFixed(2)} GB` : `${usedMB.toFixed(1)} MB`;
+
+    return {
+      usedBytes: totalUsedBytes,
+      usedMB,
+      usedGB,
+      usedFormatted,
+      maxStorageGB,
+      percentageUsed,
+      remainingGB,
+      isLimitReached: totalUsedBytes >= maxBytes,
+    };
+  },
+
+  canUploadFile(hospitalId?: string, additionalBytes: number = 0) {
+    if (!hospitalId) return { allowed: true, currentUsageGB: 0, maxStorageGB: 250 };
+    const usage = this.getHospitalStorageUsage(hospitalId);
+    const maxBytes = usage.maxStorageGB * 1024 * 1024 * 1024;
+
+    if (usage.usedBytes + additionalBytes > maxBytes) {
+      const hosp = this.getHospitalById(hospitalId);
+      const plan = hosp ? this.getPlanByTier(hosp.planTier) : undefined;
+      return {
+        allowed: false,
+        currentUsageGB: usage.usedGB,
+        maxStorageGB: usage.maxStorageGB,
+        message: `Cloud Storage Vault Limit Exceeded: Your facility has utilized ${usage.usedFormatted} of your ${usage.maxStorageGB} GB allocation under the ${plan?.name || 'Current'} plan. Uploading this file (${(additionalBytes / (1024 * 1024)).toFixed(1)} MB) would exceed your allocated cloud storage limit. Upgrade your subscription plan in Settings to expand storage capacity.`,
+      };
+    }
+
+    return {
+      allowed: true,
+      currentUsageGB: usage.usedGB,
+      maxStorageGB: usage.maxStorageGB,
+    };
   },
 };

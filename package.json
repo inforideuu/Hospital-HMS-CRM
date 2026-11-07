@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:backend": "python backend/manage.py runserver 8000",
+    "dev:full": "concurrently -n \"BACKEND,FRONTEND\" -c \"blue,green\" \"python backend/manage.py runserver 8000\" \"vite\"",
+    "seed:db": "python backend/seed_full_database.py",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "tsx --test src/utils/doctorConsultationWorkflow.test.ts src/utils/appointmentScheduling.test.ts src/utils/tenantAuth.test.ts src/utils/followUpWorkflow.test.ts"
+    "test": "tsx --test src/utils/doctorConsultationWorkflow.test.ts src/utils/appointmentScheduling.test.ts src/utils/tenantAuth.test.ts src/utils/followUpWorkflow.test.ts src/utils/roleNotifications.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

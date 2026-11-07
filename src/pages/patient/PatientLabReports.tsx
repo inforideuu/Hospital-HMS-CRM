@@ -35,6 +35,8 @@ export const PatientLabReports: React.FC = () => {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   const patientId = user?.patientId || 'PAT-1001';
+  const hospitalId = user?.hospitalId || 'HOSP-001';
+  const isLabEnabled = MockStorage.isCapabilityEnabled(hospitalId, 'laboratory_diagnostics');
 
   const loadData = () => {
     const list = MockStorage.getLabOrders(undefined, patientId);
@@ -46,6 +48,20 @@ export const PatientLabReports: React.FC = () => {
     window.addEventListener('pulse_storage_updated', loadData);
     return () => window.removeEventListener('pulse_storage_updated', loadData);
   }, [patientId]);
+
+  if (!isLabEnabled) {
+    return (
+      <div className="p-8 max-w-xl mx-auto my-12 bg-white rounded-2xl border border-slate-200 text-center space-y-4 shadow-sm">
+        <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+          <FlaskConical className="w-8 h-8" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-900">Laboratory Portal Not Configured</h3>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Diagnostic laboratory orders and pathology reporting are not configured for your registered facility.
+        </p>
+      </div>
+    );
+  }
 
   const filteredOrders = labOrders.filter((order) => {
     const matchesSearch =

@@ -33,7 +33,7 @@ export const DriverLayout: React.FC = () => {
                   <Radio className="w-2.5 h-2.5" /> 911 Unit Live
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 truncate">{user?.name} (DRV-201)</p>
+              <p className="text-[11px] text-slate-400 truncate">{user?.name} {user?.driverId ? `(${user.driverId})` : ''}</p>
             </div>
           </div>
 

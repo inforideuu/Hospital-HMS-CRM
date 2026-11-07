@@ -28,17 +28,27 @@ import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
+import { compressImage } from '../../../utils/imageCompressor';
 import { Modal } from '../../../components/ui/Modal';
 import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
 import { SubscriptionUpgradeModal } from '../../../components/common/SubscriptionUpgradeModal';
 import { EmptyState } from '../../../components/ui/EmptyState';
 
 export const DoctorManagement: React.FC = () => {
-  const { currentHospital } = useAuth();
+  const { currentHospital, user } = useAuth();
   const { showToast } = useNotification();
   const hospId = currentHospital?.id || 'HOSP-001';
 
+  const isHospitalAdmin =
+    user?.role === 'hospital_admin' ||
+    user?.role === 'super_admin' ||
+    user?.role === 'super_admin_manager';
+  const isReceptionist = user?.role === 'receptionist';
+
   const [doctors, setDoctors] = useState<Doctor[]>(() => MockStorage.getDoctors(hospId));
+  const currentPlan = MockStorage.getHospitalActivePlan(hospId);
+  const currentDoctorCount = doctors.length;
+  const isAtDoctorLimit = currentPlan && currentPlan.maxDoctors !== undefined && currentDoctorCount >= currentPlan.maxDoctors;
   const departments = MockStorage.getDepartments(hospId);
   const opdRooms = MockStorage.getOPDRooms(hospId);
 
@@ -87,14 +97,19 @@ export const DoctorManagement: React.FC = () => {
     };
   }, [hospId]);
 
-  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData((prev) => ({ ...prev, avatarUrl: reader.result as string }));
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressed = await compressImage(file, 400, 400, 0.75);
+        setFormData((prev) => ({ ...prev, avatarUrl: compressed }));
+      } catch {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setFormData((prev) => ({ ...prev, avatarUrl: reader.result as string }));
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -112,6 +127,22 @@ export const DoctorManagement: React.FC = () => {
   });
 
   const handleOpenAdd = () => {
+    if (isReceptionist || !isHospitalAdmin) {
+      showToast('Access Restricted', 'Receptionists cannot onboard medical specialists. Please contact your Hospital Administrator.', 'error');
+      return;
+    }
+
+    const plan = MockStorage.getHospitalActivePlan(hospId);
+    const currentDocs = MockStorage.getDoctors(hospId);
+    if (plan && plan.maxDoctors !== undefined && currentDocs.length >= plan.maxDoctors) {
+      showToast(
+        'Doctor Quota Limit Reached',
+        `Your hospital is on the "${plan.name}" plan which allows a maximum of ${plan.maxDoctors} medical doctors (${currentDocs.length}/${plan.maxDoctors} in use). Upgrade your subscription to onboard more specialists.`,
+        'error'
+      );
+      setIsUpgradeModalOpen(true);
+      return;
+    }
     const deptId = departments[0]?.id || '';
     const deptRooms = opdRooms.filter((r) => r.departmentId === deptId);
     setFormData({
@@ -133,6 +164,10 @@ export const DoctorManagement: React.FC = () => {
   };
 
   const handleOpenEdit = (doc: Doctor) => {
+    if (isReceptionist || !isHospitalAdmin) {
+      showToast('Access Restricted', 'Receptionists cannot modify medical specialist profiles.', 'error');
+      return;
+    }
     setSelectedDoctor(doc);
     const existingSched = MockStorage.getDoctorScheduleByDoctorId(doc.id, hospId);
     const resolvedHours =
@@ -161,6 +196,10 @@ export const DoctorManagement: React.FC = () => {
 
   const handleSaveDoctor = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isReceptionist || !isHospitalAdmin) {
+      showToast('Permission Denied', 'Receptionists do not have permission to onboard or edit doctors.', 'error');
+      return;
+    }
     if (!formData.name || !formData.specialization) {
       showToast('Validation Error', 'Name and Specialization are required.', 'error');
       return;
@@ -288,6 +327,10 @@ export const DoctorManagement: React.FC = () => {
   };
 
   const handleToggleStatus = (doc: Doctor) => {
+    if (isReceptionist || !isHospitalAdmin) {
+      showToast('Permission Denied', 'Receptionists cannot alter specialist duty status.', 'error');
+      return;
+    }
     const updated: Doctor = {
       ...doc,
       status: doc.status === 'active' ? 'on_leave' : 'active',
@@ -298,6 +341,10 @@ export const DoctorManagement: React.FC = () => {
   };
 
   const handleDeleteConfirm = () => {
+    if (isReceptionist || !isHospitalAdmin) {
+      showToast('Permission Denied', 'Receptionists do not have permission to delete doctors.', 'error');
+      return;
+    }
     if (confirmDeleteId) {
       MockStorage.deleteDoctor(confirmDeleteId);
       showToast('Doctor Removed', 'Doctor record removed from roster.');
@@ -313,7 +360,33 @@ export const DoctorManagement: React.FC = () => {
         subtitle="Manage hospital physicians, consulting surgeons, OPD chambers, and clinical practice schedules."
         breadcrumbs={[{ label: 'Hospital HMS', href: '/hospital/dashboard' }, { label: 'Doctors' }]}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            {currentPlan && (
+              <div
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+                  isAtDoctorLimit
+                    ? 'bg-rose-50 border-rose-200 text-rose-700'
+                    : currentDoctorCount >= (currentPlan.maxDoctors || 10) * 0.8
+                    ? 'bg-amber-50 border-amber-200 text-amber-700'
+                    : 'bg-slate-50 border-slate-200 text-slate-700'
+                }`}
+                title={`Current Plan: ${currentPlan.name}. Allowed: ${currentPlan.maxDoctors} Specialist Doctors.`}
+              >
+                <Stethoscope className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  Doctor Quota: <strong className="font-bold">{currentDoctorCount}</strong> / {currentPlan.maxDoctors ?? '∞'} in use
+                </span>
+                {isAtDoctorLimit && (
+                  <button
+                    type="button"
+                    onClick={() => setIsUpgradeModalOpen(true)}
+                    className="ml-1 text-[10px] uppercase font-bold text-rose-700 underline hover:text-rose-900 cursor-pointer"
+                  >
+                    Upgrade
+                  </button>
+                )}
+              </div>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -322,9 +395,11 @@ export const DoctorManagement: React.FC = () => {
             >
               Export Roster
             </Button>
-            <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
-              Onboard Doctor
-            </Button>
+            {isHospitalAdmin && (
+              <Button variant="primary" size="sm" onClick={handleOpenAdd} leftIcon={<Plus className="w-3.5 h-3.5" />}>
+                Onboard Doctor
+              </Button>
+            )}
           </div>
         }
       />
@@ -366,14 +441,22 @@ export const DoctorManagement: React.FC = () => {
                   ? 'No specialists match your search criteria. Try adjusting your search query or department filter.'
                   : 'No medical specialists have been onboarded to this hospital roster yet.'
               }
-              actionText={searchQuery || departmentFilter !== 'all' ? 'Reset Filters' : 'Onboard Specialist'}
+              actionText={
+                searchQuery || departmentFilter !== 'all'
+                  ? 'Reset Filters'
+                  : isHospitalAdmin
+                  ? 'Onboard Specialist'
+                  : undefined
+              }
               onAction={
                 searchQuery || departmentFilter !== 'all'
                   ? () => {
                       setSearchQuery('');
                       setDepartmentFilter('all');
                     }
-                  : handleOpenAdd
+                  : isHospitalAdmin
+                  ? handleOpenAdd
+                  : undefined
               }
             />
           </div>
@@ -434,35 +517,45 @@ export const DoctorManagement: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    onClick={() => handleToggleStatus(doc)}
-                  >
-                    {doc.status === 'active' ? 'Mark On Leave' : 'Set Available'}
-                  </Button>
-
-                  <div className="flex gap-1.5">
+                {isHospitalAdmin ? (
+                  <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
                     <Button
                       variant="outline"
                       size="xs"
-                      onClick={() => handleOpenEdit(doc)}
-                      title="Edit Profile"
+                      onClick={() => handleToggleStatus(doc)}
                     >
-                      <Edit className="w-3.5 h-3.5" />
+                      {doc.status === 'active' ? 'Mark On Leave' : 'Set Available'}
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      className="text-rose-600"
-                      onClick={() => setConfirmDeleteId(doc.id)}
-                      title="Delete Doctor"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+
+                    <div className="flex gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => handleOpenEdit(doc)}
+                        title="Edit Profile"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className="text-rose-600 hover:bg-rose-50"
+                        onClick={() => setConfirmDeleteId(doc.id)}
+                        title="Delete Doctor"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+                    <span className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${doc.status === 'active' ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+                      <span className="font-medium text-slate-600 capitalize">{doc.status === 'active' ? 'Active Specialist' : 'On Leave'}</span>
+                    </span>
+                    <span className="text-[11px] font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">Read-Only View</span>
+                  </div>
+                )}
               </div>
             ))}
           </div>

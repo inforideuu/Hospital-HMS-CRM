@@ -6,6 +6,7 @@ import {
   HeartPulse,
   Activity,
   AlertTriangle,
+  AlertCircle,
   FileText,
   Save,
   CheckCircle2,
@@ -61,6 +62,7 @@ export const ConsultationWorkspace: React.FC = () => {
   const { user, currentHospital } = useAuth();
   const { showToast } = useNotification();
   const hospId = user?.hospitalId || currentHospital?.id || 'hosp-1';
+  const isAdmissionsEnabled = MockStorage.isCapabilityEnabled(hospId, 'admissions_beds');
 
   // State
   const [appointment, setAppointment] = useState<Appointment | null>(null);
@@ -210,14 +212,31 @@ export const ConsultationWorkspace: React.FC = () => {
     const rxList = MockStorage.getPrescriptions(apt.patientId, hospId);
     setIssuedPrescriptions(rxList);
 
-    // Auto-transition to In Consultation if Checked In
+    // Auto-transition to In Consultation if Checked In, provided mandatory vitals triage is not pending
+    const hospSettingsForCheckIn = MockStorage.getHospitalSettings(apt.hospitalId || hospId);
+    const isVitalsTriageMandatory = hospSettingsForCheckIn.mandatoryVitalsTriage !== false;
+    const hasTriageVitals = Boolean(
+      pat?.vitals?.bloodPressure ||
+      pat?.vitals?.heartRate ||
+      pat?.vitals?.temperature ||
+      pat?.vitals?.oxygenLevel
+    );
+
     if (apt.status === 'Checked In') {
-      const nowIso = new Date().toISOString();
-      MockStorage.updateAppointmentStatus(apt.id, 'In Consultation', { consultationStartedAt: nowIso });
-      ApiService.startConsultation?.(apt.id, user?.id).catch(() => {});
-      apt.status = 'In Consultation';
-      apt.consultationStartedAt = nowIso;
-      setAppointment({ ...apt });
+      if (isVitalsTriageMandatory && !hasTriageVitals) {
+        showToast(
+          'Nursing Triage Pending',
+          `Hospital policy enforces mandatory nurse vitals triage before beginning consultation for ${apt.patientName}.`,
+          'warning'
+        );
+      } else {
+        const nowIso = new Date().toISOString();
+        MockStorage.updateAppointmentStatus(apt.id, 'In Consultation', { consultationStartedAt: nowIso });
+        ApiService.startConsultation?.(apt.id, user?.id).catch(() => {});
+        apt.status = 'In Consultation';
+        apt.consultationStartedAt = nowIso;
+        setAppointment({ ...apt });
+      }
     }
 
     // Retrieve existing consultation draft or create fresh instance
@@ -546,18 +565,20 @@ export const ConsultationWorkspace: React.FC = () => {
                 <Clock className="w-4 h-4" />
                 <span>Today's Appointed Queue ({allDoctorAppointments.length})</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setDirectoryTab('inpatients')}
-                className={`pb-2.5 flex items-center gap-2 border-b-2 transition-colors ${
-                  directoryTab === 'inpatients'
-                    ? 'border-teal-600 text-teal-800'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <BedDouble className="w-4 h-4 text-teal-600" />
-                <span>Inpatients Under My Care ({allDoctorInpatients.length})</span>
-              </button>
+              {isAdmissionsEnabled && (
+                <button
+                  type="button"
+                  onClick={() => setDirectoryTab('inpatients')}
+                  className={`pb-2.5 flex items-center gap-2 border-b-2 transition-colors ${
+                    directoryTab === 'inpatients'
+                      ? 'border-teal-600 text-teal-800'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <BedDouble className="w-4 h-4 text-teal-600" />
+                  <span>Inpatients Under My Care ({allDoctorInpatients.length})</span>
+                </button>
+              )}
             </div>
 
             {directoryTab === 'queue' ? (
@@ -733,11 +754,11 @@ export const ConsultationWorkspace: React.FC = () => {
       followUpDate: needsFollowUp ? followUpDate : undefined,
       followUpIntervalDays: needsFollowUp ? followUpIntervalDays : undefined,
       followUpReason: needsFollowUp ? followUpReason.trim() : undefined,
-      needsAdmission,
-      admissionWardType: needsAdmission ? admissionWardType : undefined,
-      admissionPriority: needsAdmission ? admissionPriority : undefined,
-      admissionReason: needsAdmission ? (admissionReason.trim() || diagnosis.trim() || chiefComplaint.trim() || 'Inpatient admission advised by clinician') : undefined,
-      admissionInstructions: needsAdmission ? admissionInstructions.trim() : undefined,
+      needsAdmission: isAdmissionsEnabled ? needsAdmission : false,
+      admissionWardType: isAdmissionsEnabled && needsAdmission ? admissionWardType : undefined,
+      admissionPriority: isAdmissionsEnabled && needsAdmission ? admissionPriority : undefined,
+      admissionReason: isAdmissionsEnabled && needsAdmission ? (admissionReason.trim() || diagnosis.trim() || chiefComplaint.trim() || 'Inpatient admission advised by clinician') : undefined,
+      admissionInstructions: isAdmissionsEnabled && needsAdmission ? admissionInstructions.trim() : undefined,
       notes: notes.trim(),
       startedAt: consultation?.startedAt || appointment.consultationStartedAt || new Date().toISOString(),
       finalizedAt: statusVal === 'Finalized' ? new Date().toISOString() : undefined,
@@ -787,6 +808,13 @@ export const ConsultationWorkspace: React.FC = () => {
       return;
     }
 
+    const hospSettings = MockStorage.getHospitalSettings(appointment.hospitalId || hospId);
+    if (hospSettings.mandatoryVitalsTriage && !bloodPressure && !heartRate && !temperature && !oxygenLevel) {
+      setValidationError('Hospital policy requires clinical vitals (BP, Pulse, Temp, or SpO2) before finalizing consultation.');
+      showToast('Vitals Required', 'Hospital policy requires patient vitals before finalizing.', 'error');
+      return;
+    }
+
     setIsFinalizing(true);
     setValidationError('');
 
@@ -832,6 +860,97 @@ export const ConsultationWorkspace: React.FC = () => {
       setIsFinalizing(false);
     }
   };
+
+  // Check if mandatory vitals triage is active and pending
+  const hospSettings = MockStorage.getHospitalSettings(appointment.hospitalId || hospId);
+  const isTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+  const hasNurseVitalsRecorded = Boolean(
+    patient?.vitals?.bloodPressure ||
+    patient?.vitals?.heartRate ||
+    patient?.vitals?.temperature ||
+    patient?.vitals?.oxygenLevel
+  );
+
+  if (isTriageMandatory && !hasNurseVitalsRecorded && !isFinalized) {
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <PageHeader
+          title={`Consultation Blocked • ${appointment.patientName}`}
+          subtitle={`Mandatory Nursing Vitals Triage Required • ${currentHospital?.name || 'Hospital'}`}
+          breadcrumbs={[
+            { label: 'Hospital HMS', href: '/hospital/dashboard' },
+            { label: 'Doctor Console', href: '/hospital/dashboard' },
+            { label: 'Patient Queue', href: '/hospital/doctor/queue' },
+            { label: 'Consultation Blocked' },
+          ]}
+          actions={
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/hospital/doctor/queue')}
+              leftIcon={<ArrowLeft className="w-4 h-4" />}
+            >
+              Back to Patient Queue
+            </Button>
+          }
+        />
+
+        <div className="max-w-2xl mx-auto mt-8 p-6 bg-white border border-amber-200 rounded-2xl shadow-sm text-center space-y-4">
+          <div className="w-16 h-16 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto">
+            <Lock className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-lg font-bold text-slate-900">
+              Mandatory Nursing Vitals Triage Pending
+            </h3>
+            <p className="text-sm text-slate-600 max-w-lg mx-auto">
+              Hospital policy requires a registered nurse to record baseline vital signs (Blood Pressure, Heart Rate, Temperature, SpO2) before Dr. {appointment.doctorName} can begin consultation for <span className="font-semibold text-slate-900">{appointment.patientName}</span> ({appointment.patientId}).
+            </p>
+          </div>
+
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-left text-xs space-y-2 text-amber-900">
+            <div className="flex items-center gap-2 font-semibold">
+              <AlertCircle className="w-4 h-4 text-amber-600" />
+              <span>Current Status: Waiting for Nurse Clinical Intake</span>
+            </div>
+            <p className="text-amber-800">
+              Please notify the nursing desk to conduct triage intake for this patient. Once vitals are entered, this consultation workspace will immediately unlock.
+            </p>
+          </div>
+
+          <div className="pt-2 flex justify-center gap-3">
+            <Button
+              variant="outline"
+              onClick={() => navigate('/hospital/doctor/queue')}
+            >
+              Return to Live Queue
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                const refreshedPat = MockStorage.getPatientById(appointment.patientId);
+                const hasNow = Boolean(
+                  refreshedPat?.vitals?.bloodPressure ||
+                  refreshedPat?.vitals?.heartRate ||
+                  refreshedPat?.vitals?.temperature ||
+                  refreshedPat?.vitals?.oxygenLevel
+                );
+                if (hasNow) {
+                  showToast('Triage Complete', 'Nurse vitals verified. Consultation unlocked.', 'success');
+                  window.location.reload();
+                } else {
+                  showToast('Still Pending', 'Nurse has not recorded vitals yet.', 'warning');
+                }
+              }}
+              leftIcon={<RotateCw className="w-4 h-4" />}
+            >
+              Check Nurse Intake Status
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -1054,6 +1173,32 @@ export const ConsultationWorkspace: React.FC = () => {
       )}
 
       {/* Validation Error Banner */}
+      {(() => {
+        const hospSettings = MockStorage.getHospitalSettings(appointment.hospitalId || hospId);
+        const isTriageMandatory = hospSettings.mandatoryVitalsTriage !== false;
+        const hasVitals = Boolean(
+          bloodPressure || heartRate || temperature || oxygenLevel ||
+          patient?.vitals?.bloodPressure || patient?.vitals?.heartRate
+        );
+        if (isTriageMandatory && !hasVitals && !isFinalized) {
+          return (
+            <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3 shadow-xs">
+              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h4 className="text-xs font-bold flex items-center gap-1.5">
+                  <span>Mandatory Nursing Vitals Triage Pending</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-200 text-amber-900">Hospital Policy Enforced</span>
+                </h4>
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  Hospital clinical policy requires registered nursing staff to complete vital sign triage (Blood Pressure, Heart Rate, Body Temperature, SpO2) before Dr. {appointment.doctorName} can finalize this consultation.
+                </p>
+              </div>
+            </div>
+          );
+        }
+        return null;
+      })()}
+
       {validationError && (
         <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
@@ -1411,7 +1556,7 @@ export const ConsultationWorkspace: React.FC = () => {
                         onClick={handleAddMedicine}
                         leftIcon={<Plus className="w-3 h-3 text-emerald-600" />}
                       >
-                        + Add Another Medication
+                         Add Another Medication
                       </Button>
                     )}
                     <Button
@@ -1667,135 +1812,165 @@ export const ConsultationWorkspace: React.FC = () => {
           </Card>
 
           {/* Section 6: Inpatient Admission Referral (IPD Bed Referral) */}
-          <Card className={needsAdmission ? 'border-rose-300 ring-1 ring-rose-300/50' : ''}>
-            <CardHeader
-              title="6. Inpatient Admission Order (IPD Bed Referral)"
-              subtitle="Specialist initiates inpatient admission order. Once finalized, alerts Receptionist & Admissions Desk for immediate bed allocation."
-            />
-            <CardContent className="space-y-4">
-              <div className={`p-4 rounded-xl border transition-all ${needsAdmission ? 'border-rose-200 bg-rose-50/40' : 'border-slate-200 bg-slate-50/50'}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id="needsAdmission"
-                      checked={needsAdmission}
-                      onChange={(e) => {
-                        setNeedsAdmission(e.target.checked);
-                        if (e.target.checked && !admissionReason) {
-                          setAdmissionReason(diagnosis || chiefComplaint || '');
-                        }
-                      }}
-                      disabled={isFinalized}
-                      className="w-4 h-4 rounded text-rose-600 border-rose-300 focus:ring-rose-500 cursor-pointer"
-                    />
-                    <label htmlFor="needsAdmission" className="text-xs font-bold text-slate-800 cursor-pointer flex items-center gap-2">
-                      <BedDouble className="w-4 h-4 text-rose-600" />
-                      Recommend Inpatient Admission (Transfer to Ward & Bed)
-                    </label>
+          {!isAdmissionsEnabled ? (
+            <Card className="border-amber-200 bg-amber-50/30">
+              <CardHeader
+                title="6. Inpatient Admission Order (IPD Bed Referral)"
+                subtitle="Inpatient ward admission & bed allocation"
+                action={
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                    <Lock className="w-3.5 h-3.5 text-amber-700" />
+                    Locked on Starter Clinic Plan
+                  </span>
+                }
+              />
+              <CardContent>
+                <div className="p-4 rounded-xl border border-dashed border-amber-300 bg-amber-50/70 flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5">
+                    <BedDouble className="w-5 h-5" />
                   </div>
-                  {needsAdmission && (
-                    <Badge variant="error" size="sm" className="font-semibold">
-                      IPD Admission Active
-                    </Badge>
-                  )}
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800">
+                      Inpatient Bed Admissions Restricted
+                    </h4>
+                    <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
+                      This facility operates on the <strong>Starter Clinic Plan</strong> (Outpatient OPD care only). Inpatient bed assignment, ward census, and hospital admissions are locked. To enable IPD bed admissions, contact your Hospital Administrator to upgrade to the <strong>Professional Hospital</strong> or <strong>Enterprise Health Network</strong> plan.
+                    </p>
+                  </div>
                 </div>
-
-                {needsAdmission && (
-                  <div className="pt-3.5 mt-3 border-t border-rose-200/70 space-y-3.5">
-                    {/* Priority Selector */}
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-1.5">
-                        Admission Urgency & Priority *
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className={needsAdmission ? 'border-rose-300 ring-1 ring-rose-300/50' : ''}>
+              <CardHeader
+                title="6. Inpatient Admission Order (IPD Bed Referral)"
+                subtitle="Specialist initiates inpatient admission order. Once finalized, alerts Receptionist & Admissions Desk for immediate bed allocation."
+              />
+              <CardContent className="space-y-4">
+                <div className={`p-4 rounded-xl border transition-all ${needsAdmission ? 'border-rose-200 bg-rose-50/40' : 'border-slate-200 bg-slate-50/50'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        id="needsAdmission"
+                        checked={needsAdmission}
+                        onChange={(e) => {
+                          setNeedsAdmission(e.target.checked);
+                          if (e.target.checked && !admissionReason) {
+                            setAdmissionReason(diagnosis || chiefComplaint || '');
+                          }
+                        }}
+                        disabled={isFinalized}
+                        className="w-4 h-4 rounded text-rose-600 border-rose-300 focus:ring-rose-500 cursor-pointer"
+                      />
+                      <label htmlFor="needsAdmission" className="text-xs font-bold text-slate-800 cursor-pointer flex items-center gap-2">
+                        <BedDouble className="w-4 h-4 text-rose-600" />
+                        Recommend Inpatient Admission (Transfer to Ward & Bed)
                       </label>
-                      <div className="flex flex-wrap gap-2">
-                        {(['Emergency', 'Urgent', 'Routine', 'Elective'] as AdmissionRequestPriority[]).map((p) => {
-                          const isSelected = admissionPriority === p;
-                          const colorClasses =
-                            p === 'Emergency'
-                              ? isSelected ? 'bg-rose-600 text-white font-bold ring-2 ring-rose-300' : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
-                              : p === 'Urgent'
-                              ? isSelected ? 'bg-amber-600 text-white font-bold ring-2 ring-amber-300' : 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-                              : p === 'Routine'
-                              ? isSelected ? 'bg-sky-600 text-white font-bold ring-2 ring-sky-300' : 'bg-sky-100 text-sky-800 hover:bg-sky-200'
-                              : isSelected ? 'bg-indigo-600 text-white font-bold ring-2 ring-indigo-300' : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200';
-                          return (
-                            <button
-                              key={p}
-                              type="button"
-                              onClick={() => setAdmissionPriority(p)}
-                              disabled={isFinalized}
-                              className={`px-3 py-1.5 rounded-lg text-xs transition-all ${colorClasses}`}
-                            >
-                              {p === 'Emergency' && '🚨 '}
-                              {p === 'Urgent' && '⚡ '}
-                              {p}
-                            </button>
-                          );
-                        })}
-                      </div>
                     </div>
+                    {needsAdmission && (
+                      <Badge variant="error" size="sm" className="font-semibold">
+                        IPD Admission Active
+                      </Badge>
+                    )}
+                  </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {needsAdmission && (
+                    <div className="pt-3.5 mt-3 border-t border-rose-200/70 space-y-3.5">
+                      {/* Priority Selector */}
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Recommended Ward Type *
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1.5">
+                          Admission Urgency & Priority *
                         </label>
-                        <select
-                          value={admissionWardType}
-                          onChange={(e) => setAdmissionWardType(e.target.value as WardType)}
-                          disabled={isFinalized}
-                          className="w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-800 focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
-                        >
-                          <option value="General Ward">General Ward (Standard Medical/Surgical)</option>
-                          <option value="ICU">Intensive Care Unit (ICU)</option>
-                          <option value="HDU">High Dependency Unit (HDU)</option>
-                          <option value="CCU">Coronary Care Unit (CCU)</option>
-                          <option value="Pediatric Ward">Pediatric Ward</option>
-                          <option value="Maternity Ward">Maternity / Labor Ward</option>
-                          <option value="Deluxe Private">Deluxe Private Room</option>
-                          <option value="Emergency Bay">Emergency Observation Bay</option>
-                        </select>
+                        <div className="flex flex-wrap gap-2">
+                          {(['Emergency', 'Urgent', 'Routine', 'Elective'] as AdmissionRequestPriority[]).map((p) => {
+                            const isSelected = admissionPriority === p;
+                            const colorClasses =
+                              p === 'Emergency'
+                                ? isSelected ? 'bg-rose-600 text-white font-bold ring-2 ring-rose-300' : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
+                                : p === 'Urgent'
+                                ? isSelected ? 'bg-amber-600 text-white font-bold ring-2 ring-amber-300' : 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                                : p === 'Routine'
+                                ? isSelected ? 'bg-sky-600 text-white font-bold ring-2 ring-sky-300' : 'bg-sky-100 text-sky-800 hover:bg-sky-200'
+                                : isSelected ? 'bg-indigo-600 text-white font-bold ring-2 ring-indigo-300' : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200';
+                            return (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => setAdmissionPriority(p)}
+                                disabled={isFinalized}
+                                className={`px-3 py-1.5 rounded-lg text-xs transition-all ${colorClasses}`}
+                              >
+                                {p === 'Emergency' && '🚨 '}
+                                {p === 'Urgent' && '⚡ '}
+                                {p}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                            Recommended Ward Type *
+                          </label>
+                          <select
+                            value={admissionWardType}
+                            onChange={(e) => setAdmissionWardType(e.target.value as WardType)}
+                            disabled={isFinalized}
+                            className="w-full text-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-800 focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
+                          >
+                            <option value="General Ward">General Ward (Standard Medical/Surgical)</option>
+                            <option value="ICU">Intensive Care Unit (ICU)</option>
+                            <option value="HDU">High Dependency Unit (HDU)</option>
+                            <option value="CCU">Coronary Care Unit (CCU)</option>
+                            <option value="Pediatric Ward">Pediatric Ward</option>
+                            <option value="Maternity Ward">Maternity / Labor Ward</option>
+                            <option value="Deluxe Private">Deluxe Private Room</option>
+                            <option value="Emergency Bay">Emergency Observation Bay</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                            Admission Reason / Clinical Indication *
+                          </label>
+                          <Input
+                            value={admissionReason}
+                            onChange={(e) => setAdmissionReason(e.target.value)}
+                            placeholder="e.g. Severe Dehydration, Acute Appendicitis, Oxygen support"
+                            disabled={isFinalized}
+                            className="text-xs py-1.5"
+                          />
+                        </div>
                       </div>
 
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Admission Reason / Clinical Indication *
+                          Pre-Bedding Directives & Nursing Care Instructions
                         </label>
                         <Input
-                          value={admissionReason}
-                          onChange={(e) => setAdmissionReason(e.target.value)}
-                          placeholder="e.g. Severe Dehydration, Acute Appendicitis, Oxygen support"
+                          value={admissionInstructions}
+                          onChange={(e) => setAdmissionInstructions(e.target.value)}
+                          placeholder="e.g. Start IV Ringer Lactate 100ml/hr, keep NPO for endoscopy, check SpO2 q30m"
                           disabled={isFinalized}
                           className="text-xs py-1.5"
                         />
                       </div>
-                    </div>
 
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                        Pre-Bedding Directives & Nursing Care Instructions
-                      </label>
-                      <Input
-                        value={admissionInstructions}
-                        onChange={(e) => setAdmissionInstructions(e.target.value)}
-                        placeholder="e.g. Start IV Ringer Lactate 100ml/hr, keep NPO for endoscopy, check SpO2 q30m"
-                        disabled={isFinalized}
-                        className="text-xs py-1.5"
-                      />
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-rose-100/70 border border-rose-200 text-rose-900 text-xs flex items-start gap-2">
-                      <Sparkles className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                      <div>
-                        <strong>Hospital Workflow Automation:</strong> Finalizing this consultation automatically logs an <strong>Official Doctor Admission Referral</strong> on the <strong>Admissions Desk & Wards Matrix</strong> with {appointment.patientName} and Dr. {appointment.doctorName} pre-selected for instant bed allocation.
+                      <div className="p-3 rounded-xl bg-rose-100/70 border border-rose-200 text-rose-900 text-xs flex items-start gap-2">
+                        <Sparkles className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong>Hospital Workflow Automation:</strong> Finalizing this consultation automatically logs an <strong>Official Doctor Admission Referral</strong> on the <strong>Admissions Desk & Wards Matrix</strong> with {appointment.patientName} and Dr. {appointment.doctorName} pre-selected for instant bed allocation.
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Right Column (4 cols): Vitals Strip & Encounter Actions */}

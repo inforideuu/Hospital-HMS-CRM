@@ -43,6 +43,7 @@ from .models import (
     PatientTestimonial,
     HospitalSetting,
     PlatformSetting,
+    DemoRequest,
 )
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -62,9 +63,16 @@ class HospitalSerializer(serializers.ModelSerializer):
 
 def resolve_hospital_fk(data):
     if isinstance(data, dict) or hasattr(data, 'get'):
-        if 'hospital' in data:
-            hosp_id = data.get('hospital')
-            if hosp_id and not Hospital.objects.filter(id=hosp_id).exists():
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
+        if 'hospital' not in data:
+            if 'hospitalId' in data:
+                data['hospital'] = data['hospitalId']
+            elif 'hospital_id' in data:
+                data['hospital'] = data['hospital_id']
+
+        hosp_id = data.get('hospital')
+        if hosp_id:
+            if not Hospital.objects.filter(id=hosp_id).exists():
                 matched = Hospital.objects.filter(id__iexact=str(hosp_id)).first()
                 if not matched:
                     alias_map = {'hosp-1': 'HOSP-001', 'HOSP-001': 'hosp-1', 'hosp-abc': 'HOSP-ABC-CHN', 'HOSP-ABC-CHN': 'hosp-abc'}
@@ -72,10 +80,24 @@ def resolve_hospital_fk(data):
                     if alt_id:
                         matched = Hospital.objects.filter(id__iexact=alt_id).first()
                 if not matched:
-                    matched = Hospital.objects.first()
+                    hosp_name = data.get('hospitalName') or data.get('hospital_name') or f"Hospital {hosp_id}"
+                    matched, _ = Hospital.objects.get_or_create(
+                        id=str(hosp_id),
+                        defaults={
+                            'name': hosp_name,
+                            'code': str(hosp_id)[:20],
+                            'city': 'Main City',
+                            'tier': 'Tier 1',
+                            'plan_tier': 'enterprise',
+                            'status': 'active',
+                        }
+                    )
                 if matched:
-                    data = data.copy() if hasattr(data, 'copy') else dict(data)
                     data['hospital'] = matched.id
+        else:
+            first_h = Hospital.objects.first()
+            if first_h:
+                data['hospital'] = first_h.id
     return data
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -140,6 +162,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         raw_password = validated_data.pop('password', None)
+        validated_data.pop('id', None)
         for attr, val in validated_data.items():
             setattr(instance, attr, val)
         if raw_password:
@@ -215,10 +238,58 @@ class AppointmentSerializer(serializers.ModelSerializer):
         data = resolve_hospital_fk(data)
         if hasattr(data, 'copy') or isinstance(data, dict):
             data = data.copy() if hasattr(data, 'copy') else dict(data)
-            if 'doctor_id' in data and 'doctor' not in data:
+            if 'doctorId' in data and 'doctor' not in data:
+                data['doctor'] = data['doctorId']
+            elif 'doctor_id' in data and 'doctor' not in data:
                 data['doctor'] = data['doctor_id']
-            if 'patient_id' in data and 'patient' not in data:
+
+            if 'patientId' in data and 'patient' not in data:
+                data['patient'] = data['patientId']
+            elif 'patient_id' in data and 'patient' not in data:
                 data['patient'] = data['patient_id']
+
+            if 'appointmentDate' in data and 'date' not in data:
+                data['date'] = data['appointmentDate']
+            if 'appointmentTime' in data and 'time' not in data:
+                data['time'] = data['appointmentTime']
+            if 'cancellationPenalty' in data and 'cancellation_penalty' not in data:
+                data['cancellation_penalty'] = data['cancellationPenalty']
+            if 'cancellationPenaltyCollected' in data and 'cancellation_penalty_collected' not in data:
+                data['cancellation_penalty_collected'] = data['cancellationPenaltyCollected']
+            if 'cancellationCollectedInvoiceId' in data and 'cancellation_collected_invoice_id' not in data:
+                data['cancellation_collected_invoice_id'] = data['cancellationCollectedInvoiceId']
+            if 'cancelledAt' in data and 'cancelled_at' not in data:
+                data['cancelled_at'] = data['cancelledAt']
+            if 'cancellationReason' in data and 'cancellation_reason' not in data:
+                data['cancellation_reason'] = data['cancellationReason']
+
+            # Safely resolve patient foreign key
+            p_val = data.get('patient')
+            if p_val and not Patient.objects.filter(id=p_val).exists():
+                matched_p = Patient.objects.filter(id__iexact=str(p_val)).first()
+                if not matched_p:
+                    hosp = data.get('hospital')
+                    matched_p = Patient.objects.filter(hospital_id=hosp).first() if hosp else Patient.objects.first()
+                if matched_p:
+                    data['patient'] = matched_p.id
+
+            # Safely resolve doctor foreign key and ensure appointment belongs to doctor's hospital
+            d_val = data.get('doctor')
+            if d_val:
+                doc_obj = Doctor.objects.filter(id=d_val).first()
+                if not doc_obj:
+                    doc_obj = Doctor.objects.filter(id__iexact=str(d_val)).first()
+                if doc_obj:
+                    data['doctor'] = doc_obj.id
+                    if doc_obj.hospital_id:
+                        data['hospital'] = doc_obj.hospital_id
+                else:
+                    hosp = data.get('hospital')
+                    matched_d = Doctor.objects.filter(hospital_id=hosp).first() if hosp else Doctor.objects.first()
+                    if matched_d:
+                        data['doctor'] = matched_d.id
+                        if matched_d.hospital_id:
+                            data['hospital'] = matched_d.hospital_id
         return super().to_internal_value(data)
 
 class ConsultationSerializer(serializers.ModelSerializer):
@@ -312,12 +383,34 @@ class AmbulanceDriverSerializer(serializers.ModelSerializer):
                 data['completed_trips'] = data['completedTrips']
         return super().to_internal_value(data)
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['hospitalId'] = instance.hospital_id
+        data['hospitalName'] = instance.hospital.name if instance.hospital else ''
+        data['licenseNumber'] = instance.license_number
+        data['assignedAmbulanceReg'] = instance.assigned_ambulance_reg
+        data['availabilityStatus'] = instance.availability_status
+        data['completedTrips'] = instance.completed_trips
+        return data
+
 class EmergencyRequestSerializer(serializers.ModelSerializer):
     assigned_driver_name = serializers.CharField(source='assigned_driver.name', read_only=True)
 
     class Meta:
         model = EmergencyRequest
         fields = '__all__'
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['hospitalId'] = instance.hospital_id
+        data['hospitalName'] = instance.hospital.name if instance.hospital else ''
+        data['patientName'] = instance.patient_name
+        data['patientPhone'] = instance.patient_phone
+        data['pickupLocation'] = instance.pickup_location
+        data['destinationHospital'] = instance.destination_hospital
+        data['emergencyType'] = instance.emergency_type
+        data['assignedDriverId'] = instance.assigned_driver_id
+        return data
 
     def to_internal_value(self, data):
         data = resolve_hospital_fk(data)
@@ -336,7 +429,11 @@ class EmergencyRequestSerializer(serializers.ModelSerializer):
             if 'chiefComplaint' in data and 'chief_complaint' not in data:
                 data['chief_complaint'] = data['chiefComplaint']
             if 'assignedDriverId' in data and 'assigned_driver' not in data:
-                data['assigned_driver'] = data['assignedDriverId']
+                drv_id = data.get('assignedDriverId')
+                if drv_id and AmbulanceDriver.objects.filter(id=drv_id).exists():
+                    data['assigned_driver'] = drv_id
+                else:
+                    data['assigned_driver'] = None
             elif 'assigned_driver_id' in data and 'assigned_driver' not in data:
                 data['assigned_driver'] = data['assigned_driver_id']
         return super().to_internal_value(data)
@@ -790,7 +887,11 @@ class AmbulanceSerializer(serializers.ModelSerializer):
             if 'currentLocation' in data and 'current_location' not in data:
                 data['current_location'] = data['currentLocation']
             if 'assignedDriverId' in data and 'assigned_driver' not in data:
-                data['assigned_driver'] = data['assignedDriverId']
+                drv_id = data.get('assignedDriverId')
+                if drv_id and AmbulanceDriver.objects.filter(id=drv_id).exists():
+                    data['assigned_driver'] = drv_id
+                else:
+                    data['assigned_driver'] = None
             if 'assignedDriverName' in data and 'assigned_driver_name' not in data:
                 data['assigned_driver_name'] = data['assignedDriverName']
             if 'driverPhone' in data and 'driver_phone' not in data:
@@ -803,6 +904,8 @@ class AmbulanceSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
+        data['hospitalId'] = instance.hospital_id
+        data['hospitalName'] = instance.hospital.name if instance.hospital else ''
         data['regNumber'] = instance.reg_number
         data['mileageKm'] = instance.mileage_km
         data['fuelLevel'] = instance.fuel_level
@@ -826,7 +929,11 @@ class AmbulanceMaintenanceSerializer(serializers.ModelSerializer):
         if hasattr(data, 'copy') or isinstance(data, dict):
             data = data.copy() if hasattr(data, 'copy') else dict(data)
             if 'ambulanceId' in data and 'ambulance' not in data:
-                data['ambulance'] = data['ambulanceId']
+                amb_id = data.get('ambulanceId')
+                if amb_id and Ambulance.objects.filter(id=amb_id).exists():
+                    data['ambulance'] = amb_id
+                else:
+                    data['ambulance'] = None
             if 'ambulanceReg' in data and 'ambulance_reg' not in data:
                 data['ambulance_reg'] = data['ambulanceReg']
             if 'serviceDate' in data and 'service_date' not in data:
@@ -861,6 +968,8 @@ class AmbulanceMaintenanceSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
+        data['hospitalId'] = instance.hospital_id
+        data['hospitalName'] = instance.hospital.name if instance.hospital else ''
         data['ambulanceId'] = instance.ambulance_id
         data['ambulanceReg'] = instance.ambulance_reg
         data['serviceDate'] = str(instance.service_date) if instance.service_date else ''
@@ -922,6 +1031,8 @@ class AmbulanceTripSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
+        data['hospitalId'] = instance.hospital_id
+        data['hospitalName'] = instance.hospital.name if instance.hospital else ''
         data['requestId'] = instance.request_id
         data['ambulanceId'] = instance.ambulance_id
         data['ambulanceReg'] = instance.ambulance_reg
@@ -949,7 +1060,11 @@ class PatientAppointmentRequestSerializer(serializers.ModelSerializer):
         if hasattr(data, 'copy') or isinstance(data, dict):
             data = data.copy() if hasattr(data, 'copy') else dict(data)
             if 'patientId' in data and 'patient' not in data:
-                data['patient'] = data['patientId']
+                pid = data.get('patientId')
+                if pid and Patient.objects.filter(id=pid).exists():
+                    data['patient'] = pid
+                else:
+                    data['patient'] = None
             if 'patientName' in data and 'patient_name' not in data:
                 data['patient_name'] = data['patientName']
             if 'patientPhone' in data and 'patient_phone' not in data:
@@ -959,13 +1074,21 @@ class PatientAppointmentRequestSerializer(serializers.ModelSerializer):
             if 'patientGender' in data and 'patient_gender' not in data:
                 data['patient_gender'] = data['patientGender']
             if 'doctorId' in data and 'doctor' not in data:
-                data['doctor'] = data['doctorId']
+                did = data.get('doctorId')
+                if did and Doctor.objects.filter(id=did).exists():
+                    data['doctor'] = did
+                else:
+                    data['doctor'] = None
             if 'doctorName' in data and 'doctor_name' not in data:
                 data['doctor_name'] = data['doctorName']
             if 'doctorSpecialization' in data and 'doctor_specialization' not in data:
                 data['doctor_specialization'] = data['doctorSpecialization']
             if 'departmentId' in data and 'department' not in data:
-                data['department'] = data['departmentId']
+                dept_id = data.get('departmentId')
+                if dept_id and Department.objects.filter(id=dept_id).exists():
+                    data['department'] = dept_id
+                else:
+                    data['department'] = None
             if 'departmentName' in data and 'department_name' not in data:
                 data['department_name'] = data['departmentName']
             if 'preferredDate' in data and 'preferred_date' not in data:
@@ -1370,6 +1493,48 @@ class PlatformSettingSerializer(serializers.ModelSerializer):
     class Meta:
         model = PlatformSetting
         fields = '__all__'
+
+
+class DemoRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DemoRequest
+        fields = '__all__'
+
+    def to_representation(self, instance):
+        return {
+            'id': instance.id,
+            'hospitalName': instance.hospital_name,
+            'contactPerson': instance.contact_person,
+            'designation': instance.designation or '',
+            'email': instance.email,
+            'phone': instance.phone,
+            'city': instance.city or '',
+            'state': instance.state or '',
+            'bedCapacity': instance.bed_capacity,
+            'hospitalType': instance.hospital_type,
+            'preferredDate': instance.preferred_date or '',
+            'preferredTime': instance.preferred_time or '',
+            'message': instance.message or '',
+            'status': instance.status,
+            'createdAt': instance.created_at.isoformat() if instance.created_at else None,
+        }
+
+    def to_internal_value(self, data):
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
+        if 'hospitalName' in data and 'hospital_name' not in data:
+            data['hospital_name'] = data['hospitalName']
+        if 'contactPerson' in data and 'contact_person' not in data:
+            data['contact_person'] = data['contactPerson']
+        if 'bedCapacity' in data and 'bed_capacity' not in data:
+            data['bed_capacity'] = data['bedCapacity']
+        if 'hospitalType' in data and 'hospital_type' not in data:
+            data['hospital_type'] = data['hospitalType']
+        if 'preferredDate' in data and 'preferred_date' not in data:
+            data['preferred_date'] = data['preferredDate']
+        if 'preferredTime' in data and 'preferred_time' not in data:
+            data['preferred_time'] = data['preferredTime']
+        return super().to_internal_value(data)
+
 
 
 

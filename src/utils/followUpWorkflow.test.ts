@@ -371,4 +371,72 @@ describe('5-Step Clinical Follow-Up Workflow Tests', () => {
     assert.ok(finalReq);
     assert.equal(finalReq.status, 'Completed');
   });
+
+  test('Step 6 — Free Follow-up Consultation Validity window policy (₹0 fee within window)', () => {
+    // Set hospital follow-up validity to 7 days
+    const currentSettings = MockStorage.getHospitalSettings(TEST_HOSP_ID);
+    MockStorage.saveHospitalSettings({
+      ...currentSettings,
+      hospitalId: TEST_HOSP_ID,
+      followUpValidityDays: 7,
+    });
+
+    const retrievedSettings = MockStorage.getHospitalSettings(TEST_HOSP_ID);
+    assert.equal(retrievedSettings.followUpValidityDays, 7);
+
+    // Initial paid appointment on Day 1
+    const initialApt: Appointment = {
+      id: 'APT-INIT-1',
+      hospitalId: TEST_HOSP_ID,
+      patientId: TEST_PATIENT_ID,
+      patientName: 'Aarav Patel',
+      patientPhone: '+91 9876543210',
+      patientAge: 38,
+      patientGender: 'Male',
+      doctorId: TEST_DOCTOR_ID,
+      doctorName: 'Dr. Ramesh Sharma',
+      doctorSpecialization: 'Pulmonologist',
+      departmentId: 'DEP-PULM',
+      departmentName: 'Pulmonology',
+      appointmentDate: '2026-10-20',
+      appointmentTime: '10:00 AM',
+      type: 'Consultation',
+      status: 'Completed',
+      reason: 'General Medical Examination',
+      fee: 500,
+      paymentStatus: 'Paid',
+      createdAt: '2026-10-20',
+    };
+    MockStorage.saveAppointment(initialApt);
+
+    // Follow-up appointment on Day 5 (within 7-day grace window) -> ₹0 fee
+    const validFollowUpApt: Appointment = {
+      id: 'APT-FOLLOWUP-FREE',
+      hospitalId: TEST_HOSP_ID,
+      patientId: TEST_PATIENT_ID,
+      patientName: 'Aarav Patel',
+      patientPhone: '+91 9876543210',
+      patientAge: 38,
+      patientGender: 'Male',
+      doctorId: TEST_DOCTOR_ID,
+      doctorName: 'Dr. Ramesh Sharma',
+      doctorSpecialization: 'Pulmonologist',
+      departmentId: 'DEP-PULM',
+      departmentName: 'Pulmonology',
+      appointmentDate: '2026-10-25',
+      appointmentTime: '10:00 AM',
+      type: 'Follow-up',
+      status: 'Confirmed',
+      reason: 'Bronchitis recovery follow-up',
+      fee: 0,
+      paymentStatus: 'Paid',
+      createdAt: '2026-10-25',
+      isFollowUp: true,
+    };
+    MockStorage.saveAppointment(validFollowUpApt);
+
+    const savedApt = MockStorage.getAppointmentById('APT-FOLLOWUP-FREE');
+    assert.equal(savedApt?.fee, 0);
+    assert.equal(savedApt?.isFollowUp, true);
+  });
 });

@@ -28,12 +28,12 @@ export const DriverLayout: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-black text-sm text-white tracking-tight">PulseCore EMS</span>
+                <span className="font-black text-sm text-white tracking-tight">Zenelait EMS</span>
                 <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse">
                   <Radio className="w-2.5 h-2.5" /> 911 Unit Live
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 truncate">{user?.name} (DRV-201)</p>
+              <p className="text-[11px] text-slate-400 truncate">{user?.name} {user?.driverId ? `(${user.driverId})` : ''}</p>
             </div>
           </div>
 

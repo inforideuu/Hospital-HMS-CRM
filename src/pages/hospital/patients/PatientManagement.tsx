@@ -5,6 +5,7 @@ import {
   Search,
   Filter,
   Eye,
+  EyeOff,
   Edit,
   Trash2,
   Download,
@@ -32,6 +33,7 @@ import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { Modal } from '../../../components/ui/Modal';
 import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
+import { SubscriptionUpgradeModal } from '../../../components/common/SubscriptionUpgradeModal';
 import { Pagination } from '../../../components/ui/Pagination';
 import { EmptyState } from '../../../components/ui/EmptyState';
 
@@ -56,10 +58,17 @@ export const PatientManagement: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 6;
 
+  // Active Subscription Plan & Quota Tracking
+  const currentPlan = MockStorage.getHospitalActivePlan(hospId);
+  const currentPatientCount = patients.length;
+  const isAtPatientLimit = currentPlan && currentPlan.maxPatients !== undefined && currentPatientCount >= currentPlan.maxPatients;
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -179,10 +188,17 @@ export const PatientManagement: React.FC = () => {
 
   const handleOpenEdit = (patient: Patient) => {
     setSelectedPatient(patient);
+    const existingUsers = MockStorage.getUsers();
+    const patientUser = existingUsers.find(
+      (u) =>
+        (u.patientId && u.patientId === patient.id) ||
+        (patient.email && u.email && u.email.toLowerCase() === patient.email.toLowerCase())
+    );
+    setShowPassword(false);
     setFormData({
       name: patient.name || '',
       email: patient.email || '',
-      password: '',
+      password: patientUser?.password || 'Patient@1234',
       phone: patient.phone || '',
       dateOfBirth: patient.dateOfBirth || '',
       age: patient.age || 0,
@@ -257,7 +273,43 @@ export const PatientManagement: React.FC = () => {
         vitals: vitalsData,
       };
       MockStorage.savePatient(updated);
-      showToast('Patient Record Updated', `${updated.name} profile saved.`);
+
+      // Sync and update/create Patient Portal User login credentials
+      const allUsers = MockStorage.getUsers();
+      let patientUser = allUsers.find(
+        (u) =>
+          (u.patientId && u.patientId === selectedPatient.id) ||
+          (selectedPatient.email && u.email && u.email.toLowerCase() === selectedPatient.email.toLowerCase())
+      );
+
+      if (patientUser) {
+        const updatedUser: User = {
+          ...patientUser,
+          name: formData.name,
+          email: formData.email || patientUser.email,
+          phone: formData.phone || patientUser.phone,
+          password: formData.password || patientUser.password,
+        };
+        MockStorage.saveUser(updatedUser);
+      } else if (formData.email || formData.password) {
+        const newUser: User = {
+          id: `USR-${Date.now().toString(36).substring(2, 7)}`,
+          name: formData.name,
+          email: formData.email || `${selectedPatient.id.toLowerCase()}@hospital.local`,
+          password: formData.password || 'Patient@1234',
+          role: 'patient',
+          portal: 'patient',
+          hospitalId: hospId,
+          hospitalName: currentHospital?.name || 'Hospital',
+          patientId: selectedPatient.id,
+          phone: formData.phone,
+          status: 'active',
+          createdAt: new Date().toISOString(),
+        };
+        MockStorage.saveUser(newUser);
+      }
+
+      showToast('Patient Record Updated', `${updated.name} profile and portal password saved.`);
       setIsEditModalOpen(false);
     } else {
       const newPatientId = `PAT-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -285,7 +337,16 @@ export const PatientManagement: React.FC = () => {
         roomBedNumber: undefined,
         vitals: undefined,
       };
-      MockStorage.savePatient(newPatient);
+      const saveRes = MockStorage.savePatient(newPatient);
+      if (!saveRes.success) {
+        showToast(
+          'Patient Quota Limit Reached',
+          saveRes.message || 'Cannot register patient due to subscription limits. Upgrade your plan to increase EHR capacity.',
+          'error'
+        );
+        setIsUpgradeModalOpen(true);
+        return;
+      }
 
       // Create Patient Portal User login credentials automatically/explicitly
       if (formData.email) {
@@ -327,7 +388,28 @@ export const PatientManagement: React.FC = () => {
   };
 
   const handleExport = () => {
-    MockStorage.exportToCSV('Patient_Registry', filtered);
+    const formattedPatients = filtered.map((p) => ({
+      'Patient ID': p.id,
+      'Full Name': p.name,
+      'Date of Birth': p.dateOfBirth ? p.dateOfBirth.split('T')[0] : '',
+      'Age': p.age,
+      'Gender': p.gender,
+      'Blood Group': p.bloodGroup,
+      'Phone': p.phone,
+      'Email': p.email || '',
+      'Address': p.address || '',
+      'Emergency Contact Name': p.emergencyContactName || '',
+      'Emergency Contact Phone': p.emergencyContactPhone || '',
+      'Relationship': p.emergencyContactRelation || '',
+      'Clinical Status': p.status,
+      'Registered Date': p.registeredDate ? p.registeredDate.split('T')[0] : '',
+      'Assigned Specialist': p.assignedDoctorName || 'Unassigned',
+      'Room / Bed': p.roomBedNumber || 'Outpatient',
+      'Allergies': Array.isArray(p.allergies) ? p.allergies.join(', ') : (p.allergies || 'None'),
+      'Medical History': Array.isArray(p.medicalHistory) ? p.medicalHistory.join(', ') : (p.medicalHistory || 'None'),
+      'Vitals': p.vitals ? `BP: ${p.vitals.bloodPressure || 'N/A'} | HR: ${p.vitals.heartRate || 'N/A'} bpm | Temp: ${p.vitals.temperature || 'N/A'}°F | SpO2: ${p.vitals.oxygenLevel || 'N/A'}%` : 'No vitals logged',
+    }));
+    MockStorage.exportToCSV('Patient_Registry', formattedPatients);
     showToast('Export Successful', 'Patient records downloaded.');
   };
 
@@ -338,7 +420,33 @@ export const PatientManagement: React.FC = () => {
         subtitle="Manage longitudinal medical records, clinical vitals, allergies, and patient intake profiles."
         breadcrumbs={[{ label: 'Hospital HMS', href: '/hospital/dashboard' }, { label: 'Patients' }]}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            {currentPlan && (
+              <div
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+                  isAtPatientLimit
+                    ? 'bg-rose-50 border-rose-200 text-rose-700'
+                    : currentPatientCount >= (currentPlan.maxPatients || 5000) * 0.8
+                    ? 'bg-amber-50 border-amber-200 text-amber-700'
+                    : 'bg-slate-50 border-slate-200 text-slate-700'
+                }`}
+                title={`Current Plan: ${currentPlan.name}. Allowed: ${currentPlan.maxPatients} Patient EHR Records.`}
+              >
+                <Activity className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  EHR Quota: <strong className="font-bold">{currentPatientCount}</strong> / {currentPlan.maxPatients ?? '∞'} in use
+                </span>
+                {isAtPatientLimit && (
+                  <button
+                    type="button"
+                    onClick={() => setIsUpgradeModalOpen(true)}
+                    className="ml-1 text-[10px] uppercase font-bold text-rose-700 underline hover:text-rose-900 cursor-pointer"
+                  >
+                    Upgrade
+                  </button>
+                )}
+              </div>
+            )}
             <Button variant="outline" size="sm" onClick={handleExport} leftIcon={<Download className="w-3.5 h-3.5" />}>
               Export Patients
             </Button>
@@ -449,6 +557,24 @@ export const PatientManagement: React.FC = () => {
                     <td className="px-5 py-3.5">
                       <p className="font-bold text-slate-900 leading-tight">{p.name}</p>
                       <p className="text-[11px] text-indigo-600 font-mono font-semibold mt-0.5">{p.id}</p>
+                      {(() => {
+                        const penalties = MockStorage.getPendingCancellationPenalties(p.id, hospId);
+                        if (penalties.length === 0) return null;
+                        const total = penalties.reduce((sum, pen) => {
+                          const cPen = (!pen.cancellationPenaltyCollected ? pen.cancellationPenalty : 0) || 0;
+                          const rPen = (!pen.reschedulingPenaltyCollected ? pen.reschedulingPenalty : 0) || 0;
+                          return sum + cPen + rPen;
+                        }, 0);
+                        return (
+                          <span
+                            className="inline-flex items-center gap-1 mt-1 text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded"
+                            title={`Late cancellation penalty of ₹${total} pending collection at billing counter.`}
+                          >
+                            <AlertCircle className="w-2.5 h-2.5 text-amber-600" />
+                            Penalty Due: ₹{total}
+                          </span>
+                        );
+                      })()}
                       {p.roomBedNumber && (
                         <span className="inline-block mt-0.5 text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded">
                           {p.roomBedNumber}
@@ -780,13 +906,28 @@ export const PatientManagement: React.FC = () => {
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Input
-              label="Patient Portal Password"
-              type="password"
-              value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              placeholder="Default: Patient@1234"
-            />
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-slate-700">Patient Portal Password</label>
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="text-[11px] text-teal-700 hover:text-teal-900 font-semibold flex items-center gap-1"
+                >
+                  {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  {showPassword ? 'Hide Password' : 'Show Password'}
+                </button>
+              </div>
+              <Input
+                type={showPassword ? 'text' : 'password'}
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                placeholder="Portal Password (e.g. Patient@1234)"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Used by patient to sign in to Patient Portal via email or Patient ID.
+              </p>
+            </div>
             <Input
               label="Residential Address"
               value={formData.address}
@@ -848,6 +989,14 @@ export const PatientManagement: React.FC = () => {
         title="Archive Patient EHR Record?"
         message="Are you sure you want to deactivate this patient record? The clinical chart will be moved to archives."
         confirmText="Yes, Archive Record"
+      />
+
+      <SubscriptionUpgradeModal
+        isOpen={isUpgradeModalOpen}
+        onClose={() => setIsUpgradeModalOpen(false)}
+        hospitalId={hospId}
+        hospitalName={currentHospital?.name}
+        currentTier={currentHospital?.planTier || 'trial'}
       />
     </div>
   );

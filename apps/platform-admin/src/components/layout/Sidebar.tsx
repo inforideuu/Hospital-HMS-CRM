@@ -67,11 +67,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { label: 'Overview', path: '/platform/dashboard', icon: <LayoutDashboard className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Hospital Management', path: '/platform/hospitals', icon: <Building2 className="w-4 h-4" />, badge: String(MockStorage.getHospitals().length), roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Subscriptions & Plans', path: '/platform/subscriptions', icon: <CreditCard className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
-    { label: 'Users & Access', path: '/platform/users', icon: <Users className="w-4 h-4" />, roles: ['super_admin'] },
+    { label: 'Users & Access', path: '/platform/users', icon: <Users className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Hospital Website Builder', path: '/platform/websites', icon: <Globe className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Support Center', path: '/platform/support', icon: <HelpCircle className="w-4 h-4" />, badge: activeTicketCount > 0 ? String(activeTicketCount) : undefined, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Reports & Analytics', path: '/platform/reports', icon: <BarChart3 className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
-    { label: 'Platform Settings', path: '/platform/settings', icon: <Settings className="w-4 h-4" />, roles: ['super_admin'] },
+    { label: 'Platform Settings', path: '/platform/settings', icon: <Settings className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
   ];
 
   const hospitalNavItems: NavItem[] = [
@@ -205,16 +205,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Brand Header */}
         <div className="flex items-center justify-between h-16 px-4 border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 via-brand-500 to-teal-400 flex items-center justify-center text-white shadow-lg shadow-brand-500/30 shrink-0">
-              <Activity className="w-6 h-6 stroke-[2.5]" />
+            <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center shadow-md shadow-black/20 shrink-0">
+              <img src="/logo.png" alt="Zenelait" className="w-full h-full object-contain" />
             </div>
             {!isCollapsed && (
               <div className="flex flex-col min-w-0">
                 <span className="font-extrabold text-base text-white tracking-tight leading-none truncate">
-                  PulseCore
+                  Zenelait
                 </span>
-                <span className="text-[10px] font-mono tracking-wider text-brand-400 uppercase truncate mt-1">
-                  {portalType === 'platform' ? 'Platform HQ' : portalType === 'patient' ? 'Patient Health Portal' : currentHospital?.name || 'HMS Workspace'}
+                <span className="text-[10px] font-mono tracking-wider text-[#FF3030] font-bold uppercase truncate mt-1">
+                  Platform HQ
                 </span>
               </div>
             )}
@@ -232,8 +232,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Navigation Items */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-700">
           {!isCollapsed && (
-            <div className="px-3 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-              {portalType === 'platform' ? 'SaaS Administration' : portalType === 'patient' ? 'Patient Personal Care' : 'Clinical & Operations'}
+            <div className="px-3 py-1 text-[11px] font-bold text-[#FF3030] uppercase tracking-wider flex items-center justify-between">
+              <span>SaaS Administration</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#FF3030] animate-pulse"></span>
             </div>
           )}
 
@@ -248,8 +249,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-150 group relative ${
                     isActive
-                      ? 'bg-brand-600 text-white font-semibold shadow-md shadow-brand-600/30'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                      ? 'bg-[#FF3030] text-white font-semibold shadow-md shadow-[#FF3030]/30'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800/80 hover:border-l-2 hover:border-[#FF3030]'
                   } ${isCollapsed ? 'justify-center px-0' : ''}`
                 }
                 title={isCollapsed ? item.label : undefined}

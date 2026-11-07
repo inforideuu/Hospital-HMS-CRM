@@ -40,6 +40,8 @@ import {
   ShoppingCart,
   FileCheck,
   MessageSquare,
+  Star,
+  PhoneCall,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { MockStorage } from '../../services/mockStorage';
@@ -75,26 +77,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { showToast } = useNotification();
 
   const hospId = user?.hospitalId || currentHospital?.id;
+  const activeHospital = currentHospital || (hospId ? MockStorage.getHospitalById(hospId) : null);
+  const [logoImgFailed, setLogoImgFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setLogoImgFailed(false);
+  }, [activeHospital?.id, activeHospital?.logoUrl, activeHospital?.image]);
+
   const patientCount = hospId ? MockStorage.getPatients(hospId).length : MockStorage.getPatients().length;
 
   const pendingOnboardCount = MockStorage.getConvertedCustomers().filter(
     (c) => c.onboardingStatus === 'Pending Onboarding' || c.subscriptionStatus === 'Pending Setup'
   ).length;
 
+  const pendingManifestCount = MockStorage.getEnterpriseBranchDocuments().filter(
+    (d) => d.status === 'pending_review'
+  ).length;
+
   const activeTicketCount = MockStorage.getSupportTickets().filter(
     (t) => t.status === 'open' || t.status === 'in_progress'
   ).length;
 
+  const demoRequestsCount = MockStorage.getDemoRequests().filter((d) => d.status === 'new').length;
+
   const platformNavItems: NavItem[] = [
     { label: 'Overview', path: '/platform/dashboard', icon: <LayoutDashboard className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Hospital Management', path: '/platform/hospitals', icon: <Building2 className="w-4 h-4" />, badge: String(MockStorage.getHospitals().length), roles: ['super_admin', 'super_admin_manager'] },
+    { label: 'Sub-Branch Manifests', path: '/platform/enterprise-manifests', icon: <Network className="w-4 h-4 text-purple-400" />, badge: pendingManifestCount > 0 ? `${pendingManifestCount} New` : undefined, roles: ['super_admin', 'super_admin_manager'] },
+    { label: 'Demo Requests', path: '/platform/demo-requests', icon: <PhoneCall className="w-4 h-4 text-emerald-400" />, badge: demoRequestsCount > 0 ? `${demoRequestsCount} New` : undefined, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Pending Onboarding', path: '/platform/pending-onboarding', icon: <UserCheck className="w-4 h-4 text-amber-500" />, badge: pendingOnboardCount > 0 ? String(pendingOnboardCount) : undefined, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Subscriptions & Plans', path: '/platform/subscriptions', icon: <CreditCard className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
-    { label: 'Users & Access', path: '/platform/users', icon: <Users className="w-4 h-4" />, roles: ['super_admin'] },
+    { label: 'Users & Access', path: '/platform/users', icon: <Users className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Hospital Website Builder', path: '/platform/websites', icon: <Globe className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Support Center', path: '/platform/support', icon: <HelpCircle className="w-4 h-4" />, badge: activeTicketCount > 0 ? String(activeTicketCount) : undefined, roles: ['super_admin', 'super_admin_manager'] },
     { label: 'Reports & Analytics', path: '/platform/reports', icon: <BarChart3 className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
-    { label: 'Platform Settings', path: '/platform/settings', icon: <Settings className="w-4 h-4" />, roles: ['super_admin'] },
+    { label: 'Platform Settings', path: '/platform/settings', icon: <Settings className="w-4 h-4" />, roles: ['super_admin', 'super_admin_manager'] },
   ];
 
   const hospitalNavItems: NavItem[] = [
@@ -188,6 +205,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <BedDouble className="w-4 h-4 text-teal-400" />,
       roles: ['hospital_admin', 'doctor', 'nurse'],
       badge: 'Nurse Updates',
+      featureKeyword: 'admissions_beds',
     },
     {
       label: 'Billing & Invoices',
@@ -201,7 +219,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       path: '/hospital/billing/discharges',
       icon: <FileCheck className="w-4 h-4 text-amber-400" />,
       roles: ['hospital_admin', 'accountant'],
-      featureKeyword: 'billing_invoices',
+      featureKeyword: 'admissions_beds',
       badge: (() => {
         const adms = hospId ? MockStorage.getAdmissions(hospId) : MockStorage.getAdmissions();
         const pendingCount = adms.filter((a) => a.status === 'Discharge Initiated' && (!a.invoiceId || a.billingStatus !== 'Paid')).length;
@@ -251,6 +269,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       featureKeyword: 'billing_invoices',
     },
     {
+      label: 'Patient Testimonials',
+      path: '/hospital/testimonials',
+      icon: <Star className="w-4 h-4 text-amber-500" />,
+      roles: ['hospital_admin'],
+      badge: '3D Carousel',
+    },
+    {
       label: 'Hospital Settings',
       path: '/hospital/settings',
       icon: <Settings className="w-4 h-4" />,
@@ -271,17 +296,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const patientNavItems: NavItem[] = [
     { label: 'Health Dashboard', path: '/patient/dashboard', icon: <LayoutDashboard className="w-4 h-4 text-teal-400" /> },
-    { label: 'My Appointments', path: '/patient/appointments', icon: <Calendar className="w-4 h-4 text-sky-400" /> },
-    { label: 'Medical Records', path: '/patient/records', icon: <UserPlus className="w-4 h-4 text-indigo-400" /> },
+    { label: 'My Appointments', path: '/patient/appointments', icon: <Calendar className="w-4 h-4 text-sky-400" />, featureKeyword: 'appointments_opd' },
+    { label: 'Medical Records', path: '/patient/records', icon: <UserPlus className="w-4 h-4 text-indigo-400" />, featureKeyword: 'patients_ehr' },
     { label: 'My Prescriptions', path: '/patient/prescriptions', icon: <Pill className="w-4 h-4 text-emerald-400" /> },
-    { label: 'Lab Reports', path: '/patient/lab-reports', icon: <FlaskConical className="w-4 h-4 text-purple-400" /> },
-    { label: 'Billing & Invoices', path: '/patient/billing', icon: <Receipt className="w-4 h-4 text-amber-400" /> },
-    { label: 'Ambulance Request', path: '/patient/ambulance', icon: <Ambulance className="w-4 h-4 text-rose-400" />, badge: '911' },
+    { label: 'Lab Reports', path: '/patient/lab-reports', icon: <FlaskConical className="w-4 h-4 text-purple-400" />, featureKeyword: 'laboratory_diagnostics' },
+    { label: 'Billing & Invoices', path: '/patient/billing', icon: <Receipt className="w-4 h-4 text-amber-400" />, featureKeyword: 'billing_invoices' },
+    { label: 'Ambulance Request', path: '/patient/ambulance', icon: <Ambulance className="w-4 h-4 text-rose-400" />, badge: '911', featureKeyword: 'ambulance_emergency' },
     { label: 'My Profile', path: '/patient/profile', icon: <UserCheck className="w-4 h-4 text-cyan-400" /> },
   ];
 
   const salesNavItems: NavItem[] = [
     { label: 'Dashboard', path: '/sales/dashboard', icon: <LayoutDashboard className="w-4 h-4 text-brand-400" /> },
+    { label: 'Demo Requests', path: '/sales/demo-requests', icon: <PhoneCall className="w-4 h-4 text-emerald-400" />, badge: demoRequestsCount > 0 ? `${demoRequestsCount} New` : undefined },
     { label: 'Leads', path: '/sales/leads', icon: <Target className="w-4 h-4 text-sky-400" />, badge: String(MockStorage.getSalesLeads(user?.id).length) },
     { label: 'Follow-ups', path: '/sales/follow-ups', icon: <Clock className="w-4 h-4 text-amber-400" />, badge: String(MockStorage.getLeadFollowUps(user?.id).filter((f) => f.status === 'Pending').length) },
     { label: 'Activities', path: '/sales/activities', icon: <Briefcase className="w-4 h-4 text-indigo-400" /> },
@@ -293,53 +319,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { label: 'Emergency Console', path: '/driver/dashboard', icon: <Truck className="w-4 h-4 text-rose-400" />, badge: 'LIVE' },
   ];
 
+  const isSubBranchHospital = Boolean(
+    currentHospital?.isBranch ||
+    currentHospital?.headBranchId ||
+    (currentHospital?.organizationId && currentHospital?.isHeadBranch === false)
+  );
+
   const isEnterpriseOrgUser =
     portalType === 'hospital' &&
     user?.role === 'hospital_admin' &&
+    !isSubBranchHospital &&
     (Boolean(user?.isOrganizationAdmin) ||
-      Boolean(currentHospital?.organizationId && currentHospital?.planTier === 'enterprise'));
+      (currentHospital?.isHeadBranch === true && currentHospital?.planTier === 'enterprise'));
 
   const enterpriseNavItems: NavItem[] = [
     {
-      label: 'Enterprise Dashboard',
-      path: '/hospital/enterprise/dashboard',
+      label: 'Enterprise Health Network',
+      path: '/hospital/enterprise-network',
       icon: <Network className="w-4 h-4 text-purple-400" />,
-      roles: ['hospital_admin'],
-    },
-    {
-      label: 'Organization Profile',
-      path: '/hospital/enterprise/profile',
-      icon: <Building2 className="w-4 h-4 text-indigo-400" />,
-      roles: ['hospital_admin'],
-    },
-    {
-      label: 'Branch Management',
-      path: '/hospital/enterprise/branches',
-      icon: <GitBranch className="w-4 h-4 text-teal-400" />,
-      roles: ['hospital_admin'],
-    },
-    {
-      label: 'Branch Admin Management',
-      path: '/hospital/enterprise/branch-admins',
-      icon: <Users className="w-4 h-4 text-brand-400" />,
-      roles: ['hospital_admin'],
-    },
-    {
-      label: 'Consolidated Reports',
-      path: '/hospital/enterprise/reports',
-      icon: <BarChart3 className="w-4 h-4 text-emerald-400" />,
-      roles: ['hospital_admin'],
-    },
-    {
-      label: 'Organization Settings',
-      path: '/hospital/enterprise/settings',
-      icon: <Settings className="w-4 h-4 text-slate-400" />,
-      roles: ['hospital_admin'],
-    },
-    {
-      label: 'Subscription Details',
-      path: '/hospital/enterprise/subscription',
-      icon: <CreditCard className="w-4 h-4 text-amber-400" />,
       roles: ['hospital_admin'],
     },
   ];
@@ -392,6 +389,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <BedDouble className="w-4 h-4 text-teal-400" />,
       roles: ['doctor'],
       badge: 'Nurse Updates',
+      featureKeyword: 'admissions_beds',
     },
     {
       label: 'Laboratory Diagnostics',
@@ -647,33 +645,114 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Sidebar Container */}
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col bg-slate-900 text-slate-100 transition-all duration-300 ease-in-out border-r border-slate-800 ${
+        className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col ${
+          portalType === 'platform'
+            ? 'bg-[#141212] text-neutral-100 border-r border-[#261e1e]'
+            : 'bg-slate-900 text-slate-100 border-r border-slate-800'
+        } transition-all duration-300 ease-in-out ${
           isCollapsed ? 'w-20' : 'w-64'
         } ${
           isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
         {/* Brand Header */}
-        <div className="flex items-center justify-between h-16 px-4 border-b border-slate-800 shrink-0">
+        <div className={`flex items-center justify-between h-16 px-4 ${portalType === 'platform' ? 'border-b border-[#261e1e]' : 'border-b border-slate-800'} shrink-0`}>
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 via-brand-500 to-teal-400 flex items-center justify-center text-white shadow-lg shadow-brand-500/30 shrink-0">
-              <Activity className="w-6 h-6 stroke-[2.5]" />
-            </div>
+            {portalType === 'hospital' ? (
+              (activeHospital?.logoUrl || activeHospital?.image) && !logoImgFailed ? (
+                <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center shadow-md shadow-black/20 shrink-0 overflow-hidden">
+                  <img
+                    src={activeHospital.logoUrl || activeHospital.image}
+                    alt={activeHospital.name || 'Hospital Logo'}
+                    className="w-full h-full object-cover rounded-lg"
+                    onError={() => setLogoImgFailed(true)}
+                  />
+                </div>
+              ) : (
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-600 to-brand-700 text-white flex items-center justify-center shadow-md shadow-brand-900/30 shrink-0 font-bold">
+                  <Building2 className="w-5 h-5 text-white" />
+                </div>
+              )
+            ) : portalType === 'patient' && activeHospital ? (
+              (activeHospital?.logoUrl || activeHospital?.image) && !logoImgFailed ? (
+                <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center shadow-md shadow-black/20 shrink-0 overflow-hidden">
+                  <img
+                    src={activeHospital.logoUrl || activeHospital.image}
+                    alt={activeHospital.name || 'Hospital Logo'}
+                    className="w-full h-full object-cover rounded-lg"
+                    onError={() => setLogoImgFailed(true)}
+                  />
+                </div>
+              ) : (
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-600 to-teal-700 text-white flex items-center justify-center shadow-md shadow-teal-900/30 shrink-0">
+                  <HeartPulse className="w-5 h-5 text-white" />
+                </div>
+              )
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center shadow-md shadow-black/20 shrink-0">
+                <img src="/logo.png" alt="Zenelait" className="w-full h-full object-contain" />
+              </div>
+            )}
+
             {!isCollapsed && (
               <div className="flex flex-col min-w-0">
-                <span className="font-extrabold text-base text-white tracking-tight leading-none truncate">
-                  PulseCore
-                </span>
-                <span className="text-[10px] font-mono tracking-wider text-brand-400 uppercase truncate mt-1">
-                  {portalType === 'platform' ? 'Platform HQ' : portalType === 'sales' ? 'Sales Executive Portal' : portalType === 'patient' ? 'Patient Health Portal' : currentHospital?.name || 'HMS Workspace'}
-                </span>
+                {portalType === 'hospital' ? (
+                  <>
+                    <span className="font-extrabold text-base text-white tracking-tight leading-none truncate" title={activeHospital?.name || 'Hospital Portal'}>
+                      {activeHospital?.name || 'Hospital Portal'}
+                    </span>
+                    <span className="text-[10px] font-mono tracking-wider text-brand-400 uppercase truncate mt-1">
+                      {activeHospital?.type || (activeHospital?.city ? `${activeHospital.city} Portal` : 'Hospital Portal')}
+                    </span>
+                  </>
+                ) : portalType === 'platform' ? (
+                  <>
+                    <span className="font-extrabold text-base text-white tracking-tight leading-none truncate">
+                      Zenelait
+                    </span>
+                    <span className="text-[10px] font-mono tracking-wider text-[#FF3030] font-bold uppercase truncate mt-1">
+                      Platform HQ
+                    </span>
+                  </>
+                ) : portalType === 'sales' ? (
+                  <>
+                    <span className="font-extrabold text-base text-white tracking-tight leading-none truncate">
+                      Zenelait
+                    </span>
+                    <span className="text-[10px] font-mono tracking-wider text-brand-400 uppercase truncate mt-1">
+                      Sales Executive Portal
+                    </span>
+                  </>
+                ) : portalType === 'patient' ? (
+                  <>
+                    <span className="font-extrabold text-base text-white tracking-tight leading-none truncate" title={activeHospital?.name || 'Zenelait Health'}>
+                      {activeHospital?.name || 'Zenelait Health'}
+                    </span>
+                    <span className="text-[10px] font-mono tracking-wider text-teal-400 uppercase truncate mt-1">
+                      Patient Health Portal
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-extrabold text-base text-white tracking-tight leading-none truncate" title={activeHospital?.name || 'Emergency Fleet'}>
+                      {activeHospital?.name || 'Emergency Desk'}
+                    </span>
+                    <span className="text-[10px] font-mono tracking-wider text-rose-400 uppercase truncate mt-1">
+                      Ambulance Dispatch
+                    </span>
+                  </>
+                )}
               </div>
             )}
           </div>
 
           <button
             onClick={onToggleCollapse}
-            className="hidden lg:flex items-center justify-center w-6 h-6 rounded-md bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+            className={`hidden lg:flex items-center justify-center w-6 h-6 rounded-md ${
+              portalType === 'platform'
+                ? 'bg-[#221a1a] text-neutral-400 hover:text-white hover:bg-[#302020] hover:border hover:border-[#FF3030]/40'
+                : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'
+            } transition-colors`}
             title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
           >
             {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -682,21 +761,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Navigation Items */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-700">
-          {/* Step 4: Enterprise Health Network 7 Navigation Items for Org Admins */}
+          {/* Enterprise Health Network Menu for Network Admins */}
           {isEnterpriseOrgUser && (
             <div className="space-y-1 mb-4 pb-3 border-b border-slate-800/80">
               {!isCollapsed && (
                 <div className="px-3 py-1 text-[11px] font-bold text-purple-400 uppercase tracking-wider flex items-center justify-between">
-                  <span>Enterprise Organization</span>
+                  <span>Enterprise Network</span>
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono">
-                    GROUP
+                    NETWORK
                   </span>
                 </div>
               )}
               {enterpriseNavItems.map((item) => {
                 const isActive =
                   location.pathname === item.path ||
-                  (item.path === '/hospital/enterprise/dashboard' && location.pathname === '/hospital/enterprise');
+                  location.pathname.startsWith('/hospital/enterprise');
 
                 return (
                   <NavLink
@@ -727,10 +806,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
 
           {!isCollapsed && (
-            <div className="px-3 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-              {portalType === 'platform'
-                ? 'SaaS Administration'
-                : portalType === 'patient'
+            <div className={`px-3 py-1 text-[11px] font-bold ${portalType === 'platform' ? 'text-[#FF3030] flex items-center justify-between' : 'text-slate-400'} uppercase tracking-wider`}>
+              {portalType === 'platform' ? (
+                <>
+                  <span>SaaS Administration</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#FF3030] animate-pulse"></span>
+                </>
+              ) : portalType === 'patient'
                 ? 'Patient Personal Care'
                 : isEnterpriseOrgUser
                 ? `Branch Operations (${currentHospital?.branchCode || currentHospital?.city || 'Chennai'})`
@@ -748,7 +830,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   !item.path.includes('?') &&
                   location.pathname.startsWith(item.path));
             const isFeatureDisabled =
-              portalType === 'hospital' &&
+              (portalType === 'hospital' || portalType === 'patient') &&
               item.featureKeyword &&
               !MockStorage.isFeatureEnabledForHospital(hospId, item.featureKeyword);
 
@@ -784,8 +866,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     isFeatureDisabled
                       ? 'text-slate-500 opacity-60 bg-slate-900/40 cursor-not-allowed border border-slate-800/40 hover:opacity-100 hover:border-amber-500/30'
                       : active
-                      ? 'bg-brand-600 text-white font-semibold shadow-md shadow-brand-600/30'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                      ? (portalType === 'platform' ? 'bg-[#FF3030] text-white font-semibold shadow-md shadow-[#FF3030]/30' : 'bg-brand-600 text-white font-semibold shadow-md shadow-brand-600/30')
+                      : (portalType === 'platform' ? 'text-slate-300 hover:text-white hover:bg-slate-800/80 hover:border-l-2 hover:border-[#FF3030]' : 'text-slate-300 hover:text-white hover:bg-slate-800/80')
                   } ${isCollapsed ? 'justify-center px-0' : ''}`;
                 }}
                 title={isFeatureDisabled ? upgradeMessage : isCollapsed ? item.label : undefined}
@@ -817,6 +899,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                             isActive
                               ? 'bg-white/20 text-white'
+                              : portalType === 'platform'
+                              ? 'bg-[#FF3030]/15 text-[#FF3030] border border-[#FF3030]/25'
                               : 'bg-slate-800 text-slate-400 group-hover:bg-slate-700 group-hover:text-slate-200'
                           }`}
                         >
@@ -854,23 +938,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Tenant Environment Indicator Footer */}
-        <div className="p-3 border-t border-slate-800 shrink-0">
+        <div className={`p-3 ${portalType === 'platform' ? 'border-t border-[#261e1e]' : 'border-t border-slate-800'} shrink-0`}>
           {!isCollapsed ? (
-            <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center shrink-0">
-                <Sparkles className="w-4 h-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                  <p className="text-xs font-semibold text-slate-200 truncate">Multi-Tenant v2.4</p>
+            portalType === 'platform' ? (
+              <div className="p-3 rounded-xl bg-[#1d1616] border border-[#382222] flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-[#FF3030]/15 border border-[#FF3030]/30 text-[#FF3030] flex items-center justify-center shrink-0">
+                  <Sparkles className="w-4 h-4 text-[#FF3030]" />
                 </div>
-                <p className="text-[10px] text-slate-400 truncate">HIPAA & HL7 Compliant</p>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#FF3030] animate-pulse"></span>
+                    <p className="text-xs font-semibold text-neutral-200 truncate">Multi-Tenant v2.4</p>
+                  </div>
+                  <p className="text-[10px] text-neutral-400 truncate">HIPAA & HL7 Compliant</p>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                    <p className="text-xs font-semibold text-slate-200 truncate">Multi-Tenant v2.4</p>
+                  </div>
+                  <p className="text-[10px] text-slate-400 truncate">HIPAA & HL7 Compliant</p>
+                </div>
+              </div>
+            )
           ) : (
             <div className="flex justify-center" title="Multi-Tenant v2.4 • Active">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className={`w-2.5 h-2.5 rounded-full ${portalType === 'platform' ? 'bg-[#FF3030]' : 'bg-emerald-500'} animate-pulse`}></span>
             </div>
           )}
         </div>

@@ -12,6 +12,10 @@ import {
   User,
   ShieldAlert,
   Building2,
+  Wrench,
+  Megaphone,
+  AlertCircle,
+  AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -48,6 +52,19 @@ export const Login: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [matchedAccounts, setMatchedAccounts] = useState<AuthUser[] | null>(null);
+  const [platformSettings, setPlatformSettings] = useState(() => MockStorage.getPlatformSettings());
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setPlatformSettings(MockStorage.getPlatformSettings());
+    };
+    window.addEventListener('pulse_storage_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('pulse_storage_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
 
   useEffect(() => {
     if (rawTarget && typeof window !== 'undefined' && window.sessionStorage) {
@@ -73,6 +90,14 @@ export const Login: React.FC = () => {
     if (foundUser && foundUser.role === 'sales_executive') {
       setError('Access Restricted: Sales Executive accounts must sign in via the Platform HQ Portal (/superadmin-login). Login is not permitted on Hospital Sign In.');
       return;
+    }
+
+    // Maintenance Mode Restriction: Pause non-admin logins when Platform Maintenance Mode is active
+    if (foundUser && foundUser.role !== 'super_admin' && foundUser.role !== 'super_admin_manager') {
+      if (platformSettings.maintenanceMode) {
+        setError('Platform Scheduled Maintenance Active: Hospital staff and patient logins are temporarily paused during scheduled platform maintenance. Normal operations will resume shortly.');
+        return;
+      }
     }
 
     setIsLoading(true);
@@ -168,11 +193,11 @@ export const Login: React.FC = () => {
 
           <div className="space-y-3">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-teal-600 via-teal-500 to-cyan-500 flex items-center justify-center text-white shadow-lg shadow-teal-600/30">
-                <Activity className="w-7 h-7 stroke-[2.2]" />
+              <div className="w-12 h-12 rounded-2xl bg-white p-1 border border-slate-200/80 flex items-center justify-center shadow-md shadow-slate-200/50">
+                <img src="/logo.png" alt="Zenelait" className="w-full h-full object-contain" />
               </div>
               <div>
-                <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">HealthCore HMS</h1>
+                <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Zenelait HMS & CRM</h1>
                 <p className="text-xs font-mono uppercase tracking-widest text-teal-700 font-semibold">Hospital CRM + Operations Suite</p>
               </div>
             </div>
@@ -212,6 +237,58 @@ export const Login: React.FC = () => {
         {/* Right Form Card */}
         <div className="lg:col-span-6 max-w-md mx-auto w-full">
           <div className="bg-white/95 text-slate-900 rounded-3xl shadow-2xl border border-slate-200 p-8 sm:p-10 relative overflow-hidden backdrop-blur-md">
+            {/* Global Maintenance Mode Banner */}
+            {platformSettings.maintenanceMode && (
+              <div className="mb-5 p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 flex items-start gap-3 text-xs">
+                <Wrench className="w-5 h-5 text-amber-600 shrink-0 mt-0.5 animate-bounce" />
+                <div className="space-y-0.5">
+                  <p className="font-bold text-[11px] uppercase tracking-wider text-amber-800">
+                    Platform Scheduled Maintenance
+                  </p>
+                  <p className="text-[11px] text-amber-900 leading-relaxed font-medium">
+                    Scheduled platform maintenance is active. Hospital staff and patient logins are temporarily paused. Super Admin administrative access remains active.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Global Tenant Broadcast Announcement */}
+            {platformSettings.broadcastBannerActive && platformSettings.broadcastBannerText && (
+              <div className={`mb-5 p-3.5 rounded-2xl border flex items-start gap-3 text-xs ${
+                platformSettings.broadcastBannerLevel === 'critical'
+                  ? 'bg-rose-50 border-rose-200 text-rose-950'
+                  : platformSettings.broadcastBannerLevel === 'warning'
+                  ? 'bg-amber-50 border-amber-200 text-amber-950'
+                  : 'bg-blue-50 border-blue-200 text-blue-950'
+              }`}>
+                {platformSettings.broadcastBannerLevel === 'critical' ? (
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5 animate-pulse" />
+                ) : platformSettings.broadcastBannerLevel === 'warning' ? (
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                ) : (
+                  <Megaphone className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <span className={`text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded tracking-wider ${
+                    platformSettings.broadcastBannerLevel === 'critical'
+                      ? 'bg-rose-200 text-rose-900'
+                      : platformSettings.broadcastBannerLevel === 'warning'
+                      ? 'bg-amber-200 text-amber-900'
+                      : 'bg-blue-200 text-blue-900'
+                  }`}>
+                    {platformSettings.broadcastBannerLevel === 'critical'
+                      ? 'Critical Alert'
+                      : platformSettings.broadcastBannerLevel === 'warning'
+                      ? 'System Warning'
+                      : 'Broadcast'}
+                  </span>
+                  <p className="font-semibold text-xs mt-1 leading-snug">
+                    {platformSettings.broadcastBannerText}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-1 mb-6">
               <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Hospital Sign In</h2>
               <p className="text-xs sm:text-sm text-slate-500">Sign in to access your Hospital HMS workspace</p>
@@ -294,7 +371,7 @@ export const Login: React.FC = () => {
                 />
               </div>
 
-              <div className="flex items-center justify-between text-xs pt-1">
+              <div className="flex items-center text-xs pt-1">
                 <label className="flex items-center gap-2 text-slate-600 cursor-pointer">
                   <input
                     type="checkbox"
@@ -304,9 +381,6 @@ export const Login: React.FC = () => {
                   />
                   <span>Remember session</span>
                 </label>
-                <Link to="/forgot-password" className="text-teal-600 hover:text-teal-800 font-semibold">
-                  Forgot password?
-                </Link>
               </div>
 
               <Button
@@ -323,7 +397,7 @@ export const Login: React.FC = () => {
 
             <div className="mt-6 pt-6 border-t border-slate-100 text-center">
               <p className="text-xs text-slate-500">
-                HealthCore HMS • Multi-Tenant Hospital Operations
+                Zenelait HMS & CRM • Multi-Tenant Hospital Operations
               </p>
             </div>
           </div>
@@ -334,7 +408,7 @@ export const Login: React.FC = () => {
       {matchedAccounts && matchedAccounts.length > 0 && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
-            <div className="w-12 h-12 rounded-2xl bg-teal-50 border border-teal-200 text-teal-600 flex items-center justify-center mb-4">
+            <div className="w-12 h-12 rounded-2xl bg-[#FF3030]/10 border border-[#FF3030]/20 text-[#FF3030] flex items-center justify-center mb-4">
               <Building2 className="w-6 h-6" />
             </div>
             <h3 className="text-xl font-bold text-slate-900">Select Hospital Facility</h3>
@@ -349,17 +423,17 @@ export const Login: React.FC = () => {
                     key={acc.id}
                     type="button"
                     onClick={() => handleSelectHospitalAccount(acc.hospitalId || '')}
-                    className="w-full text-left p-3.5 rounded-2xl bg-slate-50 hover:bg-teal-50/90 border border-slate-200 hover:border-teal-400 transition-all flex items-center justify-between group cursor-pointer"
+                    className="w-full text-left p-3.5 rounded-2xl bg-slate-50 hover:bg-red-50/80 border border-slate-200 hover:border-[#FF3030]/40 transition-all flex items-center justify-between group cursor-pointer"
                   >
                     <div className="truncate mr-2">
-                      <p className="text-sm font-bold text-slate-900 group-hover:text-teal-700 transition-colors truncate">
+                      <p className="text-sm font-bold text-slate-900 group-hover:text-[#FF3030] transition-colors truncate">
                         {hosp?.name || acc.hospitalName || 'Hospital Facility'}
                       </p>
                       <p className="text-[11px] text-slate-500 font-mono mt-0.5 truncate">
                         Patient ID: {acc.patientId || acc.id} • {acc.role === 'patient' ? 'Patient Portal' : acc.role}
                       </p>
                     </div>
-                    <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-teal-600 shrink-0 transition-colors" />
+                    <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-[#FF3030] shrink-0 transition-colors" />
                   </button>
                 );
               })}

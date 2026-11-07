@@ -8,10 +8,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS('Seeding platform superadmin accounts...'))
 
         superadmins = [
-            ('usr-superadmin', 'superadmin@pulse-crm.com', 'Platform Admin', 'super_admin', 'SuperAdmin@2026'),
-            ('USR-ADMIN-CORE', 'admin@pulsecore.com', 'Platform Super Admin', 'super_admin', 'SuperAdmin@2026'),
-            ('USR-PLAT-01', 'superadmin@pulsecore.io', 'Sarah Jenkins', 'super_admin', 'SuperAdmin@2026'),
-            ('usr-manager', 'manager@pulse-crm.com', 'Platform Manager', 'superadmin_manager', 'Manager@2026'),
+            ('USR-SUPERADMIN-ZENELAIT', 'superadmin@zenelait.com', 'Zenelait Super Admin', 'super_admin', 'admin@123'),
             ('USR-PLAT-02', 'manager@pulsecore.io', 'David Thorne', 'superadmin_manager', 'Manager@2026'),
         ]
 

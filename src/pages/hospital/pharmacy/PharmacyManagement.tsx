@@ -134,6 +134,8 @@ export const PharmacyManagement: React.FC = () => {
   }[]>([]);
   const [selectedPosMedId, setSelectedPosMedId] = useState('');
   const [posQtyToAdd, setPosQtyToAdd] = useState(1);
+  const [isRxBlockerModalOpen, setIsRxBlockerModalOpen] = useState(false);
+  const [blockedRxMedicine, setBlockedRxMedicine] = useState<Medicine | null>(null);
 
   // Restock & Quarantine
   const [isRestockModalOpen, setIsRestockModalOpen] = useState(false);
@@ -409,6 +411,19 @@ export const PharmacyManagement: React.FC = () => {
     }
     const med = medicines.find((m) => m.id === selectedPosMedId);
     if (!med) return;
+
+    // Strict Prescription Required Blocker:
+    // Block addition to walk-in OTC cart and pop up warning modal
+    if (med.requiresPrescription) {
+      setBlockedRxMedicine(med);
+      setIsRxBlockerModalOpen(true);
+      showToast(
+        'Prescription Required',
+        `"${med.name}" requires an authorized doctor prescription and cannot be sold OTC.`,
+        'error'
+      );
+      return;
+    }
 
     if (posQtyToAdd > med.stockQuantity) {
       showToast('Stock Exceeded', `Only ${med.stockQuantity} units available.`, 'warning');
@@ -803,7 +818,20 @@ export const PharmacyManagement: React.FC = () => {
                 <MedicineCombobox
                   medicines={medicines}
                   selectedMedicineId={selectedPosMedId}
-                  onSelectMedicine={(med) => setSelectedPosMedId(med ? med.id : '')}
+                  onSelectMedicine={(med) => {
+                    if (med && med.requiresPrescription) {
+                      setBlockedRxMedicine(med);
+                      setIsRxBlockerModalOpen(true);
+                      setSelectedPosMedId('');
+                      showToast(
+                        'Prescription Required',
+                        `"${med.name}" is a Schedule-H prescription drug. OTC retail sale is blocked.`,
+                        'error'
+                      );
+                      return;
+                    }
+                    setSelectedPosMedId(med ? med.id : '');
+                  }}
                   placeholder="Search 100+ medicines by Brand Name, Generic Molecule, or SKU..."
                 />
               </div>
@@ -833,15 +861,20 @@ export const PharmacyManagement: React.FC = () => {
 
             {/* Quick Fast-Moving OTC Chips */}
             <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/60">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">Fast-Movers:</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">Fast-Moving OTC:</span>
               {medicines
-                .filter((m) => m.status !== 'Quarantined' && m.stockQuantity > 0)
-                .slice(0, 6)
+                .filter((m) => m.status !== 'Quarantined' && m.stockQuantity > 0 && !m.requiresPrescription)
+                .slice(0, 8)
                 .map((quickMed) => (
                   <button
                     key={quickMed.id}
                     type="button"
                     onClick={() => {
+                      if (quickMed.requiresPrescription) {
+                        setBlockedRxMedicine(quickMed);
+                        setIsRxBlockerModalOpen(true);
+                        return;
+                      }
                       setSelectedPosMedId(quickMed.id);
                     }}
                     className={`text-[11px] px-2.5 py-0.5 rounded-full border transition-all ${
@@ -1003,7 +1036,18 @@ export const PharmacyManagement: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {paginatedMedicines.map((med) => {
+                  {paginatedMedicines.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-5 py-12 text-center text-slate-500">
+                        <Pill className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                        <p className="font-semibold text-slate-700">No medicines in pharmacy inventory</p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Click "+ Add Medicine" to stock your hospital pharmacy formulary dynamically.
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedMedicines.map((med) => {
                     const isLow = med.stockQuantity <= (med.minThreshold || 25);
                     const isQuarantined = med.status === 'Quarantined';
 
@@ -1082,7 +1126,7 @@ export const PharmacyManagement: React.FC = () => {
                         </td>
                       </tr>
                     );
-                  })}
+                  }))}
                 </tbody>
               </table>
             </div>
@@ -1922,6 +1966,92 @@ export const PharmacyManagement: React.FC = () => {
               </Button>
               <Button variant="primary" size="sm" onClick={() => window.print()}>
                 <Printer className="w-4 h-4 mr-1" /> Print Slip
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Strict Prescription Blocker Modal for OTC POS */}
+      {isRxBlockerModalOpen && blockedRxMedicine && (
+        <Modal
+          isOpen={isRxBlockerModalOpen}
+          onClose={() => {
+            setIsRxBlockerModalOpen(false);
+            setBlockedRxMedicine(null);
+          }}
+          title="Dispensing Blocked: Prescription Required"
+        >
+          <div className="space-y-4 text-xs">
+            {/* Warning Shield Alert */}
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-100 border border-rose-300 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-6 h-6 text-rose-600" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-rose-900">Schedule-H / Prescription-Only Medication</h4>
+                <p className="text-rose-700 mt-1 leading-relaxed">
+                  <strong>{blockedRxMedicine.name}</strong> ({blockedRxMedicine.genericName || blockedRxMedicine.category}) is classified as a regulated prescription medicine.
+                </p>
+                <p className="text-rose-600 mt-1 text-[11px]">
+                  Under National Drug Safety Regulations and Hospital Clinical Formulary Policy, it is strictly prohibited to sell this drug to walk-in retail customers at the OTC counter without an authorized doctor prescription.
+                </p>
+              </div>
+            </div>
+
+            {/* Drug Details Card */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+              <div className="flex justify-between items-center text-slate-700">
+                <span className="font-medium text-slate-500">Formulary Category:</span>
+                <span className="font-bold">{blockedRxMedicine.category}</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-700">
+                <span className="font-medium text-slate-500">Batch & Location:</span>
+                <span className="font-mono">{blockedRxMedicine.batchNumber} • Rack {blockedRxMedicine.locationRack || 'A1'}</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-700">
+                <span className="font-medium text-slate-500">Unit Price:</span>
+                <span className="font-bold text-slate-900">₹{blockedRxMedicine.unitPrice.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-700">
+                <span className="font-medium text-slate-500">Dispensing Mode:</span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200">
+                  <ShieldAlert className="w-3 h-3" /> Doctor e-Prescription Only
+                </span>
+              </div>
+            </div>
+
+            {/* Action Guidance */}
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 text-[11px] flex items-center gap-2">
+              <Stethoscope className="w-4 h-4 shrink-0 text-blue-600" />
+              <span>
+                <strong>How to fulfill:</strong> If this patient has a consultation with a hospital doctor, switch to the <strong>Prescriptions</strong> tab to dispense and bill their clinical e-prescription order.
+              </span>
+            </div>
+
+            {/* Buttons */}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setIsRxBlockerModalOpen(false);
+                  setBlockedRxMedicine(null);
+                  navigate('?tab=prescriptions');
+                }}
+                className="text-blue-600 border-blue-300 hover:bg-blue-50"
+              >
+                Go to Prescriptions Queue
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  setIsRxBlockerModalOpen(false);
+                  setBlockedRxMedicine(null);
+                }}
+              >
+                Understood — Remove Item
               </Button>
             </div>
           </div>

@@ -270,7 +270,10 @@ export const AdmissionsManagement: React.FC = () => {
       reason: formData.reason,
       notes: formData.notes,
       status: 'Active',
-      initialDeposit: formData.initialDeposit,
+      initialDeposit:
+        Number(formData.initialDeposit) > 0
+          ? Number(formData.initialDeposit)
+          : (targetBed ? targetBed.dailyRate * 3 : 1500),
     };
 
     MockStorage.saveAdmission(newAdmission);

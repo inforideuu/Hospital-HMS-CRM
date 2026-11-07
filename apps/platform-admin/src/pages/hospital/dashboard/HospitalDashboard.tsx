@@ -88,10 +88,10 @@ export const HospitalDashboard: React.FC = () => {
   const currentTier = currentHospital?.planTier || 'trial';
   const currentPlan = MockStorage.getPlanByTier(currentTier);
   const planMaxBeds = currentPlan?.maxBeds ?? 120;
-  const totalBedsCount = beds.length > 0 ? beds.length : (currentHospital?.totalBeds || planMaxBeds);
-  const occupiedBeds = beds.filter((b) => b.status === 'Occupied').length || admissions.filter((a) => a.status === 'Active').length;
+  const hospitalCreatedBedsCount = beds.length;
+  const occupiedBeds = beds.filter((b) => b.status === 'Occupied').length;
   const maintenanceBeds = beds.filter((b) => b.status === 'Maintenance').length;
-  const availableBeds = Math.max(0, totalBedsCount - occupiedBeds - maintenanceBeds);
+  const availableBeds = beds.filter((b) => b.status === 'Available').length;
 
   const totalRevenue = invoices.reduce((acc, i) => acc + (i.amountPaid || 0), 0);
   const pendingRevenue = invoices.reduce(
@@ -251,15 +251,21 @@ export const HospitalDashboard: React.FC = () => {
         />
         <StatCard
           title="Bed Occupancy"
-          value={beds.length > 0 ? `${occupiedBeds} / ${beds.length}` : `${occupiedBeds} / ${planMaxBeds}`}
+          value={hospitalCreatedBedsCount > 0 ? `${occupiedBeds} / ${hospitalCreatedBedsCount}` : `0 / ${planMaxBeds}`}
+          unit="Beds"
           subtext={
-            beds.length > 0
-              ? `${availableBeds} beds available in wards (Max ${planMaxBeds})`
-              : `${planMaxBeds} beds available (${currentPlan.name})`
+            hospitalCreatedBedsCount > 0
+              ? `${availableBeds} available • ${occupiedBeds} occupied (${hospitalCreatedBedsCount}/${planMaxBeds} max plan quota)`
+              : `0 of ${planMaxBeds} max plan beds created in wards (${currentPlan.name})`
           }
-          icon={<BedDouble className="w-5 h-5 text-amber-600" />}
-          accentColor="amber"
-          trend={{ value: `${totalBedsCount > 0 ? Math.round((occupiedBeds / totalBedsCount) * 100) : 0}%`, direction: 'neutral', label: 'capacity' }}
+          icon={<BedDouble className="w-5 h-5 text-indigo-600" />}
+          accentColor="indigo"
+          trend={{
+            value: `${hospitalCreatedBedsCount > 0 ? Math.round((occupiedBeds / hospitalCreatedBedsCount) * 100) : 0}%`,
+            direction: 'neutral',
+            label: hospitalCreatedBedsCount > 0 ? 'in-use' : `0 / ${planMaxBeds} setup`,
+          }}
+          onClick={() => navigate('/hospital/admissions')}
         />
         <StatCard
           title="Total Revenue"

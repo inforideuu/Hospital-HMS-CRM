@@ -25,73 +25,72 @@ export const PlatformLogin: React.FC = () => {
   const { showToast } = useNotification();
   const navigate = useNavigate();
 
-  const [email, setEmail] = useState('superadmin@pulsecore.io');
-  const [password, setPassword] = useState('••••••••');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-    const quickLogins: {
-    label: string;
-    email: string;
-    role: UserRole;
-    desc: string;
-  }[] = [
-    { label: 'Super Admin', email: 'superadmin@pulsecore.io', role: 'super_admin', desc: 'Platform HQ SaaS Director' },
-    { label: 'Super Admin Manager', email: 'manager@pulsecore.io', role: 'super_admin_manager', desc: 'Operations & Site Builder Admin' },
-    { label: 'Sales Executive', email: 'sales@demo-hospitalcrm.com', role: 'sales_executive', desc: 'SaaS Sales & BD Executive' },
-  ];
-
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (!email) {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
       setError('Please enter your email address');
       return;
     }
-
-    const allUsers = MockStorage.getUsers();
-    const foundUser = allUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
-
-    // Strict Role Guard: Reject hospital-only staff roles on Platform HQ Login
-    if (foundUser && foundUser.role !== 'super_admin' && foundUser.role !== 'super_admin_manager' && foundUser.role !== 'sales_executive') {
-      setError('Access Restricted: This login portal is reserved for Super Admin, Super Admin Managers, and Sales Executives.');
+    if (!password) {
+      setError('Please enter your password');
       return;
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      const res = login(email);
+
+    try {
+      // 1. Live Database Authentication against MySQL via Django REST API
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/auth/login/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: cleanEmail, password }),
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => null);
+          setIsLoading(false);
+          setError(errData?.message || 'Invalid credentials. Incorrect email or password.');
+          return;
+        }
+      } catch (networkErr) {
+        // Backend offline: fallback to client-side validation
+      }
+
+      // 2. Strict Role & Password Verification via Auth Context
+      const res = login(cleanEmail, password);
       setIsLoading(false);
+
       if (res.success) {
-        showToast('Login Successful', `Welcome ${foundUser?.name || 'Back'}`, 'success');
-        if (foundUser?.role === 'sales_executive') {
+        const currentUser = MockStorage.getAuthUser();
+        if (currentUser && currentUser.role !== 'super_admin' && currentUser.role !== 'super_admin_manager' && currentUser.role !== 'sales_executive') {
+          setError('Access Restricted: This login portal is reserved exclusively for Super Admin and Super Admin Managers.');
+          return;
+        }
+
+        showToast('Login Successful', `Welcome ${currentUser?.name || 'Super Admin'}`, 'success');
+        if (currentUser?.role === 'sales_executive') {
           navigate('/sales/dashboard');
         } else {
           navigate('/platform/dashboard');
         }
       } else {
-        setError(res.error || 'Invalid credentials or account inactive.');
+        setError(res.error || 'Invalid credentials. Incorrect email or password.');
       }
-    }, 400);
-  };
-
-  const handleQuickLogin = (item: (typeof quickLogins)[0]) => {
-    setEmail(item.email);
-    setError('');
-    setIsLoading(true);
-    setTimeout(() => {
-      login(item.email, item.role);
+    } catch (err: any) {
       setIsLoading(false);
-      showToast(`Signed in as ${item.label}`, 'Switched Workspace', 'success');
-      if (item.role === 'sales_executive') {
-        navigate('/sales/dashboard');
-      } else {
-        navigate('/platform/dashboard');
-      }
-    }, 300);
+      setError(err?.message || 'An unexpected error occurred during login.');
+    }
   };
 
   return (
@@ -117,25 +116,25 @@ export const PlatformLogin: React.FC = () => {
       <div className="relative z-10 max-w-5xl w-full mx-auto px-4 py-8 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
         {/* Left Hero Brand Panel */}
         <div className="lg:col-span-6 space-y-6">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-teal-100/90 border border-teal-200 text-teal-800 text-xs font-bold shadow-xs">
-            <ShieldCheck className="w-4 h-4 text-teal-600" />
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#FF3030]/10 border border-[#FF3030]/30 text-[#FF3030] text-xs font-bold shadow-xs">
+            <ShieldCheck className="w-4 h-4 text-[#FF3030]" />
             Super Admin & Platform HQ Portal
           </div>
 
           <div className="space-y-3">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-teal-600 via-teal-500 to-cyan-500 flex items-center justify-center text-white shadow-lg shadow-teal-600/30">
-                <Activity className="w-7 h-7 stroke-[2.2]" />
+              <div className="w-12 h-12 rounded-2xl bg-white p-1 border border-slate-200/80 flex items-center justify-center shadow-md shadow-slate-200/50">
+                <img src="/logo.png" alt="Zenelait" className="w-full h-full object-contain" />
               </div>
               <div>
-                <span className="text-2xl font-black text-slate-900 tracking-tight">HealthCore OS</span>
-                <p className="text-xs text-teal-700 font-bold tracking-wider uppercase font-mono">Platform SaaS Command HQ</p>
+                <span className="text-2xl font-black text-slate-900 tracking-tight">Zenelait OS</span>
+                <p className="text-xs text-[#FF3030] font-bold tracking-wider uppercase font-mono">Platform SaaS Command HQ</p>
               </div>
             </div>
 
             <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
               Platform Headquarters <br />
-              <span className="bg-gradient-to-r from-teal-600 to-cyan-600 bg-clip-text text-transparent italic font-serif">
+              <span className="bg-gradient-to-r from-[#FF3030] to-rose-600 bg-clip-text text-transparent italic font-serif">
                 Super Admin Access
               </span>
             </h1>
@@ -180,7 +179,7 @@ export const PlatformLogin: React.FC = () => {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="superadmin@pulsecore.io"
+                placeholder="name@zenelait.com"
                 leftIcon={<Mail className="w-4 h-4 text-slate-400" />}
                 required
               />
@@ -206,7 +205,7 @@ export const PlatformLogin: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between text-xs pt-1">
+              <div className="flex items-center text-xs pt-1">
                 <label className="flex items-center gap-2 cursor-pointer text-slate-600 font-medium">
                   <input
                     type="checkbox"
@@ -216,44 +215,18 @@ export const PlatformLogin: React.FC = () => {
                   />
                   <span>Remember session</span>
                 </label>
-                <Link to="/forgot-password" className="text-teal-600 hover:text-teal-700 font-bold">
-                  Forgot Password?
-                </Link>
               </div>
 
               <Button
                 type="submit"
-                variant="primary"
+                variant="coral"
                 size="lg"
                 isLoading={isLoading}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3.5 rounded-2xl shadow-lg"
+                className="w-full bg-[#FF3030] hover:bg-[#e62222] text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-[#FF3030]/30 border-none cursor-pointer"
               >
                 Sign In to Platform HQ <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             </form>
-
-            {/* Quick Demo Super Admin Roles */}
-            <div className="pt-4 border-t border-slate-100 space-y-3">
-              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider text-center">
-                1-Click Super Admin Demo Profiles
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {quickLogins.map((item) => (
-                  <button
-                    key={item.role}
-                    type="button"
-                    onClick={() => handleQuickLogin(item)}
-                    className="p-2.5 rounded-xl bg-slate-50 hover:bg-teal-50 border border-slate-200 hover:border-teal-300 transition-all text-left group"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-800 group-hover:text-teal-900">{item.label}</span>
-                      <Crown className="w-3.5 h-3.5 text-amber-500 opacity-80" />
-                    </div>
-                    <p className="text-[10px] text-slate-500 truncate mt-0.5">{item.desc}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
       </div>

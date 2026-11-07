@@ -142,14 +142,6 @@ export const MedicineFormModal: React.FC<MedicineFormModalProps> = ({
       showToast('Medicine Added', `${savedMed.name} added to pharmacy formulary.`, 'success');
     }
 
-    try {
-      fetch('/api/v1/hospital/pharmacy/medicines/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(savedMed),
-      }).catch(() => {});
-    } catch (_) {}
-
     onSaved?.(savedMed);
     onClose();
   };

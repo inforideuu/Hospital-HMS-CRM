@@ -136,7 +136,7 @@ export const SalesFollowUps: React.FC = () => {
         breadcrumbs={[{ label: 'Sales CRM', href: '/sales/dashboard' }, { label: 'Follow-ups' }]}
         actions={
           <Button variant="primary" size="sm" onClick={handleOpenSchedule} leftIcon={<Plus className="w-4 h-4" />}>
-            + Schedule Follow-up
+             Schedule Follow-up
           </Button>
         }
       />

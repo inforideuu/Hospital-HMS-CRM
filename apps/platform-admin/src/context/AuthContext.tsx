@@ -62,17 +62,33 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (foundUser.hospitalId && foundUser.hospitalId !== targetHospitalId) {
         const assignedHosp = MockStorage.getHospitalById(foundUser.hospitalId);
         const targetHosp = MockStorage.getHospitalById(targetHospitalId);
-        return {
-          success: false,
-          error: `Access Denied: Your account credentials (${assignedHosp?.name || foundUser.hospitalId}) are valid only inside your assigned hospital website. You are not authorized to log into ${targetHosp?.name || 'this facility'}'s website or portal.`,
-        };
+
+        // Head Branch Hospital Admin Multi-Branch Exemption
+        const isHeadAdminOfTarget = Boolean(
+          foundUser.role === 'hospital_admin' &&
+          (targetHosp?.isBranch || targetHosp?.headBranchId || (targetHosp?.organizationId && targetHosp?.isHeadBranch === false)) &&
+          (
+            foundUser.isOrganizationAdmin ||
+            (targetHosp?.headBranchId && foundUser.hospitalId === targetHosp.headBranchId) ||
+            (assignedHosp?.id && targetHosp?.headBranchId === assignedHosp.id) ||
+            (assignedHosp?.isHeadBranch && assignedHosp.organizationId && targetHosp?.organizationId === assignedHosp.organizationId)
+          )
+        );
+
+        if (!isHeadAdminOfTarget) {
+          return {
+            success: false,
+            error: `Access Denied: Your account credentials (${assignedHosp?.name || foundUser.hospitalId}) are valid only inside your assigned hospital website. You are not authorized to log into ${targetHosp?.name || 'this facility'}'s website or portal.`,
+          };
+        }
       }
     }
 
     MockStorage.setAuthUser(foundUser);
     setUser(foundUser);
-    if (foundUser.hospitalId) {
-      const hosp = MockStorage.getHospitalById(foundUser.hospitalId);
+    const effectiveHospId = targetHospitalId || foundUser.hospitalId;
+    if (effectiveHospId) {
+      const hosp = MockStorage.getHospitalById(effectiveHospId);
       setCurrentHospital(hosp || null);
     }
     return { success: true };

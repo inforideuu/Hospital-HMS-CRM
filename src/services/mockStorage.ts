@@ -34,6 +34,7 @@ import {
   LabTestCatalog,
   LabOrder,
   HospitalWebsite,
+  WebsiteTemplateId,
   WebsiteSection,
   PlatformSettings,
   HospitalSettings,
@@ -57,7 +58,11 @@ import {
   AdmissionRequestPriority,
   AdmissionRequestStatus,
   NurseConditionStatus,
+  DemoRequest,
+  EnterpriseBranchDocument,
+  AppNotification,
 } from '../types';
+import { INITIAL_ROLE_NOTIFICATIONS, filterNotificationsForUser } from '../utils/roleNotifications';
 import {
   initialOrganizations,
   initialHospitals,
@@ -101,7 +106,7 @@ import {
   initialConvertedCustomers,
 } from '../data/mockData';
 import { ApiService } from './apiService';
-import { isCapabilityAllowedForTier, checkPathCapability, PLAN_CAPABILITIES } from '../constants/planCapabilities';
+import { isCapabilityAllowedForTier, isCapabilityInPlan, checkPathCapability, PLAN_CAPABILITIES, PlanCapability } from '../constants/planCapabilities';
 import { DEFAULT_HOSPITAL_LAB_CATALOG } from '../utils/labCatalogDefaults';
 import { DEFAULT_HOSPITAL_MEDICINES } from '../utils/pharmacyDefaults';
 
@@ -119,9 +124,11 @@ const STORAGE_KEYS = {
   DOCTORS: 'pulse_doctors',
   DELETED_DOCTORS: 'pulse_deleted_doctors',
   STAFF: 'pulse_staff',
+  DELETED_STAFF: 'pulse_deleted_staff',
   PATIENTS: 'pulse_patients',
   PRESCRIPTIONS: 'pulse_prescriptions',
   APPOINTMENTS: 'pulse_appointments',
+  DELETED_APPOINTMENTS: 'pulse_deleted_appointments',
   CONSULTATIONS: 'pulse_consultations',
   DOCTOR_SCHEDULES: 'pulse_doctor_schedules',
   DOCTOR_UNAVAILABILITY: 'pulse_doctor_unavailability',
@@ -153,7 +160,71 @@ const STORAGE_KEYS = {
   FOLLOW_UP_REQUESTS: 'pulse_follow_up_requests',
   APPOINTMENT_REQUESTS: 'pulse_appointment_requests',
   ADMISSION_REQUESTS: 'pulse_admission_requests',
+  DEMO_REQUESTS: 'pulse_demo_requests',
+  ENTERPRISE_BRANCH_DOCUMENTS: 'pulse_enterprise_branch_documents',
+  NOTIFICATIONS: 'pulse_notifications',
+  HOSPITAL_STORAGE_VAULT: 'pulse_hospital_storage_vault',
 };
+
+export interface HospitalStorageVaultFile {
+  id: string;
+  hospitalId: string;
+  fileName: string;
+  fileSize: number; // in bytes
+  fileType: string;
+  category: 'document' | 'medical_record' | 'lab_report' | 'ambulance_doc' | 'website_asset' | 'identity_doc';
+  uploadedBy: string;
+  uploadedAt: string;
+  url?: string;
+}
+
+export interface HospitalStorageUsage {
+  usedBytes: number;
+  usedMB: number;
+  usedGB: number;
+  usedFormatted: string;
+  maxStorageGB: number;
+  percentageUsed: number;
+  remainingGB: number;
+  isLimitReached: boolean;
+}
+
+export const initialDemoRequests: DemoRequest[] = [
+  {
+    id: 'DEMO-9001',
+    hospitalName: 'Fortis Memorial Healthcare',
+    contactPerson: 'Dr. Vikram Malhotra',
+    designation: 'Medical Director',
+    email: 'v.malhotra@fortismemorial.org',
+    phone: '+91 98201 54321',
+    city: 'Gurugram',
+    state: 'Haryana',
+    bedCapacity: '150 - 500 Beds',
+    hospitalType: 'Multi-Specialty Hospital',
+    preferredDate: new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0],
+    preferredTime: '11:00 AM',
+    message: 'Evaluating multi-tenant clinical EMR and real-time ambulance dispatch telemetry.',
+    status: 'new',
+    createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+  },
+  {
+    id: 'DEMO-9002',
+    hospitalName: 'Kaveri Heart & Vascular Institute',
+    contactPerson: 'Sunita Narayanan',
+    designation: 'Head of Hospital Operations',
+    email: 'operations@kaveriheart.in',
+    phone: '+91 94441 23456',
+    city: 'Bengaluru',
+    state: 'Karnataka',
+    bedCapacity: '50 - 150 Beds',
+    hospitalType: 'Super Specialty Surgical Center',
+    preferredDate: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
+    preferredTime: '02:30 PM',
+    message: 'Need automated doctor OPD scheduling with buffer intervals and lab analyzer integrations.',
+    status: 'new',
+    createdAt: new Date(Date.now() - 3600000 * 5).toISOString(),
+  },
+];
 
 export const initialAppointmentRequests: PatientAppointmentRequest[] = [
   {
@@ -285,46 +356,116 @@ if (typeof window !== 'undefined') {
     } catch (e) {}
   }
 
-  // Instant automatic purge for existing data in Clinical Departments, OPD Rooms, and Pharmacy Medicines
-  const PURGE_KEY = 'pulse_purged_depts_rooms_meds_v2026';
-  if (!localStorage.getItem(PURGE_KEY)) {
-    localStorage.setItem(STORAGE_KEYS.DEPARTMENTS, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.OPD_ROOMS, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.MEDICINES, JSON.stringify([]));
-    localStorage.setItem(PURGE_KEY, 'true');
+
+  // Automatic quota protector: purge oversized cached collections that are safely stored in MySQL
+  const PRUNE_VERSION_KEY = 'pulse_pruned_heavy_caches_v2026_11';
+  if (!localStorage.getItem(PRUNE_VERSION_KEY)) {
+    const HEAVY_KEYS = [
+      'pulse_websites',
+      'pulse_activity_logs',
+      'pulse_lead_activities',
+      'pulse_ambulance_maintenance',
+      'pulse_ambulance_trips',
+    ];
+    for (const hk of HEAVY_KEYS) {
+      try { localStorage.removeItem(hk); } catch (e) {}
+    }
+    try { localStorage.setItem(PRUNE_VERSION_KEY, 'true'); } catch (e) {}
+  }
+}
+
+const inMemoryStore = new Map<string, any>();
+const quotaExceededKeys = new Set<string>();
+
+const LOW_PRIORITY_KEYS = [
+  'pulse_activity_logs',
+  'pulse_websites',
+  'pulse_lead_activities',
+  'pulse_ambulance_maintenance',
+  'pulse_ambulance_trips',
+  'pulse_sales_leads',
+  'pulse_lead_followups',
+  'pulse_testimonials',
+  'pulse_converted_customers',
+  'pulse_branch_requests',
+];
+
+function freeUpStorageSpace(): void {
+  if (typeof localStorage === 'undefined') return;
+  for (const k of LOW_PRIORITY_KEYS) {
     try {
-      window.dispatchEvent(new Event('pulse_storage_updated'));
-      notifyStorageChange(STORAGE_KEYS.DEPARTMENTS, []);
-      notifyStorageChange(STORAGE_KEYS.OPD_ROOMS, []);
-      notifyStorageChange(STORAGE_KEYS.MEDICINES, []);
+      if (localStorage.getItem(k) !== null) {
+        localStorage.removeItem(k);
+        return;
+      }
     } catch (e) {}
   }
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k !== STORAGE_KEYS.AUTH_USER && !k.startsWith('pulse_auth') && !k.startsWith('token')) {
+        localStorage.removeItem(k);
+        return;
+      }
+    }
+  } catch (e) {}
 }
 
 function getStored<T>(key: string, fallback: T): T {
   try {
-    const item = localStorage.getItem(key);
-    if (!item) {
-      localStorage.setItem(key, JSON.stringify(fallback));
+    if (typeof localStorage !== 'undefined') {
+      if (quotaExceededKeys.has(key) && inMemoryStore.has(key)) {
+        return inMemoryStore.get(key);
+      }
+      const item = localStorage.getItem(key);
+      if (item !== null) {
+        const parsed = JSON.parse(item);
+        if (Array.isArray(fallback) && !Array.isArray(parsed)) {
+          return fallback;
+        }
+        return parsed;
+      }
       return fallback;
     }
-    const parsed = JSON.parse(item);
-    if (Array.isArray(fallback) && !Array.isArray(parsed)) {
-      localStorage.setItem(key, JSON.stringify(fallback));
-      return fallback;
-    }
-    return parsed;
+    return inMemoryStore.has(key) ? inMemoryStore.get(key) : fallback;
   } catch (e) {
-    console.error(`Error reading ${key} from localStorage`, e);
-    return fallback;
+    return inMemoryStore.has(key) ? inMemoryStore.get(key) : fallback;
   }
 }
 
 function setStored<T>(key: string, value: T): void {
+  inMemoryStore.set(key, value);
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+        quotaExceededKeys.delete(key);
+      } catch (err: any) {
+        // Gracefully handle QuotaExceededError by auto-evicting low-priority cache keys
+        if (err?.name === 'QuotaExceededError' || err?.code === 22 || err?.number === -2147024882) {
+          freeUpStorageSpace();
+          try {
+            localStorage.setItem(key, JSON.stringify(value));
+            quotaExceededKeys.delete(key);
+          } catch (retryErr) {
+            for (const k of LOW_PRIORITY_KEYS) {
+              try { localStorage.removeItem(k); } catch (e) {}
+            }
+            try {
+              localStorage.setItem(key, JSON.stringify(value));
+              quotaExceededKeys.delete(key);
+            } catch (finalErr) {
+              quotaExceededKeys.add(key);
+              console.warn(`[Storage] Saved "${key}" to in-memory store (localStorage quota reached).`);
+            }
+          }
+        } else {
+          throw err;
+        }
+      }
+    }
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new Event('pulse_storage_updated'));
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key, data: value } }));
       notifyStorageChange(key, value);
     }
   } catch (e) {
@@ -377,6 +518,7 @@ export async function syncWithDjangoBackend() {
       leadActivitiesRes,
       convertedCustomersRes,
       testimonialsRes,
+      hospitalSettingsRes,
     ] = await Promise.allSettled([
       fetch(`${API_BASE_URL}/hospitals/`).then((r) => r.json()),
       fetch(`${API_BASE_URL}/patients/`).then((r) => r.json()),
@@ -417,6 +559,7 @@ export async function syncWithDjangoBackend() {
       fetch(`${API_BASE_URL}/lead-activities/`).then((r) => r.json()),
       fetch(`${API_BASE_URL}/converted-customers/`).then((r) => r.json()),
       fetch(`${API_BASE_URL}/testimonials/`).then((r) => r.json()),
+      fetch(`${API_BASE_URL}/hospital-settings/`).then((r) => r.json()),
     ]);
 
     let updated = false;
@@ -488,6 +631,12 @@ export async function syncWithDjangoBackend() {
             createdAt: h.created_at || existing?.createdAt || new Date().toISOString().split('T')[0],
             websiteUrl: existing?.websiteUrl || `https://${(h.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')}.pulsecorehealth.com`,
             domainStatus: existing?.domainStatus || 'connected',
+            organizationId: h.organization_id || existing?.organizationId,
+            organizationName: h.organization_name || existing?.organizationName,
+            isBranch: Boolean(h.is_branch ?? existing?.isBranch),
+            isHeadBranch: Boolean(h.is_head_branch ?? existing?.isHeadBranch),
+            headBranchId: h.head_branch_id || existing?.headBranchId,
+            branchCode: h.branch_code || existing?.branchCode,
           };
         });
         localStorage.setItem(STORAGE_KEYS.HOSPITALS, JSON.stringify(mapped));
@@ -746,10 +895,11 @@ export async function syncWithDjangoBackend() {
         const doc = doctorsList.find((d) => d.id === a.doctor || d.id === a.doctor_id);
         const pat = patientsList.find((p) => p.id === a.patient || p.id === a.patient_id);
         const room = roomsList.find((r) => r.id === a.opd_room_id);
+        const resolvedHospital = doc?.hospitalId || pat?.hospitalId || a.hospital || a.hospital_id || 'HOSP-001';
 
         return {
           id: a.id,
-          hospitalId: a.hospital || a.hospital_id || 'HOSP-001',
+          hospitalId: resolvedHospital,
           patientId: a.patient || a.patient_id || '',
           patientName: a.patient_name || pat?.name || 'Patient',
           patientPhone: pat?.phone || '',
@@ -768,7 +918,12 @@ export async function syncWithDjangoBackend() {
           status: a.status as any,
           reason: a.reason || a.notes || 'Consultation',
           notes: a.notes,
-          fee: doc?.consultationFee || 150,
+          fee: a.fee !== undefined && a.fee !== null ? Number(a.fee) : (doc?.consultationFee || 150),
+          cancellationPenalty: a.cancellation_penalty !== undefined && a.cancellation_penalty !== null ? Number(a.cancellation_penalty) : undefined,
+          cancellationPenaltyCollected: a.cancellation_penalty_collected || false,
+          cancellationCollectedInvoiceId: a.cancellation_collected_invoice_id || undefined,
+          cancelledAt: a.cancelled_at || undefined,
+          cancellationReason: a.cancellation_reason || undefined,
           paymentStatus: 'Paid',
           checkedInAt: a.checked_in_at || a.checkedInAt,
           consultationStartedAt: a.consultation_started_at || a.consultationStartedAt,
@@ -777,25 +932,40 @@ export async function syncWithDjangoBackend() {
         };
       });
 
+      const deletedApptIds = new Set(getStored<string[]>(STORAGE_KEYS.DELETED_APPOINTMENTS, []));
       const mergedMap = new Map<string, Appointment>();
+
+      // 1. Preserve all existing local appointments (never wipe them out unless explicitly deleted)
       for (const a of currentAppointments) {
-        if (a && a.id) mergedMap.set(a.id, a);
+        if (a && a.id && !deletedApptIds.has(a.id)) {
+          mergedMap.set(a.id, a);
+        }
       }
+
+      // 2. Merge backend appointments on top (backend values update local ones)
       for (const a of mapped) {
-        if (a && a.id) mergedMap.set(a.id, a);
+        if (a && a.id && !deletedApptIds.has(a.id)) {
+          const existing = mergedMap.get(a.id);
+          mergedMap.set(a.id, existing ? { ...existing, ...a } : a);
+        }
       }
+
       const reconciled = Array.from(mergedMap.values());
       if (reconciled.length !== currentAppointments.length || JSON.stringify(reconciled) !== JSON.stringify(currentAppointments)) {
-        localStorage.setItem(STORAGE_KEYS.APPOINTMENTS, JSON.stringify(reconciled));
+        setStored(STORAGE_KEYS.APPOINTMENTS, reconciled);
         updated = true;
       }
 
+      // 3. Ensure any local appointments missing from the backend are pushed to Django REST Framework
       for (const a of reconciled) {
         const inBackend = backendAppointments.some((ba: any) => ba.id === a.id);
         if (!inBackend) {
           fetch(`${API_BASE_URL}/appointments/`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Hospital-Id': a.hospitalId || 'HOSP-001' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Hospital-Id': a.hospitalId || 'HOSP-001',
+            },
             body: JSON.stringify({
               id: a.id,
               hospital: a.hospitalId || 'HOSP-001',
@@ -803,10 +973,21 @@ export async function syncWithDjangoBackend() {
               doctor: a.doctorId,
               date: a.appointmentDate,
               time: a.appointmentTime,
-              type: a.type,
-              status: a.status,
-              notes: a.notes || a.reason,
+              type: a.type || 'General Checkup',
+              status: a.status || 'Scheduled',
+              fee: a.fee || 150,
+              cancellation_penalty: a.cancellationPenalty || 0,
+              cancellation_penalty_collected: a.cancellationPenaltyCollected || false,
+              cancellation_collected_invoice_id: a.cancellationCollectedInvoiceId || null,
+              cancelled_at: a.cancelledAt || null,
+              cancellation_reason: a.cancellationReason || null,
+              notes: a.notes || '',
               opd_room_id: a.opdRoomId || null,
+              opd_room_name: a.opdRoomName || null,
+              reason: a.reason || '',
+              checked_in_at: a.checkedInAt || null,
+              consultation_started_at: a.consultationStartedAt || null,
+              consultation_completed_at: a.consultationCompletedAt || null,
             }),
           }).catch(() => {});
         }
@@ -920,11 +1101,32 @@ export async function syncWithDjangoBackend() {
       }));
 
       const mergedMap = new Map<string, Medicine>();
-      for (const med of currentMedicines) {
-        if (med && med.id) mergedMap.set(med.id, med);
-      }
+      // First populate from backend
       for (const med of mapped) {
         if (med && med.id) mergedMap.set(med.id, med);
+      }
+      // Then merge local currentMedicines so user-entered custom fields (custom SKU, batch, manufacturer, rack) are NEVER wiped out by backend dummy fallbacks
+      for (const localMed of currentMedicines) {
+        if (localMed && localMed.id) {
+          const backendMed = mergedMap.get(localMed.id);
+          if (backendMed) {
+            mergedMap.set(localMed.id, {
+              ...backendMed,
+              ...localMed, // local user fields take precedence
+              sku: localMed.sku || backendMed.sku,
+              batchNumber: localMed.batchNumber || backendMed.batchNumber,
+              genericName: localMed.genericName || backendMed.genericName,
+              manufacturer: localMed.manufacturer || backendMed.manufacturer,
+              locationRack: localMed.locationRack || backendMed.locationRack,
+              minThreshold: localMed.minThreshold !== undefined ? localMed.minThreshold : backendMed.minThreshold,
+              requiresPrescription: localMed.requiresPrescription !== undefined ? localMed.requiresPrescription : backendMed.requiresPrescription,
+              stockQuantity: backendMed.stockQuantity !== undefined ? backendMed.stockQuantity : localMed.stockQuantity,
+              unitPrice: backendMed.unitPrice !== undefined ? backendMed.unitPrice : localMed.unitPrice,
+            });
+          } else {
+            mergedMap.set(localMed.id, localMed);
+          }
+        }
       }
       const reconciled = Array.from(mergedMap.values());
       if (reconciled.length !== currentMedicines.length || JSON.stringify(reconciled) !== JSON.stringify(currentMedicines)) {
@@ -942,9 +1144,18 @@ export async function syncWithDjangoBackend() {
               id: med.id,
               hospital: med.hospitalId || 'HOSP-001',
               medicine_name: med.name,
+              generic_name: med.genericName || med.name,
+              sku: med.sku,
+              batch_number: med.batchNumber,
               category: med.category,
               stock_quantity: med.stockQuantity,
+              min_threshold: med.minThreshold,
               unit_price: med.unitPrice,
+              expiry_date: med.expiryDate,
+              manufacturer: med.manufacturer,
+              location_rack: med.locationRack,
+              requires_prescription: med.requiresPrescription,
+              status: med.status,
             }),
           }).catch(() => {});
         }
@@ -988,8 +1199,23 @@ export async function syncWithDjangoBackend() {
             }
           } catch (e) {}
 
+          // Preserve lifecycle progression: 'Discharged' and 'Discharge Initiated' must NEVER be reverted back to 'Active' by backend sync!
+          let resolvedStatus = a.status || 'Active';
+          if (local?.status === 'Discharged') {
+            resolvedStatus = 'Discharged';
+          } else if (local?.status === 'Discharge Initiated') {
+            resolvedStatus = (a.status === 'Discharged') ? 'Discharged' : 'Discharge Initiated';
+          } else if (local?.status) {
+            resolvedStatus = local.status;
+          }
+
+          const resolvedDischargeDate = local?.dischargeDate || a.dischargeDate || undefined;
+
           mergedMap.set(a.id, {
             ...a,
+            status: resolvedStatus,
+            dischargeDate: resolvedDischargeDate,
+            initialDeposit: (local?.initialDeposit !== undefined && local?.initialDeposit !== 0) ? local.initialDeposit : a.initialDeposit,
             nurseCondition: local?.nurseCondition || parsedNotes?.nurseCondition || a.nurseCondition,
             nurseNotes: local?.nurseNotes || parsedNotes?.nurseNotes || a.nurseNotes,
             nurseVitals: local?.nurseVitals || parsedNotes?.nurseVitals || a.nurseVitals,
@@ -1149,8 +1375,8 @@ export async function syncWithDjangoBackend() {
       const currentDrivers = getStored<AmbulanceDriver[]>(STORAGE_KEYS.AMBULANCE_DRIVERS, initialAmbulanceDrivers);
       const mapped: AmbulanceDriver[] = backendDrivers.map((d: any) => ({
         id: d.id,
-        hospitalId: d.hospital || d.hospital_id || 'HOSP-001',
-        hospitalName: d.hospital_name || d.hospitalName || 'City Hospital',
+        hospitalId: d.hospitalId || d.hospital_id || d.hospital || (currentDrivers.find(cd => cd.id === d.id)?.hospitalId) || '',
+        hospitalName: d.hospitalName || d.hospital_name || (currentDrivers.find(cd => cd.id === d.id)?.hospitalName) || '',
         name: d.name,
         email: d.email || `${d.id.toLowerCase()}@hospital.org`,
         phone: d.phone,
@@ -1183,8 +1409,8 @@ export async function syncWithDjangoBackend() {
       const currentEmergencies = getStored<EmergencyRequest[]>(STORAGE_KEYS.EMERGENCY_REQUESTS, initialEmergencyRequests);
       const mapped: EmergencyRequest[] = backendEmergencies.map((e: any) => ({
         id: e.id,
-        hospitalId: e.hospital || e.hospital_id || 'HOSP-001',
-        hospitalName: e.hospital_name || e.hospitalName || 'City Hospital',
+        hospitalId: e.hospitalId || e.hospital_id || e.hospital || (currentEmergencies.find(ce => ce.id === e.id)?.hospitalId) || '',
+        hospitalName: e.hospitalName || e.hospital_name || (currentEmergencies.find(ce => ce.id === e.id)?.hospitalName) || '',
         patientName: e.patient_name || e.patientName || 'Emergency Patient',
         patientPhone: e.patient_phone || e.patientPhone || e.caller_phone || '555-0911',
         callerPhone: e.caller_phone || e.callerPhone || e.patient_phone || '555-0911',
@@ -1389,18 +1615,31 @@ export async function syncWithDjangoBackend() {
       }));
 
       const mergedMap = new Map<string, Bed>();
-      for (const b of currentBeds) {
+      // First populate from backend mapped
+      for (const b of mapped) {
         if (b && b.id) mergedMap.set(b.id, b);
       }
-      for (const b of mapped) {
-        if (b && b.id) {
-          const local = mergedMap.get(b.id);
-          mergedMap.set(b.id, {
-            ...b,
-            status: local?.status === 'Occupied' ? 'Occupied' : b.status,
-            currentPatientId: local?.currentPatientId || b.currentPatientId,
-            currentPatientName: local?.currentPatientName || b.currentPatientName,
-          });
+      // Then merge local currentBeds so user-configured status (e.g. Maintenance), ward, hospital, and bed settings are NEVER overwritten by backend defaults
+      for (const local of currentBeds) {
+        if (local && local.id) {
+          const backend = mergedMap.get(local.id);
+          if (backend) {
+            mergedMap.set(local.id, {
+              ...backend,
+              ...local, // Local user fields take precedence
+              status: local.status || backend.status,
+              hospitalId: local.hospitalId || backend.hospitalId,
+              wardId: local.wardId || backend.wardId,
+              wardName: local.wardName || backend.wardName,
+              bedNumber: local.bedNumber || backend.bedNumber,
+              wardType: local.wardType || backend.wardType,
+              floor: local.floor || backend.floor,
+              currentPatientId: local.status === 'Occupied' ? (local.currentPatientId || backend.currentPatientId) : undefined,
+              currentPatientName: local.status === 'Occupied' ? (local.currentPatientName || backend.currentPatientName) : undefined,
+            });
+          } else {
+            mergedMap.set(local.id, local);
+          }
         }
       }
 
@@ -1424,7 +1663,12 @@ export async function syncWithDjangoBackend() {
     }
 
     if (staffRes && staffRes.status === 'fulfilled' && Array.isArray(staffRes.value) && staffRes.value.length > 0) {
-      const mapped: Staff[] = staffRes.value.map((s: any) => ({
+      const deletedStaffIds = getStored<string[]>(STORAGE_KEYS.DELETED_STAFF, []);
+      const validBackendStaff = staffRes.value.filter((s: any) => !deletedStaffIds.includes(s.id));
+      deletedStaffIds.forEach((delId) => {
+        fetch(`${API_BASE_URL}/staff/${delId}/`, { method: 'DELETE' }).catch(() => {});
+      });
+      const mapped: Staff[] = validBackendStaff.map((s: any) => ({
         id: s.id,
         hospitalId: s.hospital || s.hospital_id || 'hosp-1',
         name: s.name,
@@ -1552,13 +1796,33 @@ export async function syncWithDjangoBackend() {
       }
     }
 
+    if (hospitalSettingsRes && hospitalSettingsRes.status === 'fulfilled' && Array.isArray(hospitalSettingsRes.value)) {
+      const currentSettings = getStored<Record<string, HospitalSettings>>(STORAGE_KEYS.HOSPITAL_SETTINGS, {});
+      let changed = false;
+      for (const item of hospitalSettingsRes.value) {
+        const hospId = item.id || item.hospital || item.hospitalId || 'HOSP-001';
+        if (item.data && typeof item.data === 'object') {
+          currentSettings[hospId] = {
+            ...(currentSettings[hospId] || {}),
+            ...item.data,
+            hospitalId: hospId,
+          };
+          changed = true;
+        }
+      }
+      if (changed) {
+        localStorage.setItem(STORAGE_KEYS.HOSPITAL_SETTINGS, JSON.stringify(currentSettings));
+        updated = true;
+      }
+    }
+
     if (ambulancesRes && ambulancesRes.status === 'fulfilled' && Array.isArray(ambulancesRes.value)) {
       const backendAmbulances = ambulancesRes.value;
       const currentAmbulances = getStored<Ambulance[]>(STORAGE_KEYS.AMBULANCES, initialAmbulances);
       const mapped: Ambulance[] = backendAmbulances.map((a: any) => ({
         id: a.id,
-        hospitalId: a.hospital || a.hospital_id || a.hospitalId || 'hosp-1',
-        hospitalName: a.hospitalName || 'Apex Care Hospital',
+        hospitalId: a.hospitalId || a.hospital_id || a.hospital || (currentAmbulances.find(ca => ca.id === a.id)?.hospitalId) || '',
+        hospitalName: a.hospitalName || a.hospital_name || (currentAmbulances.find(ca => ca.id === a.id)?.hospitalName) || '',
         regNumber: a.reg_number || a.regNumber,
         type: a.type || 'Advanced Life Support (ALS)',
         model: a.model || 'Mercedes Sprinter',
@@ -1601,7 +1865,7 @@ export async function syncWithDjangoBackend() {
       const currentMnt = getStored<AmbulanceMaintenance[]>(STORAGE_KEYS.AMBULANCE_MAINTENANCE, initialAmbulanceMaintenance);
       const mapped: AmbulanceMaintenance[] = backendMnt.map((m: any) => ({
         id: m.id,
-        hospitalId: m.hospital || m.hospital_id || m.hospitalId || 'hosp-1',
+        hospitalId: m.hospitalId || m.hospital_id || m.hospital || (currentMnt.find(cm => cm.id === m.id)?.hospitalId) || '',
         ambulanceId: m.ambulance || m.ambulance_id || m.ambulanceId,
         ambulanceReg: m.ambulance_reg || m.ambulanceReg,
         serviceDate: m.service_date || m.serviceDate || new Date().toISOString().split('T')[0],
@@ -1650,7 +1914,7 @@ export async function syncWithDjangoBackend() {
       const currentTrips = getStored<AmbulanceTrip[]>(STORAGE_KEYS.AMBULANCE_TRIPS, initialAmbulanceTrips);
       const mapped: AmbulanceTrip[] = backendTrips.map((t: any) => ({
         id: t.id,
-        hospitalId: t.hospital || t.hospital_id || t.hospitalId || 'hosp-1',
+        hospitalId: t.hospitalId || t.hospital_id || t.hospital || (currentTrips.find(ct => ct.id === t.id)?.hospitalId) || '',
         requestId: t.request_id || t.requestId,
         ambulanceId: t.ambulance_id || t.ambulanceId,
         ambulanceReg: t.ambulance_reg || t.ambulanceReg,
@@ -1781,18 +2045,24 @@ export async function syncWithDjangoBackend() {
     if (couponsRes && couponsRes.status === 'fulfilled' && Array.isArray(couponsRes.value)) {
       const backendCoupons = couponsRes.value;
       const currentCoupons = getStored<CouponCode[]>(STORAGE_KEYS.COUPONS, initialCoupons);
-      const mapped: CouponCode[] = backendCoupons.map((c: any) => ({
-        id: c.id,
-        code: c.code,
-        discountPercentage: Number(c.discount_percentage || c.discountPercentage || 10),
-        description: c.description || '',
-        isActive: c.is_active !== undefined ? Boolean(c.is_active) : (c.isActive !== undefined ? Boolean(c.isActive) : true),
-        validUntil: c.valid_until || c.validUntil,
-        maxUses: c.max_uses !== undefined ? Number(c.max_uses) : c.maxUses,
-        usedCount: Number(c.used_count || c.usedCount || 0),
-        usedByHospitals: Array.isArray(c.used_by_hospitals) ? c.used_by_hospitals : (Array.isArray(c.usedByHospitals) ? c.usedByHospitals : []),
-        createdAt: c.created_at || c.createdAt || new Date().toISOString(),
-      }));
+      const mapped: CouponCode[] = backendCoupons.map((c: any) => {
+        const existing = currentCoupons.find(
+          (cur) => cur.id === c.id || (cur.code && c.code && cur.code.toLowerCase() === c.code.toLowerCase())
+        );
+        return {
+          id: c.id,
+          code: c.code,
+          discountPercentage: Number(c.discount_percentage || c.discountPercentage || 10),
+          description: c.description || '',
+          category: (c.category || (c.category_name ? (c.category_name.toLowerCase().includes('billing') ? 'billing_software' : 'subscription') : undefined) || existing?.category || 'subscription') as 'subscription' | 'billing_software',
+          isActive: c.is_active !== undefined ? Boolean(c.is_active) : (c.isActive !== undefined ? Boolean(c.isActive) : true),
+          validUntil: c.valid_until || c.validUntil,
+          maxUses: c.max_uses !== undefined ? Number(c.max_uses) : c.maxUses,
+          usedCount: Number(c.used_count || c.usedCount || 0),
+          usedByHospitals: Array.isArray(c.used_by_hospitals) ? c.used_by_hospitals : (Array.isArray(c.usedByHospitals) ? c.usedByHospitals : (existing?.usedByHospitals || [])),
+          createdAt: c.created_at || c.createdAt || new Date().toISOString(),
+        };
+      });
 
       const mergedMap = new Map<string, CouponCode>();
       for (const c of currentCoupons) if (c && c.id) mergedMap.set(c.id, c);
@@ -2065,6 +2335,26 @@ if (typeof window !== 'undefined') {
   syncWithDjangoBackend();
 }
 
+const isUndevelopedPlanFeature = (feat: string): boolean => {
+  if (!feat) return false;
+  const f = feat.toLowerCase();
+  return (
+    f.includes('sms') ||
+    f.includes('whatsapp') ||
+    f.includes('email support') ||
+    f.includes('standard email') ||
+    f.includes('forget password') ||
+    f.includes('forgot password') ||
+    f.includes('email tax') ||
+    f.includes('support (24-48h)') ||
+    f.includes('telephonic support') ||
+    f.includes('priority telephonic') ||
+    f.includes('account manager & sla') ||
+    f.includes('dedicated account manager') ||
+    f.includes('custom domain')
+  );
+};
+
 export const MockStorage = {
   syncWithBackend() {
     return syncWithDjangoBackend();
@@ -2145,6 +2435,17 @@ export const MockStorage = {
         return false;
       }
       return true;
+    }).map((u) => {
+      // Sales Executives strictly belong to Platform Global HQ and never under a hospital tenant
+      if (u.role === 'sales_executive' && (u.portal !== 'sales' || u.hospitalId || u.hospitalName)) {
+        return {
+          ...u,
+          portal: 'sales',
+          hospitalId: undefined,
+          hospitalName: undefined,
+        };
+      }
+      return u;
     });
 
     return users;
@@ -2207,10 +2508,74 @@ export const MockStorage = {
     const users = this.getUsers();
 
     if (hospitalId) {
+      const targetHospital = this.getHospitalById(hospitalId);
+      const userAccount = users.find(
+        (u) => (u.email || '').trim().toLowerCase() === normalizedEmail
+      );
+
+      const userHospital = userAccount?.hospitalId ? this.getHospitalById(userAccount.hospitalId) : undefined;
+
+      // Determine if userAccount is the Head Hospital Admin for targetHospital
+      const isTargetSubBranch = Boolean(
+        targetHospital?.isBranch ||
+        targetHospital?.headBranchId ||
+        (targetHospital?.organizationId && targetHospital?.isHeadBranch === false)
+      );
+      const isHeadHospitalAdminOfTarget = Boolean(
+        userAccount &&
+        userAccount.role === 'hospital_admin' &&
+        isTargetSubBranch &&
+        (
+          userAccount.isOrganizationAdmin ||
+          (targetHospital?.headBranchId && userAccount.hospitalId === targetHospital.headBranchId) ||
+          (userHospital?.id && targetHospital?.headBranchId === userHospital.id) ||
+          (userHospital?.isHeadBranch && userHospital.organizationId && targetHospital?.organizationId === userHospital.organizationId) ||
+          (userAccount.organizationId && targetHospital?.organizationId && targetHospital.organizationId === userAccount.organizationId && userHospital?.isHeadBranch)
+        )
+      );
+
+      // Strict Enterprise Rule: Sub-branch admin cannot log into Main/Head Branch
+      if (
+        targetHospital?.isHeadBranch &&
+        userAccount &&
+        userAccount.role === 'hospital_admin' &&
+        userAccount.hospitalId !== targetHospital.id &&
+        !userAccount.isOrganizationAdmin &&
+        !userHospital?.isHeadBranch
+      ) {
+        const userBranch = this.getHospitalById(userAccount.hospitalId || '');
+        return {
+          user: null,
+          error: `Access Denied: You are registered as an administrator for ${userBranch?.name || 'a sub-branch'}. Sub-branch administrators cannot log into the Main Head Branch (${targetHospital.name}). Please log in at your designated branch portal.`,
+        };
+      }
+
+      // Check if user is a sub-branch admin trying to log into another sub-branch
+      if (
+        targetHospital?.isBranch &&
+        userAccount &&
+        userAccount.role === 'hospital_admin' &&
+        userAccount.hospitalId !== targetHospital.id &&
+        !userAccount.isOrganizationAdmin &&
+        !isHeadHospitalAdminOfTarget
+      ) {
+        const userBranch = this.getHospitalById(userAccount.hospitalId || '');
+        return {
+          user: null,
+          error: `Access Denied: You are registered as an administrator for ${userBranch?.name || 'another sub-branch'}. You are restricted to your assigned branch and cannot log into ${targetHospital.name}.`,
+        };
+      }
+
       // Must ONLY search users in the specified hospital context (or compatible alias)
-      const hospitalUser = users.find(
+      let hospitalUser = users.find(
         (u) => this.matchHospitalId(u.hospitalId, hospitalId) && (u.email || '').trim().toLowerCase() === normalizedEmail
       );
+
+      // Allow Network Admin / Head Hospital Admin to access sub-branches under the head hospital
+      if (!hospitalUser && isHeadHospitalAdminOfTarget) {
+        hospitalUser = userAccount;
+      }
+
       if (!hospitalUser) {
         // Fallback: If user has a single account matching email and password, check if it's a superadmin
         const anyMatchingUser = users.find(
@@ -2337,7 +2702,9 @@ export const MockStorage = {
       }).catch(() => {});
     } catch (e) {}
 
-    window.dispatchEvent(new Event('pulse_storage_updated'));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
     return { success: true };
   },
 
@@ -2363,7 +2730,9 @@ export const MockStorage = {
       fetch(`${API_BASE_URL}/users/${userId}/`, { method: 'DELETE' }).catch(() => {});
     } catch (e) {}
 
-    window.dispatchEvent(new Event('pulse_storage_updated'));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
   },
 
   purgeMockAdmins(): void {
@@ -2380,7 +2749,9 @@ export const MockStorage = {
     });
 
     setStored(STORAGE_KEYS.USERS, users);
-    window.dispatchEvent(new Event('pulse_storage_updated'));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
   },
 
   // Hospitals
@@ -2432,6 +2803,17 @@ export const MockStorage = {
       hospitals[idx] = sanitizedHospital;
     } else {
       hospitals.unshift(sanitizedHospital);
+      // Automatically notify Super Admin about newly onboarded hospital facility
+      this.addNotification({
+        id: `notif-hosp-onboard-${sanitizedHospital.id}-${Date.now()}`,
+        title: 'New Hospital Facility Onboarded',
+        message: `${sanitizedHospital.name} (${sanitizedHospital.city || 'Facility'}, ${sanitizedHospital.state || 'India'}) registered on ${sanitizedHospital.planTier?.toUpperCase() || 'TRIAL'} tier.`,
+        type: 'info',
+        roleTarget: 'super_admin',
+        targetRoles: ['super_admin', 'super_admin_manager'],
+        category: 'onboarding',
+        link: '/platform/hospitals',
+      });
       // Automatically provision a default website entry for newly onboarded hospital
       const websites = this.getWebsites();
       const slug = sanitizedHospital.name.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -2513,6 +2895,7 @@ export const MockStorage = {
           hospitalName: sanitizedHospital.name,
           phone: sanitizedHospital.adminPhone || sanitizedHospital.phone || users[userIdx].phone,
           avatar: sanitizedHospital.logoUrl || users[userIdx].avatar,
+          password: (sanitizedHospital as any).adminPassword || users[userIdx].password || 'Admin@123',
           status: 'active',
         };
       } else {
@@ -2524,6 +2907,7 @@ export const MockStorage = {
           portal: 'hospital',
           hospitalId: sanitizedHospital.id,
           hospitalName: sanitizedHospital.name,
+          password: (sanitizedHospital as any).adminPassword || 'Admin@123',
           avatar: sanitizedHospital.logoUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
           department: 'Hospital Administration',
           phone: sanitizedHospital.adminPhone || sanitizedHospital.phone,
@@ -2575,6 +2959,17 @@ export const MockStorage = {
       hosp.status = status;
       setStored(STORAGE_KEYS.HOSPITALS, hospitals);
       this.logActivity(`Changed Hospital Status to ${status.toUpperCase()}`, hosp.name, 'hospital');
+      notifyStorageChange(STORAGE_KEYS.HOSPITALS, hospitals);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('pulse_storage_updated'));
+        try {
+          fetch(`${API_BASE_URL}/hospitals/${id}/`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status }),
+          }).catch(() => {});
+        } catch (e) {}
+      }
     }
   },
 
@@ -2639,19 +3034,65 @@ export const MockStorage = {
       plans = initialPlans;
     }
 
+    let needsResave = false;
+
     const merged = initialPlans.map((ip) => {
-      const stored = plans.find((p) => p.id === ip.id);
-      return stored ? { ...ip, ...stored } : ip;
+      const stored = plans.find((p) => p.id === ip.id || p.tier === ip.tier);
+      if (!stored) return ip;
+
+      const rawFeatures = stored.features || ip.features || [];
+      const cleanFeatures = rawFeatures.filter((f) => !isUndevelopedPlanFeature(f));
+      if (cleanFeatures.length !== rawFeatures.length) {
+        needsResave = true;
+      }
+
+      const isBasic = ip.tier === 'basic' || stored.tier === 'basic';
+      if (isBasic && stored.maxBeds !== 0) {
+        needsResave = true;
+      }
+      if (isBasic && !cleanFeatures.some((f) => {
+        const fl = f.toLowerCase();
+        return fl.includes('opd room') || fl.includes('chamber') || fl === 'opd rooms';
+      })) {
+        cleanFeatures.push('OPD rooms');
+        needsResave = true;
+      }
+
+      return {
+        ...ip,
+        ...stored,
+        maxPatients: stored.maxPatients !== undefined ? stored.maxPatients : ip.maxPatients,
+        maxBeds: isBasic ? 0 : (stored.maxBeds !== undefined ? stored.maxBeds : ip.maxBeds),
+        maxStaff: stored.maxStaff !== undefined ? stored.maxStaff : ip.maxStaff,
+        maxDoctors: stored.maxDoctors !== undefined ? stored.maxDoctors : ip.maxDoctors,
+        storageGB: stored.storageGB !== undefined ? stored.storageGB : ip.storageGB,
+        priceMonthly: stored.priceMonthly !== undefined ? stored.priceMonthly : ip.priceMonthly,
+        priceYearly: stored.priceYearly !== undefined ? stored.priceYearly : ip.priceYearly,
+        features: cleanFeatures.length > 0 ? cleanFeatures : ip.features.filter((f) => !isUndevelopedPlanFeature(f)),
+      };
     });
 
     plans.forEach((sp) => {
-      if (!merged.some((m) => m.id === sp.id)) {
-        merged.push(sp);
+      if (!merged.some((m) => m.id === sp.id || m.tier === sp.tier)) {
+        const rawFeatures = sp.features || [];
+        const cleanFeatures = rawFeatures.filter((f) => !isUndevelopedPlanFeature(f));
+        if (cleanFeatures.length !== rawFeatures.length) {
+          needsResave = true;
+        }
+        merged.push({
+          ...sp,
+          features: cleanFeatures,
+          maxBeds: sp.tier === 'basic' ? 0 : sp.maxBeds,
+        });
       }
     });
 
     const trialDays = this.getTrialDays();
-    return merged.map((p) => {
+    const result = merged.map((p) => {
+      const cleanFeatures = (p.features || []).filter((f) => !isUndevelopedPlanFeature(f));
+      if (p.tier === 'basic') {
+        p.maxBeds = 0;
+      }
       if (p.tier === 'trial') {
         const days = p.trialDays || trialDays;
         return {
@@ -2661,34 +3102,53 @@ export const MockStorage = {
           tagline: `Zero-cost ${days}-day full platform trial provisioned automatically on hospital registration.`,
           features: [
             `${days} Days Full System Access`,
-            ...(p.features
-              ? p.features.filter(
-                  (f) =>
-                    !f.toLowerCase().includes('day') &&
-                    !f.toLowerCase().includes('trial')
-                )
-              : [
-                  'OPD Appointment Scheduling',
-                  'Basic Patient EHR Records',
-                  'Hospital Public Website',
-                  'QR Code Subscription Upgrade',
-                  'Standard Email Support',
-                ]),
+            ...cleanFeatures.filter(
+              (f) =>
+                !f.toLowerCase().includes('day') &&
+                !f.toLowerCase().includes('trial')
+            ),
           ],
         };
       }
-      return p;
+      return {
+        ...p,
+        features: cleanFeatures,
+      };
     });
+
+    if (needsResave) {
+      setStored(STORAGE_KEYS.PLANS, result);
+    }
+
+    return result;
   },
 
   savePlans(plans: SubscriptionPlan[]): void {
-    setStored(STORAGE_KEYS.PLANS, plans);
+    const sanitized = plans.map((p) => ({
+      ...p,
+      features: (p.features || []).filter((f) => !isUndevelopedPlanFeature(f)),
+      maxBeds: p.tier === 'basic' ? 0 : p.maxBeds,
+    }));
+    setStored(STORAGE_KEYS.PLANS, sanitized);
+    notifyStorageChange(STORAGE_KEYS.PLANS, sanitized);
   },
 
   savePlan(updatedPlan: SubscriptionPlan): void {
     const plans = this.getPlans();
-    const idx = plans.findIndex((p) => p.id === updatedPlan.id);
-    let planToSave = { ...updatedPlan };
+    const idx = plans.findIndex((p) => p.id === updatedPlan.id || p.tier === updatedPlan.tier);
+    let planToSave = {
+      ...updatedPlan,
+      features: (updatedPlan.features || []).filter((f) => !isUndevelopedPlanFeature(f)),
+    };
+    if (planToSave.tier === 'basic') {
+      planToSave.maxBeds = 0; // Basic / Starter Clinic is strictly Outpatient OPD Clinic (0 Beds)
+      if (!planToSave.features.some((f) => {
+        const fl = f.toLowerCase();
+        return fl.includes('opd room') || fl.includes('chamber') || fl === 'opd rooms';
+      })) {
+        planToSave.features.push('OPD rooms');
+      }
+    }
     if (planToSave.tier === 'trial') {
       const days = planToSave.trialDays || 14;
       planToSave.trialDays = days;
@@ -2705,6 +3165,29 @@ export const MockStorage = {
       plans.push(planToSave);
     }
     this.savePlans(plans);
+
+    // Cascade updated plan resource limits to all hospitals enrolled on this tier
+    const hospitals = this.getHospitals();
+    let hospModified = false;
+    const updatedHospitals = hospitals.map((h) => {
+      if (h.planTier === planToSave.tier) {
+        hospModified = true;
+        return {
+          ...h,
+          totalBeds: planToSave.maxBeds,
+          totalDoctors: planToSave.maxDoctors,
+        };
+      }
+      return h;
+    });
+    if (hospModified) {
+      setStored(STORAGE_KEYS.HOSPITALS, updatedHospitals);
+      notifyStorageChange(STORAGE_KEYS.HOSPITALS, updatedHospitals);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.PLANS, data: plans } }));
+    }
   },
 
   getPlanByTier(tier?: string): SubscriptionPlan {
@@ -2749,10 +3232,36 @@ export const MockStorage = {
       }
       return s;
     });
-    if (modified) {
-      setStored(STORAGE_KEYS.SUBSCRIPTIONS, sanitized);
+
+    // Enforce strict single subscription per hospital: prune older duplicates upon upgrades
+    const deduplicated: HospitalSubscription[] = [];
+    for (const sub of sanitized) {
+      const existingIdx = deduplicated.findIndex((d) => this.matchHospitalId(d.hospitalId, sub.hospitalId));
+      if (existingIdx === -1) {
+        deduplicated.push(sub);
+      } else {
+        modified = true;
+        const existing = deduplicated[existingIdx];
+        if (sub.paymentStatus === 'pending_approval' && existing.paymentStatus !== 'pending_approval') {
+          deduplicated[existingIdx] = sub;
+        } else if (existing.paymentStatus === 'pending_approval' && sub.paymentStatus !== 'pending_approval') {
+          // Keep existing pending
+        } else {
+          const subDate = sub.upgradedDate || sub.activatedDate || sub.startDate || '';
+          const existDate = existing.upgradedDate || existing.activatedDate || existing.startDate || '';
+          if (Boolean(sub.upgradedDate) && !Boolean(existing.upgradedDate)) {
+            deduplicated[existingIdx] = sub;
+          } else if (subDate >= existDate) {
+            deduplicated[existingIdx] = sub;
+          }
+        }
+      }
     }
-    return sanitized;
+
+    if (modified || deduplicated.length !== subs.length) {
+      setStored(STORAGE_KEYS.SUBSCRIPTIONS, deduplicated);
+    }
+    return deduplicated;
   },
 
   getSubscriptionByHospitalId(hospitalId: string): HospitalSubscription | undefined {
@@ -2776,29 +3285,74 @@ export const MockStorage = {
         activatedDate: hosp.createdAt || now.toISOString().split('T')[0],
         renewalDate: renewal.toISOString().split('T')[0],
         paymentMethod: isTrial ? '7-Day Trial License' : 'UPI QR Code',
-        autoRenew: !isTrial,
+        autoRenew: false,
       };
       const allSubs = this.getSubscriptions();
       allSubs.unshift(sub);
       setStored(STORAGE_KEYS.SUBSCRIPTIONS, allSubs);
     } else if (sub && hosp && sub.planTier !== hosp.planTier) {
-      sub.planTier = hosp.planTier;
-      const plan = this.getPlanByTier(hosp.planTier);
-      sub.planName = plan.name;
-      this.saveSubscription(sub);
+      // Prioritize active subscription tier and synchronize hospital record
+      hosp.planTier = sub.planTier;
+      const hospitals = this.getHospitals();
+      const hIdx = hospitals.findIndex((h) => this.matchHospitalId(h.id, hosp.id));
+      if (hIdx >= 0) {
+        hospitals[hIdx] = hosp;
+        setStored(STORAGE_KEYS.HOSPITALS, hospitals);
+      }
     }
     return sub;
   },
 
+  getHospitalActiveTier(hospitalId?: string): SubscriptionPlanTier {
+    if (!hospitalId) return 'trial';
+    const sub = this.getSubscriptions().find((s) => this.matchHospitalId(s.hospitalId, hospitalId));
+    if (sub && sub.planTier) {
+      return sub.planTier as SubscriptionPlanTier;
+    }
+    const hosp = this.getHospitalById(hospitalId);
+    if (hosp && hosp.planTier) {
+      return hosp.planTier as SubscriptionPlanTier;
+    }
+    return 'trial';
+  },
+
+  getHospitalActivePlan(hospitalId?: string): SubscriptionPlan {
+    const tier = this.getHospitalActiveTier(hospitalId);
+    return this.getPlanByTier(tier);
+  },
+
   saveSubscription(subscription: HospitalSubscription): void {
     const subs = this.getSubscriptions();
-    const idx = subs.findIndex((s) => s.id === subscription.id || s.hospitalId === subscription.hospitalId);
+    const idx = subs.findIndex((s) => s.id === subscription.id || this.matchHospitalId(s.hospitalId, subscription.hospitalId));
     if (idx >= 0) {
-      subs[idx] = subscription;
+      subs[idx] = { ...subs[idx], ...subscription };
     } else {
       subs.unshift(subscription);
     }
-    setStored(STORAGE_KEYS.SUBSCRIPTIONS, subs);
+    const deduplicated = subs.filter((s, i) => {
+      if (i === (idx >= 0 ? idx : 0)) return true;
+      return !this.matchHospitalId(s.hospitalId, subscription.hospitalId);
+    });
+    setStored(STORAGE_KEYS.SUBSCRIPTIONS, deduplicated);
+    notifyStorageChange(STORAGE_KEYS.SUBSCRIPTIONS, deduplicated);
+
+    // Synchronize hospital entity record planTier and capacity
+    if (subscription.hospitalId && subscription.planTier) {
+      const hospitals = this.getHospitals();
+      const hIdx = hospitals.findIndex((h) => this.matchHospitalId(h.id, subscription.hospitalId));
+      if (hIdx >= 0) {
+        const plan = this.getPlanByTier(subscription.planTier);
+        hospitals[hIdx] = {
+          ...hospitals[hIdx],
+          planTier: subscription.planTier,
+          totalBeds: plan ? plan.maxBeds : hospitals[hIdx].totalBeds,
+          totalDoctors: plan ? plan.maxDoctors : hospitals[hIdx].totalDoctors,
+        };
+        setStored(STORAGE_KEYS.HOSPITALS, hospitals);
+        notifyStorageChange(STORAGE_KEYS.HOSPITALS, hospitals);
+      }
+    }
+
     this.logActivity('Updated Subscription Tier', `Plan: ${subscription.planName}`, 'billing', 'Admin', 'Platform Admin', subscription.hospitalId);
   },
 
@@ -2924,8 +3478,8 @@ export const MockStorage = {
     if (!plan) return true;
     if (plan.isActive === false) return false;
 
-    // Strict multi-tier capability check matching SaaS specification
-    return isCapabilityAllowedForTier(hosp.planTier, featureName);
+    // Strict capability check matching active plan features and SaaS specification
+    return isCapabilityInPlan(plan, featureName, this.getPlans());
   },
 
   isCapabilityEnabled(hospitalId?: string, capabilityKey?: string): boolean {
@@ -2936,12 +3490,14 @@ export const MockStorage = {
     return PLAN_CAPABILITIES;
   },
 
-  checkPathAccess(hospitalId?: string, pathname?: string): { allowed: boolean; capabilityName?: string; requiredTierName?: string } {
+  checkPathAccess(hospitalId?: string, pathname?: string): { allowed: boolean; capability?: PlanCapability; capabilityName?: string; requiredTierName?: string } {
     if (!hospitalId || !pathname) return { allowed: true };
     const hosp = this.getHospitalById(hospitalId);
-    const result = checkPathCapability(pathname, hosp?.planTier);
+    const plan = hosp ? this.getPlanByTier(hosp.planTier) : undefined;
+    const result = checkPathCapability(pathname, hosp?.planTier, plan, this.getPlans());
     return {
       allowed: result.allowed,
+      capability: result.capability,
       capabilityName: result.capability?.name,
       requiredTierName: result.requiredTierName,
     };
@@ -2977,7 +3533,77 @@ export const MockStorage = {
     this.logActivity('Deleted Coupon Code', `Coupon ID: ${id}`, 'billing', 'Super Admin', 'Platform Admin');
   },
 
-  validateCoupon(code: string, hospitalId?: string): { valid: boolean; discountPercentage?: number; coupon?: CouponCode; message?: string } {
+  isCouponUsedByHospital(code: string, hospitalId?: string): boolean {
+    if (!code || !hospitalId) return false;
+    const cleanCode = code.trim().toLowerCase();
+    const coupon = this.getCouponByCode(code);
+
+    // 1. Check coupon object's usedByHospitals array using matchHospitalId
+    const usedList: string[] = (coupon?.usedByHospitals || []);
+    if (usedList.some((hId) => this.matchHospitalId(hId, hospitalId))) {
+      return true;
+    }
+
+    // 2. Check all subscriptions for this hospital where appliedCoupon matches
+    const subs = this.getSubscriptions();
+    const usedInSub = subs.some(
+      (s) =>
+        this.matchHospitalId(s.hospitalId, hospitalId) &&
+        s.appliedCoupon &&
+        s.appliedCoupon.trim().toLowerCase() === cleanCode
+    );
+    if (usedInSub) {
+      if (coupon && (!coupon.usedByHospitals || !coupon.usedByHospitals.some((hId) => this.matchHospitalId(hId, hospitalId)))) {
+        coupon.usedByHospitals = [...(coupon.usedByHospitals || []), hospitalId];
+        this.saveCoupon(coupon);
+      }
+      return true;
+    }
+
+    // 3. Check activity logs for this hospital where target or action mentions this coupon code
+    const logs = this.getActivityLogs();
+    const usedInLogs = logs.some(
+      (l) =>
+        this.matchHospitalId(l.hospitalId, hospitalId) &&
+        ((l.target && l.target.toLowerCase().includes(cleanCode)) ||
+          (l.action && l.action.toLowerCase().includes(cleanCode)))
+    );
+    if (usedInLogs) {
+      if (coupon && (!coupon.usedByHospitals || !coupon.usedByHospitals.some((hId) => this.matchHospitalId(hId, hospitalId)))) {
+        coupon.usedByHospitals = [...(coupon.usedByHospitals || []), hospitalId];
+        this.saveCoupon(coupon);
+      }
+      return true;
+    }
+
+    return false;
+  },
+
+  markCouponAsUsed(code: string, hospitalId: string): boolean {
+    if (!code || !hospitalId) return false;
+    const coupon = this.getCouponByCode(code);
+    if (!coupon) return false;
+
+    coupon.usedCount = (coupon.usedCount || 0) + 1;
+    const usedList = Array.isArray(coupon.usedByHospitals) ? [...coupon.usedByHospitals] : [];
+    if (!usedList.some((hId) => this.matchHospitalId(hId, hospitalId))) {
+      usedList.push(hospitalId);
+      const canonical = this.getHospitalById(hospitalId);
+      if (canonical && canonical.id && !usedList.includes(canonical.id)) {
+        usedList.push(canonical.id);
+      }
+    }
+    coupon.usedByHospitals = usedList;
+    this.saveCoupon(coupon);
+    ApiService.redeemCoupon(code, hospitalId).catch(() => {});
+    return true;
+  },
+
+  validateCoupon(
+    code: string,
+    hospitalId?: string,
+    targetScope: 'subscription' | 'billing_software' = 'subscription'
+  ): { valid: boolean; discountPercentage?: number; coupon?: CouponCode; message?: string } {
     const coupon = this.getCouponByCode(code);
     if (!coupon) {
       return { valid: false, message: 'Invalid or inactive promotional coupon code.' };
@@ -2985,13 +3611,21 @@ export const MockStorage = {
     if (!coupon.isActive) {
       return { valid: false, message: 'This coupon code is currently disabled.' };
     }
+    const category = coupon.category || 'subscription';
+    if (targetScope === 'subscription' && category === 'billing_software') {
+      return {
+        valid: false,
+        coupon,
+        message: `Promo code "${coupon.code}" belongs to the Billing Software Suite category (external partner software). It has no function inside this HMS & CRM project and provides ₹0 discount for subscription plans.`,
+      };
+    }
     if (coupon.validUntil && new Date(coupon.validUntil) < new Date()) {
       return { valid: false, message: 'This coupon code has expired.' };
     }
     if (coupon.maxUses && coupon.usedCount >= coupon.maxUses) {
       return { valid: false, message: 'Coupon usage limit has been reached.' };
     }
-    if (hospitalId && coupon.usedByHospitals && coupon.usedByHospitals.includes(hospitalId)) {
+    if (hospitalId && this.isCouponUsedByHospital(coupon.code, hospitalId)) {
       return { valid: false, message: 'This coupon code has already been redeemed by your hospital and cannot be reused.' };
     }
     return { valid: true, discountPercentage: coupon.discountPercentage, coupon, message: `${coupon.discountPercentage}% discount applied!` };
@@ -3007,6 +3641,23 @@ export const MockStorage = {
     paymentScreenshot?: string,
     interval: BillingInterval = 'monthly'
   ): void {
+    // Enforce sub-branch restriction: sub-branches cannot independently request subscription upgrades
+    const targetHosp = this.getHospitalById(hospitalId);
+    if (targetHosp && (targetHosp.isBranch || targetHosp.headBranchId || (targetHosp.organizationId && targetHosp.isHeadBranch === false))) {
+      throw new Error(`Subscription upgrades cannot be requested by sub-branch facilities. Subscription is centrally managed under the Enterprise Health Network by Head Branch.`);
+    }
+
+    // Enforce one-time coupon rule per hospital AND enforce category
+    if (appliedCoupon) {
+      const couponObj = this.getCouponByCode(appliedCoupon);
+      if (couponObj && (couponObj.category || 'subscription') === 'billing_software') {
+        throw new Error(`Promo code "${appliedCoupon}" belongs to Billing Software Suite (external partner software). It has no function inside this HMS & CRM project and cannot be applied to subscriptions.`);
+      }
+      if (this.isCouponUsedByHospital(appliedCoupon, hospitalId)) {
+        throw new Error(`Coupon code "${appliedCoupon}" has already been redeemed by this hospital and cannot be reused.`);
+      }
+    }
+
     const subs = this.getSubscriptions();
     let sub = subs.find((s) => this.matchHospitalId(s.hospitalId, hospitalId));
     const plans = this.getPlans();
@@ -3045,16 +3696,7 @@ export const MockStorage = {
     if (appliedCoupon) {
       sub.appliedCoupon = appliedCoupon;
       // increment coupon used count & mark hospitalId as used
-      const coupon = this.getCouponByCode(appliedCoupon);
-      if (coupon) {
-        coupon.usedCount = (coupon.usedCount || 0) + 1;
-        const usedList = coupon.usedByHospitals || [];
-        if (!usedList.includes(hospitalId)) {
-          usedList.push(hospitalId);
-        }
-        coupon.usedByHospitals = usedList;
-        this.saveCoupon(coupon);
-      }
+      this.markCouponAsUsed(appliedCoupon, hospitalId);
     }
     sub.utrNumber = utrNumber;
     if (paymentScreenshot) {
@@ -3062,7 +3704,9 @@ export const MockStorage = {
     }
     sub.paymentSubmittedAt = new Date().toISOString();
 
-    setStored(STORAGE_KEYS.SUBSCRIPTIONS, subs);
+    // Deduplicate to ensure hospital has only one subscription entry
+    const finalSubs = subs.filter((s) => s.id === sub.id || !this.matchHospitalId(s.hospitalId, hospitalId));
+    setStored(STORAGE_KEYS.SUBSCRIPTIONS, finalSubs);
     this.logActivity(
       'Submitted Subscription QR Payment',
       `UTR: ${utrNumber} (${planObj?.name || requestedTier})${appliedCoupon ? ` with coupon ${appliedCoupon}` : ''}`,
@@ -3071,6 +3715,20 @@ export const MockStorage = {
       'Hospital Admin',
       hospitalId
     );
+
+    // Notify Super Admin & Super Admin Manager about the pending QR payment & UTR approval
+    const hospObj = this.getHospitalById(hospitalId);
+    const hospName = hospObj?.name || hospitalId;
+    this.addNotification({
+      id: `notif-sub-pending-${sub.id || hospitalId}`,
+      title: 'Pending QR Payment & UTR Approval',
+      message: `${hospName} submitted payment of ₹${amount.toLocaleString('en-IN')} for ${planObj?.name || requestedTier} (UTR: ${utrNumber}). Verification required.`,
+      type: 'warning',
+      roleTarget: 'super_admin',
+      targetRoles: ['super_admin', 'super_admin_manager'],
+      category: 'billing',
+      link: '/platform/subscriptions',
+    });
   },
 
   approveSubscriptionUpgrade(subscriptionId: string): void {
@@ -3101,7 +3759,8 @@ export const MockStorage = {
       }
       sub.renewalDate = renewalDateObj.toISOString().split('T')[0];
 
-      setStored(STORAGE_KEYS.SUBSCRIPTIONS, subs);
+      const finalSubs = subs.filter((s) => s.id === sub.id || !this.matchHospitalId(s.hospitalId, sub.hospitalId));
+      setStored(STORAGE_KEYS.SUBSCRIPTIONS, finalSubs);
 
       // Update Hospital status & planTier & allocations
       const hosp = this.getHospitalById(sub.hospitalId);
@@ -3207,6 +3866,20 @@ export const MockStorage = {
       }
 
       this.logActivity('Approved Subscription Upgrade', `Hospital: ${hosp?.name} -> ${sub.planName}`, 'billing', 'Super Admin', 'Platform Admin', sub.hospitalId);
+
+      // Notify Hospital Admin that subscription upgrade was approved
+      this.addNotification({
+        id: `notif-sub-approved-${sub.id || sub.hospitalId}-${Date.now()}`,
+        title: 'Subscription Upgrade Approved! 🎉',
+        message: `Your payment of ₹${(sub.amount || 0).toLocaleString('en-IN')} has been verified. Your hospital is now upgraded to ${sub.planName} tier!`,
+        type: 'success',
+        roleTarget: 'hospital_admin',
+        targetRoles: ['hospital_admin'],
+        hospitalId: sub.hospitalId,
+        category: 'billing',
+        link: '/hospital/settings',
+      });
+      this.markNotificationAsRead(`notif-sub-pending-${sub.id || sub.hospitalId}`);
     }
   },
 
@@ -3217,6 +3890,20 @@ export const MockStorage = {
       sub.paymentStatus = 'rejected';
       setStored(STORAGE_KEYS.SUBSCRIPTIONS, subs);
       this.logActivity('Rejected Subscription Upgrade', `UTR verification failed`, 'billing', 'Super Admin', 'Platform Admin', sub.hospitalId);
+
+      // Notify Hospital Admin that subscription upgrade payment was rejected
+      this.addNotification({
+        id: `notif-sub-rejected-${sub.id || sub.hospitalId}-${Date.now()}`,
+        title: 'Subscription Payment Verification Rejected',
+        message: `The payment verification (UTR: ${sub.utrNumber || 'N/A'}) for ${sub.planName || 'plan upgrade'} could not be verified by platform admin. Please check your banking UTR and resubmit.`,
+        type: 'error',
+        roleTarget: 'hospital_admin',
+        targetRoles: ['hospital_admin'],
+        hospitalId: sub.hospitalId,
+        category: 'billing',
+        link: '/hospital/settings',
+      });
+      this.markNotificationAsRead(`notif-sub-pending-${sub.id || sub.hospitalId}`);
     }
   },
 
@@ -3238,8 +3925,29 @@ export const MockStorage = {
     const idx = tickets.findIndex((t) => t.id === ticket.id);
     if (idx >= 0) {
       tickets[idx] = ticket;
+      this.addNotification({
+        id: `notif-ticket-upd-${ticket.id}-${Date.now()}`,
+        title: 'Support Ticket Status Updated',
+        message: `Support Ticket #${ticket.id} "${ticket.title}" is now marked as ${ticket.status.toUpperCase()}.`,
+        type: ticket.status === 'resolved' || ticket.status === 'closed' ? 'success' : 'info',
+        roleTarget: 'hospital_admin',
+        targetRoles: ['hospital_admin'],
+        hospitalId: ticket.hospitalId,
+        category: 'support',
+        link: '/hospital/support',
+      });
     } else {
       tickets.unshift(ticket);
+      this.addNotification({
+        id: `notif-ticket-new-${ticket.id}-${Date.now()}`,
+        title: 'New Hospital Support Ticket Raised',
+        message: `${ticket.hospitalName} opened support ticket #${ticket.id}: "${ticket.title}" (${ticket.priority.toUpperCase()} priority).`,
+        type: ticket.priority === 'urgent' ? 'warning' : 'info',
+        roleTarget: 'super_admin',
+        targetRoles: ['super_admin', 'super_admin_manager'],
+        category: 'support',
+        link: '/platform/support',
+      });
     }
     setStored(STORAGE_KEYS.TICKETS, tickets);
     window.dispatchEvent(new Event('pulse_storage_updated'));
@@ -3337,11 +4045,14 @@ export const MockStorage = {
     const patients = getStored<Patient[]>(STORAGE_KEYS.PATIENTS, initialPatients);
     const idx = patients.findIndex((p) => p.id === patient.id);
 
+    const normHospitalId = patient.hospitalId || 'HOSP-001';
+    patient.hospitalId = normHospitalId;
+
     const normalizedEmail = (patient.email || '').trim().toLowerCase();
     if (normalizedEmail) {
       const existingPatient = patients.find(
         (p) =>
-          p.hospitalId === patient.hospitalId &&
+          this.matchHospitalId(p.hospitalId, normHospitalId) &&
           (p.email || '').trim().toLowerCase() === normalizedEmail &&
           p.id !== patient.id
       );
@@ -3353,12 +4064,24 @@ export const MockStorage = {
       }
     }
 
+    if (idx < 0) {
+      const plan = this.getHospitalActivePlan(normHospitalId);
+      const hospitalPatients = patients.filter((p) => this.matchHospitalId(p.hospitalId, normHospitalId));
+      if (plan && plan.maxPatients !== undefined && hospitalPatients.length >= plan.maxPatients) {
+        return {
+          success: false,
+          message: `Patient Limit Reached: Your hospital is on the "${plan.name}" plan which allows a maximum of ${plan.maxPatients} patient records (${hospitalPatients.length}/${plan.maxPatients} in use). Upgrade your subscription to register more patients.`,
+        };
+      }
+    }
+
     if (idx >= 0) {
       patients[idx] = patient;
     } else {
       patients.unshift(patient);
     }
     setStored(STORAGE_KEYS.PATIENTS, patients);
+    notifyStorageChange(STORAGE_KEYS.PATIENTS, patients);
     this.logActivity(idx >= 0 ? 'Updated Patient Profile' : 'Registered New Patient', `${patient.name} (${patient.id})`, 'patient', 'Staff', 'Hospital User', patient.hospitalId);
 
     // Asynchronously synchronize with Django backend if available
@@ -3403,12 +4126,29 @@ export const MockStorage = {
     const patient = this.getPatientById(id);
     const patients = getStored<Patient[]>(STORAGE_KEYS.PATIENTS, initialPatients).filter((p) => p.id !== id);
     setStored(STORAGE_KEYS.PATIENTS, patients);
+    notifyStorageChange(STORAGE_KEYS.PATIENTS, patients);
+
+    if (patient && patient.email) {
+      const normalizedEmail = patient.email.trim().toLowerCase();
+      const users = this.getUsers().filter((u) => {
+        const uEmail = (u.email || '').trim().toLowerCase();
+        if (uEmail === normalizedEmail && (u.role === 'patient' || u.hospitalId === patient.hospitalId)) {
+          return false;
+        }
+        return true;
+      });
+      setStored(STORAGE_KEYS.USERS, users);
+    }
+
     if (patient) {
       this.logActivity('Deactivated Patient Record', `${patient.name} (${patient.id})`, 'patient', 'Staff', 'Hospital User', patient.hospitalId);
     }
-    try {
-      fetch(`${API_BASE_URL}/patients/${id}/`, { method: 'DELETE' }).catch(() => {});
-    } catch (e) {}
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+      try {
+        fetch(`${API_BASE_URL}/patients/${id}/`, { method: 'DELETE' }).catch(() => {});
+      } catch (e) {}
+    }
   },
 
   // Prescriptions
@@ -3494,6 +4234,19 @@ export const MockStorage = {
     }
     setStored(STORAGE_KEYS.PRESCRIPTIONS, list);
 
+    if (idx < 0) {
+      this.addNotification({
+        title: 'New Digital Prescription',
+        message: `${prescription.doctorName || 'Doctor'} issued a prescription for ${prescription.patientName} (${prescription.medications?.length || 1} items).`,
+        type: 'info',
+        roleTarget: 'pharmacist',
+        targetRoles: ['pharmacist', 'patient'],
+        hospitalId: prescription.hospitalId,
+        category: 'clinical',
+        link: '/hospital/pharmacy',
+      });
+    }
+
     try {
       const hospitalKey = prescription.hospitalId || 'HOSP-001';
       const payload = {
@@ -3519,13 +4272,7 @@ export const MockStorage = {
 
   // Appointments
   getAppointments(hospitalId?: string, patientId?: string): Appointment[] {
-    const HARDCODED_APPT_IDS = ['APT-1001', 'APT-1002', 'APT-1003', 'APT-1004', 'APT-1005'];
-    const raw = getStored<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
-    const cleaned = raw.filter((a) => !HARDCODED_APPT_IDS.includes(a.id));
-    if (cleaned.length !== raw.length) {
-      setStored(STORAGE_KEYS.APPOINTMENTS, cleaned);
-    }
-    let appointments = cleaned;
+    let appointments = getStored<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
     if (hospitalId) {
       appointments = appointments.filter((a) => this.matchHospitalId(a.hospitalId, hospitalId));
     }
@@ -3540,6 +4287,18 @@ export const MockStorage = {
   },
 
   saveAppointment(appointment: Appointment): void {
+    const doc = this.getDoctors().find((d) => d.id === appointment.doctorId);
+    const pat = this.getPatients().find((p) => p.id === appointment.patientId);
+    if (doc?.hospitalId) {
+      appointment.hospitalId = doc.hospitalId;
+    } else if (pat?.hospitalId) {
+      appointment.hospitalId = pat.hospitalId;
+    }
+    if (!appointment.opdRoomId && doc?.opdRoomId) {
+      appointment.opdRoomId = doc.opdRoomId;
+      appointment.opdRoomName = doc.opdRoomName || appointment.opdRoomName;
+    }
+
     const list = getStored<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
     const idx = list.findIndex((a) => a.id === appointment.id);
     if (idx >= 0) {
@@ -3549,6 +4308,42 @@ export const MockStorage = {
     }
     setStored(STORAGE_KEYS.APPOINTMENTS, list);
     this.logActivity(idx >= 0 ? 'Rescheduled/Updated Appointment' : 'Booked New Appointment', `${appointment.patientName} with ${appointment.doctorName}`, 'clinical', 'Staff', 'Hospital User', appointment.hospitalId);
+
+    if (idx < 0) {
+      this.addNotification({
+        title: 'New Appointment Booked',
+        message: `${appointment.patientName} booked with ${appointment.doctorName} on ${appointment.appointmentDate} at ${appointment.appointmentTime}.`,
+        type: 'info',
+        roleTarget: 'doctor',
+        targetRoles: ['doctor', 'receptionist'],
+        hospitalId: appointment.hospitalId,
+        category: 'clinical',
+        link: '/hospital/appointments',
+      });
+    } else if (appointment.status === 'Checked In') {
+      this.addNotification({
+        id: `notif-checkin-nurse-${appointment.id}`,
+        title: `Clinical Intake Required: ${appointment.patientName}`,
+        message: `${appointment.patientName} has checked in for ${appointment.doctorName}. Please complete clinical intake & record vitals before consultation.`,
+        type: 'warning',
+        roleTarget: 'nurse',
+        targetRoles: ['nurse', 'doctor'],
+        hospitalId: appointment.hospitalId,
+        category: 'clinical',
+        link: `/hospital/appointments?tab=confirmed&patientId=${appointment.patientId}`,
+      });
+      this.addNotification({
+        id: `notif-checkin-doc-${appointment.id}`,
+        title: 'Patient Checked In for Consultation',
+        message: `${appointment.patientName} has checked in and is waiting in OPD Room / Chamber.`,
+        type: 'info',
+        roleTarget: 'doctor',
+        targetRoles: ['doctor'],
+        hospitalId: appointment.hospitalId,
+        category: 'clinical',
+        link: '/hospital/doctor/queue',
+      });
+    }
 
     try {
       const hospitalKey = appointment.hospitalId || 'HOSP-001';
@@ -3561,6 +4356,12 @@ export const MockStorage = {
         time: appointment.appointmentTime,
         type: appointment.type || 'General Checkup',
         status: appointment.status || 'Scheduled',
+        fee: appointment.fee || 150,
+        cancellation_penalty: appointment.cancellationPenalty || 0,
+        cancellation_penalty_collected: appointment.cancellationPenaltyCollected || false,
+        cancellation_collected_invoice_id: appointment.cancellationCollectedInvoiceId || null,
+        cancelled_at: appointment.cancelledAt || null,
+        cancellation_reason: appointment.cancellationReason || null,
         notes: appointment.notes || '',
         opd_room_id: appointment.opdRoomId || null,
         opd_room_name: appointment.opdRoomName || null,
@@ -3597,6 +4398,50 @@ export const MockStorage = {
       }
       setStored(STORAGE_KEYS.APPOINTMENTS, list);
       this.logActivity(`Appointment Status: ${status}`, `${item.patientName} (${item.id})`, 'clinical', 'Staff', 'Hospital User', item.hospitalId);
+
+      // OPD Chamber automatic occupancy synchronization
+      const roomId = item.opdRoomId || this.getDoctors(item.hospitalId).find((d) => d.id === item.doctorId)?.opdRoomId;
+      if (roomId) {
+        if (status === 'In Consultation') {
+          this.updateOPDRoomStatus(roomId, 'Occupied');
+        } else if (status === 'Completed' || status === 'Cancelled') {
+          const hasOtherActive = list.some(
+            (a) =>
+              a.id !== item.id &&
+              a.status === 'In Consultation' &&
+              (a.opdRoomId === roomId || this.getDoctors(a.hospitalId).find((d) => d.id === a.doctorId)?.opdRoomId === roomId)
+          );
+          if (!hasOtherActive) {
+            this.updateOPDRoomStatus(roomId, 'Available');
+          }
+        }
+      }
+
+      if (status === 'Checked In') {
+        this.addNotification({
+          id: `notif-checkin-nurse-${item.id}`,
+          title: `Clinical Intake Required: ${item.patientName}`,
+          message: `${item.patientName} has checked in for ${item.doctorName}. Please complete clinical intake & record vitals before consultation.`,
+          type: 'warning',
+          roleTarget: 'nurse',
+          targetRoles: ['nurse', 'doctor'],
+          hospitalId: item.hospitalId,
+          category: 'clinical',
+          link: `/hospital/appointments?tab=confirmed&patientId=${item.patientId}`,
+        });
+        this.addNotification({
+          id: `notif-checkin-doc-${item.id}`,
+          title: 'Patient Checked In for Consultation',
+          message: `${item.patientName} has checked in and is waiting in OPD Room / Chamber.`,
+          type: 'info',
+          roleTarget: 'doctor',
+          targetRoles: ['doctor'],
+          hospitalId: item.hospitalId,
+          category: 'clinical',
+          link: '/hospital/doctor/queue',
+        });
+      }
+
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('pulse_storage_updated'));
       }
@@ -3610,6 +4455,12 @@ export const MockStorage = {
           if (extra.opdRoomId) patchPayload.opd_room_id = extra.opdRoomId;
           if (extra.opdRoomName) patchPayload.opd_room_name = extra.opdRoomName;
           if (extra.notes) patchPayload.notes = extra.notes;
+          if (extra.cancellationPenalty !== undefined) patchPayload.cancellation_penalty = extra.cancellationPenalty;
+          if (extra.cancellationPenaltyCollected !== undefined) patchPayload.cancellation_penalty_collected = extra.cancellationPenaltyCollected;
+          if (extra.cancellationCollectedInvoiceId !== undefined) patchPayload.cancellation_collected_invoice_id = extra.cancellationCollectedInvoiceId;
+          if (extra.cancelledAt) patchPayload.cancelled_at = extra.cancelledAt;
+          if (extra.cancellationReason) patchPayload.cancellation_reason = extra.cancellationReason;
+          if (extra.fee !== undefined) patchPayload.fee = extra.fee;
         }
         fetch(`${API_BASE_URL}/appointments/${id}/`, {
           method: 'PATCH',
@@ -3620,7 +4471,58 @@ export const MockStorage = {
     }
   },
 
+  getPendingCancellationPenalties(patientId: string, hospitalId?: string): Appointment[] {
+    const list = this.getAppointments(hospitalId);
+    return list.filter(
+      (a) =>
+        a.patientId === patientId &&
+        ((Boolean(a.cancellationPenalty && a.cancellationPenalty > 0) && !a.cancellationPenaltyCollected) ||
+         (Boolean(a.reschedulingPenalty && a.reschedulingPenalty > 0) && !a.reschedulingPenaltyCollected))
+    );
+  },
+
+  markCancellationPenaltyCollected(appointmentIds: string | string[], invoiceId: string): void {
+    const ids = Array.isArray(appointmentIds) ? appointmentIds : [appointmentIds];
+    const list = getStored<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
+    let changed = false;
+    list.forEach((a) => {
+      if (ids.includes(a.id)) {
+        if (a.cancellationPenalty && a.cancellationPenalty > 0) {
+          a.cancellationPenaltyCollected = true;
+          a.cancellationCollectedInvoiceId = invoiceId;
+        }
+        if (a.reschedulingPenalty && a.reschedulingPenalty > 0) {
+          a.reschedulingPenaltyCollected = true;
+          a.reschedulingCollectedInvoiceId = invoiceId;
+        }
+        changed = true;
+        try {
+          fetch(`${API_BASE_URL}/appointments/${a.id}/`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              cancellation_penalty_collected: true,
+              cancellation_collected_invoice_id: invoiceId,
+              rescheduling_penalty_collected: true,
+              rescheduling_collected_invoice_id: invoiceId,
+            }),
+          }).catch(() => {});
+        } catch (e) {}
+      }
+    });
+    if (changed) {
+      setStored(STORAGE_KEYS.APPOINTMENTS, list);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('pulse_storage_updated'));
+      }
+    }
+  },
+
   deleteAppointment(id: string): void {
+    const deleted = getStored<string[]>(STORAGE_KEYS.DELETED_APPOINTMENTS, []);
+    if (!deleted.includes(id)) {
+      setStored(STORAGE_KEYS.DELETED_APPOINTMENTS, [...deleted, id]);
+    }
     const list = getStored<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments).filter((a) => a.id !== id);
     setStored(STORAGE_KEYS.APPOINTMENTS, list);
     ApiService.deleteAppointment(id).catch(() => {});
@@ -3726,6 +4628,17 @@ export const MockStorage = {
           presList[pIdx] = newPres;
         } else {
           presList.unshift(newPres);
+          this.addNotification({
+            id: `notif-presc-${rxId}`,
+            title: `New E-Prescription: ${consultation.patientName}`,
+            message: `Dr. ${consultation.doctorName} prescribed ${newPres.medications.length} medication(s) for ${consultation.patientName}. Ready for dispensing.`,
+            type: 'info',
+            roleTarget: 'pharmacist',
+            targetRoles: ['pharmacist'],
+            hospitalId: consultation.hospitalId,
+            category: 'clinical',
+            link: '/hospital/pharmacy',
+          });
         }
         setStored(STORAGE_KEYS.PRESCRIPTIONS, presList);
       }
@@ -3772,11 +4685,24 @@ export const MockStorage = {
           };
           flwList.unshift(newFlw);
           setStored(STORAGE_KEYS.FOLLOW_UP_REQUESTS, flwList);
+
+          // Alert Receptionist & Nurse about Doctor Follow-Up Queue
+          this.addNotification({
+            id: `notif-followup-${newFlw.id}`,
+            title: `Doctor Follow-Up Queue: ${consultation.patientName}`,
+            message: `Dr. ${consultation.doctorName} ordered a follow-up review for ${consultation.patientName} (${consultation.followUpIntervalDays || 7} days / ${consultation.followUpDate || 'Suggested'}). Please schedule an appointment slot.`,
+            type: 'info',
+            roleTarget: 'receptionist',
+            targetRoles: ['receptionist', 'nurse'],
+            hospitalId: newFlw.hospitalId,
+            category: 'clinical',
+            link: '/hospital/appointments?tab=follow-ups',
+          });
         }
       }
 
-      // Inpatient Admission Order Handling
-      if (consultation.needsAdmission) {
+      // Inpatient Admission Order Handling (Gated by admissions_beds capability)
+      if (consultation.needsAdmission && this.isCapabilityEnabled(consultation.hospitalId, 'admissions_beds')) {
         const admReqList = getStored<AdmissionRequest[]>(STORAGE_KEYS.ADMISSION_REQUESTS, initialAdmissionRequests);
         const existingAdmReq = admReqList.find(
           (r) =>
@@ -3818,6 +4744,19 @@ export const MockStorage = {
           };
           admReqList.unshift(newAdmReq);
           setStored(STORAGE_KEYS.ADMISSION_REQUESTS, admReqList);
+
+          // Alert Receptionist, Ward Nurse & Hospital Admin about Inpatient Admission Order
+          this.addNotification({
+            id: `notif-admr-${newAdmReq.id}`,
+            title: `Inpatient Admission Order: ${consultation.patientName}`,
+            message: `Dr. ${consultation.doctorName} ordered ${newAdmReq.priority} admission into ${newAdmReq.recommendedWardType} for ${consultation.patientName}. Bed allocation required.`,
+            type: 'warning',
+            roleTarget: 'receptionist',
+            targetRoles: ['receptionist', 'nurse', 'hospital_admin'],
+            hospitalId: newAdmReq.hospitalId,
+            category: 'clinical',
+            link: '/hospital/admissions',
+          });
         }
       }
 
@@ -3864,6 +4803,17 @@ export const MockStorage = {
       list[idx] = req;
     } else {
       list.unshift(req);
+      this.addNotification({
+        id: `notif-followup-${req.id}`,
+        title: `Doctor Follow-Up Queue: ${req.patientName}`,
+        message: `Dr. ${req.doctorName} scheduled a follow-up review for ${req.patientName} (${req.intervalDays || 7} days / ${req.suggestedDate || 'Suggested'}). Please schedule appointment slot.`,
+        type: 'info',
+        roleTarget: 'receptionist',
+        targetRoles: ['receptionist', 'nurse'],
+        hospitalId: req.hospitalId,
+        category: 'clinical',
+        link: '/hospital/appointments?tab=follow-ups',
+      });
     }
     setStored(STORAGE_KEYS.FOLLOW_UP_REQUESTS, list);
     ApiService.saveFollowUpRequest(req).catch(() => {});
@@ -3913,6 +4863,17 @@ export const MockStorage = {
       list[idx] = req;
     } else {
       list.unshift(req);
+      this.addNotification({
+        id: `notif-apptreq-${req.id}`,
+        title: `Online Booking Request: ${req.patientName}`,
+        message: `${req.patientName} requested an appointment with Dr. ${req.doctorName} on ${req.preferredDate} (${req.preferredTime}). Please review and confirm.`,
+        type: 'info',
+        roleTarget: 'receptionist',
+        targetRoles: ['receptionist', 'hospital_admin'],
+        hospitalId: req.hospitalId,
+        category: 'clinical',
+        link: '/hospital/appointments?tab=requests',
+      });
     }
     setStored(STORAGE_KEYS.APPOINTMENT_REQUESTS, list);
     ApiService.saveAppointmentRequest(req).catch(() => {});
@@ -3997,6 +4958,17 @@ export const MockStorage = {
       list[idx] = req;
     } else {
       list.unshift(req);
+      this.addNotification({
+        id: `notif-admr-${req.id}`,
+        title: `Inpatient Admission Order: ${req.patientName}`,
+        message: `Dr. ${req.doctorName} requested ${req.priority} inpatient admission for ${req.patientName} (${req.recommendedWardType} ward). Please assign bed.`,
+        type: req.priority === 'Emergency' ? 'warning' : 'info',
+        roleTarget: 'receptionist',
+        targetRoles: ['receptionist', 'nurse', 'hospital_admin'],
+        hospitalId: req.hospitalId,
+        category: 'clinical',
+        link: '/hospital/inpatient?tab=admission-requests',
+      });
     }
     setStored(STORAGE_KEYS.ADMISSION_REQUESTS, list);
     ApiService.saveAdmissionRequest(req).catch(() => {});
@@ -4028,7 +5000,15 @@ export const MockStorage = {
     newDate: string,
     newTime: string,
     reason?: string
-  ): { success: boolean; appointment?: Appointment; error?: string } {
+  ): {
+    success: boolean;
+    appointment?: Appointment;
+    error?: string;
+    isLateReschedule?: boolean;
+    penalty?: number;
+    cutoffHours?: number;
+    penaltyPercent?: number;
+  } {
     const list = getStored<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
     const apt = list.find((a) => a.id === appointmentId);
     if (!apt) {
@@ -4038,12 +5018,50 @@ export const MockStorage = {
     const prevDate = apt.appointmentDate;
     const prevTime = apt.appointmentTime;
 
+    const hospSettings = this.getHospitalSettings(apt.hospitalId);
+    const penaltyDeadlineHours = hospSettings.reschedulingDeadlineHours ?? 4;
+    const penaltyPercent = hospSettings.reschedulingPenaltyPercent !== undefined
+      ? hospSettings.reschedulingPenaltyPercent
+      : (hospSettings.cancellationPenaltyPercent ?? 50);
+    const aptFee = apt.fee || 0;
+
+    let isLateReschedule = false;
+    let penalty = 0;
+
+    if (penaltyDeadlineHours > 0 && prevDate) {
+      let slotMins = 540; // 09:00 AM default
+      const timeStr = (prevTime || '09:00 AM').trim();
+      const match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+      if (match) {
+        let h = parseInt(match[1], 10);
+        const m = parseInt(match[2], 10);
+        const meridiem = match[3] ? match[3].toUpperCase() : null;
+        if (meridiem === 'PM' && h < 12) h += 12;
+        if (meridiem === 'AM' && h === 12) h = 0;
+        slotMins = h * 60 + m;
+      }
+      const [year, month, day] = prevDate.split('-').map(Number);
+      const slotDate = new Date(year, month - 1, day, Math.floor(slotMins / 60), slotMins % 60);
+      const now = new Date();
+      const diffMs = slotDate.getTime() - now.getTime();
+      const hoursRemaining = diffMs / (1000 * 60 * 60);
+
+      if (hoursRemaining < penaltyDeadlineHours && penaltyPercent > 0) {
+        isLateReschedule = true;
+        penalty = Math.round((aptFee * penaltyPercent) / 100);
+      }
+    }
+
     apt.rescheduledFromDate = prevDate;
     apt.rescheduledFromTime = prevTime;
     apt.rescheduleReason = reason || 'Rescheduled per clinical / patient request';
     apt.appointmentDate = newDate;
     apt.appointmentTime = newTime;
     apt.status = 'Confirmed';
+    if (isLateReschedule && penalty > 0) {
+      apt.reschedulingPenalty = penalty;
+      apt.reschedulingPenaltyCollected = false;
+    }
 
     setStored(STORAGE_KEYS.APPOINTMENTS, list);
 
@@ -4058,7 +5076,7 @@ export const MockStorage = {
 
     this.logActivity(
       'Rescheduled Appointment',
-      `${apt.patientName} with ${apt.doctorName} moved from ${prevDate} to ${newDate} at ${newTime}`,
+      `${apt.patientName} with ${apt.doctorName} moved from ${prevDate} to ${newDate} at ${newTime}${isLateReschedule ? ` (Late Reschedule Penalty: ₹${penalty})` : ''}`,
       'clinical',
       apt.doctorName,
       'Receptionist',
@@ -4069,7 +5087,14 @@ export const MockStorage = {
       window.dispatchEvent(new Event('pulse_storage_updated'));
     }
 
-    return { success: true, appointment: apt };
+    return {
+      success: true,
+      appointment: apt,
+      isLateReschedule,
+      penalty,
+      cutoffHours: penaltyDeadlineHours,
+      penaltyPercent,
+    };
   },
 
   // Doctor Schedules & Working Hours
@@ -4286,7 +5311,9 @@ export const MockStorage = {
       maxAdvanceBookingDays: 30,
       minAdvanceBookingHours: 2,
       cancellationDeadlineHours: 4,
+      cancellationPenaltyPercent: 50,
       reschedulingDeadlineHours: 4,
+      reschedulingPenaltyPercent: 50,
       appointmentBufferMinutes: 5,
       allowSameDayBooking: true,
       updatedAt: new Date().toISOString().split('T')[0],
@@ -4305,6 +5332,20 @@ export const MockStorage = {
       list.push({ ...settings, updatedAt: new Date().toISOString().split('T')[0] });
     }
     setStored(STORAGE_KEYS.APPOINTMENT_SETTINGS, list);
+
+    // Keep HospitalSettings in sync with AppointmentSettings
+    const allHospSettings = getStored<Record<string, HospitalSettings>>(STORAGE_KEYS.HOSPITAL_SETTINGS, {});
+    const normHospId = settings.hospitalId || 'HOSP-001';
+    if (allHospSettings[normHospId]) {
+      if (settings.appointmentBufferMinutes !== undefined) allHospSettings[normHospId].appointmentBufferMinutes = settings.appointmentBufferMinutes;
+      if (settings.maxAdvanceBookingDays !== undefined) allHospSettings[normHospId].maxAdvanceBookingDays = settings.maxAdvanceBookingDays;
+      if (settings.cancellationDeadlineHours !== undefined) allHospSettings[normHospId].cancellationDeadlineHours = settings.cancellationDeadlineHours;
+      if (settings.cancellationPenaltyPercent !== undefined) allHospSettings[normHospId].cancellationPenaltyPercent = settings.cancellationPenaltyPercent;
+      if (settings.reschedulingDeadlineHours !== undefined) allHospSettings[normHospId].reschedulingDeadlineHours = settings.reschedulingDeadlineHours;
+      if (settings.reschedulingPenaltyPercent !== undefined) allHospSettings[normHospId].reschedulingPenaltyPercent = settings.reschedulingPenaltyPercent;
+      setStored(STORAGE_KEYS.HOSPITAL_SETTINGS, allHospSettings);
+      notifyStorageChange(STORAGE_KEYS.HOSPITAL_SETTINGS, allHospSettings);
+    }
     ApiService.saveAppointmentSettings({
       id: settings.id,
       hospital: settings.hospitalId,
@@ -4365,25 +5406,56 @@ export const MockStorage = {
 
     const normalizedEmail = (doctor.email || '').trim().toLowerCase();
     if (normalizedEmail) {
+      // 1. Enforce global uniqueness across all doctors in all hospitals
       const existingDoc = list.find(
         (d) => (d.email || '').trim().toLowerCase() === normalizedEmail && d.id !== doctor.id
       );
       if (existingDoc) {
         return {
           success: false,
-          message: `Duplicate Email: A medical specialist with email "${doctor.email.trim()}" is already registered in the system.`,
+          message: `Duplicate Email: A medical specialist with email "${doctor.email.trim()}" is already registered in the system. Doctors' emails must be globally unique across all hospitals.`,
+        };
+      }
+
+      // 2. Enforce global uniqueness against staff
+      const staffList = this.getStaff();
+      const existingStaff = staffList.find(
+        (s) => (s.email || '').trim().toLowerCase() === normalizedEmail
+      );
+      if (existingStaff) {
+        return {
+          success: false,
+          message: `Duplicate Email: A staff member with email "${doctor.email.trim()}" is already registered in the system (${existingStaff.role || 'Staff'}). Doctors' emails must be globally unique.`,
+        };
+      }
+
+      // 3. Enforce global uniqueness against platform HQ staff, hospital admins, and other tenant users
+      const users = this.getUsers();
+      const duplicateUser = users.find(
+        (u) =>
+          (u.email || '').trim().toLowerCase() === normalizedEmail &&
+          (u.hospitalId !== doctor.hospitalId ||
+            u.role === 'super_admin' ||
+            u.role === 'super_admin_manager' ||
+            u.role === 'sales_executive' ||
+            u.role === 'hospital_admin')
+      );
+      if (duplicateUser) {
+        const scope = duplicateUser.hospitalName || duplicateUser.hospitalId || 'Platform Global HQ';
+        return {
+          success: false,
+          message: `Duplicate Email: An account with email "${doctor.email.trim()}" is already registered in ${scope} (${duplicateUser.role.replace(/_/g, ' ')}). Doctors' emails must be globally unique.`,
         };
       }
     }
 
     if (idx < 0) {
-      const hospital = this.getHospitals().find((h) => h.id === doctor.hospitalId);
-      const plan = this.getPlanByTier(hospital?.planTier || 'trial');
-      const hospitalDocs = list.filter((d) => d.hospitalId === doctor.hospitalId);
+      const plan = this.getHospitalActivePlan(doctor.hospitalId);
+      const hospitalDocs = list.filter((d) => this.matchHospitalId(d.hospitalId, doctor.hospitalId));
       if (hospitalDocs.length >= plan.maxDoctors) {
         return {
           success: false,
-          message: `Subscription Limit Reached: Your hospital is on the "${plan.name}" plan which allows a maximum of ${plan.maxDoctors} doctors. Upgrade your plan to add more doctors.`,
+          message: `Subscription Limit Reached: Your hospital is on the "${plan.name}" plan which allows a maximum of ${plan.maxDoctors} doctors (${hospitalDocs.length}/${plan.maxDoctors} in use). Upgrade your plan to add more doctors.`,
         };
       }
     }
@@ -4405,6 +5477,20 @@ export const MockStorage = {
     }
 
     this.logActivity(idx >= 0 ? 'Updated Doctor Profile' : 'Onboarded Medical Specialist', doctor.name, 'clinical', 'Admin', 'Hospital Admin', doctor.hospitalId);
+
+    if (idx < 0) {
+      this.addNotification({
+        id: `notif-doc-onboard-${doctor.id}-${Date.now()}`,
+        title: 'New Specialist Doctor Onboarded',
+        message: `Dr. ${doctor.name} (${doctor.specialization || 'Medical Specialist'}) added to ${doctor.departmentName || 'Clinical Services'}.`,
+        type: 'info',
+        roleTarget: 'hospital_admin',
+        targetRoles: ['hospital_admin'],
+        hospitalId: doctor.hospitalId,
+        category: 'staff',
+        link: '/hospital/doctors',
+      });
+    }
 
     // Asynchronously synchronize doctor record with Django backend
     try {
@@ -4553,19 +5639,51 @@ export const MockStorage = {
 
     const normalizedEmail = (staff.email || '').trim().toLowerCase();
     if (normalizedEmail) {
+      // 1. Enforce global uniqueness: staff emails cannot duplicate any staff in any hospital
       const existingStaff = list.find(
         (s) => (s.email || '').trim().toLowerCase() === normalizedEmail && s.id !== staff.id
       );
       if (existingStaff) {
         return {
           success: false,
-          message: `Duplicate Email: A staff member with email "${staff.email.trim()}" is already registered in the system.`,
+          message: `Duplicate Email: A staff member with email "${staff.email.trim()}" is already registered in the system (${existingStaff.role || 'Staff'}). Staff emails must be globally unique across all hospitals.`,
+        };
+      }
+
+      // 2. Enforce global uniqueness against doctors
+      const doctors = this.getDoctors();
+      const existingDoc = doctors.find(
+        (d) => (d.email || '').trim().toLowerCase() === normalizedEmail
+      );
+      if (existingDoc) {
+        return {
+          success: false,
+          message: `Duplicate Email: A medical specialist with email "${staff.email.trim()}" is already registered in the system (${existingDoc.specialization || 'Doctor'}). Staff emails must be globally unique.`,
+        };
+      }
+
+      // 3. Enforce global uniqueness against platform HQ staff, hospital admins, and other tenant users
+      const users = this.getUsers();
+      const duplicateUser = users.find(
+        (u) =>
+          (u.email || '').trim().toLowerCase() === normalizedEmail &&
+          (u.hospitalId !== staff.hospitalId ||
+            u.role === 'super_admin' ||
+            u.role === 'super_admin_manager' ||
+            u.role === 'sales_executive' ||
+            u.role === 'hospital_admin' ||
+            u.role === 'doctor')
+      );
+      if (duplicateUser) {
+        const scope = duplicateUser.hospitalName || duplicateUser.hospitalId || 'Platform Global HQ';
+        return {
+          success: false,
+          message: `Duplicate Email: An account with email "${staff.email.trim()}" is already registered in ${scope} (${duplicateUser.role.replace(/_/g, ' ')}). Staff emails must be globally unique.`,
         };
       }
     }
 
-    const hospital = this.getHospitals().find((h) => h.id === staff.hospitalId);
-    const tier = hospital?.planTier || 'trial';
+    const tier = this.getHospitalActiveTier(staff.hospitalId);
 
     if (staff.role === 'Pharmacist' && !isCapabilityAllowedForTier(tier, 'pharmacy_stock')) {
       return {
@@ -4587,12 +5705,12 @@ export const MockStorage = {
     }
 
     if (idx < 0) {
-      const plan = this.getPlanByTier(tier);
-      const hospitalStaff = list.filter((s) => s.hospitalId === staff.hospitalId);
+      const plan = this.getHospitalActivePlan(staff.hospitalId);
+      const hospitalStaff = list.filter((s) => this.matchHospitalId(s.hospitalId, staff.hospitalId));
       if (hospitalStaff.length >= plan.maxStaff) {
         return {
           success: false,
-          message: `Subscription Limit Reached: Your hospital is on the "${plan.name}" plan which allows a maximum of ${plan.maxStaff} staff members. Upgrade your plan to add more staff.`,
+          message: `Subscription Limit Reached: Your hospital is on the "${plan.name}" plan which allows a maximum of ${plan.maxStaff} staff members (${hospitalStaff.length}/${plan.maxStaff} in use). Upgrade your plan to add more staff.`,
         };
       }
     }
@@ -4603,6 +5721,20 @@ export const MockStorage = {
       list.unshift(staff);
     }
     setStored(STORAGE_KEYS.STAFF, list);
+
+    if (idx < 0) {
+      this.addNotification({
+        id: `notif-staff-onboard-${staff.id}-${Date.now()}`,
+        title: 'New Staff Member Registered',
+        message: `${staff.name} onboarded as ${staff.role?.toUpperCase()} in ${staff.department}.`,
+        type: 'info',
+        roleTarget: 'hospital_admin',
+        targetRoles: ['hospital_admin'],
+        hospitalId: staff.hospitalId,
+        category: 'staff',
+        link: '/hospital/staff',
+      });
+    }
 
     try {
       const hospitalKey = staff.hospitalId || 'HOSP-001';
@@ -4632,6 +5764,13 @@ export const MockStorage = {
   deleteStaff(id: string): void {
     const list = getStored<Staff[]>(STORAGE_KEYS.STAFF, initialStaff);
     const targetStaff = list.find((s) => s.id === id);
+
+    // Track in DELETED_STAFF so backend sync won't resurrect it
+    const deletedStaffIds = getStored<string[]>(STORAGE_KEYS.DELETED_STAFF, []);
+    if (!deletedStaffIds.includes(id)) {
+      setStored(STORAGE_KEYS.DELETED_STAFF, [...deletedStaffIds, id]);
+    }
+
     const remainingStaff = list.filter((s) => s.id !== id);
     setStored(STORAGE_KEYS.STAFF, remainingStaff);
 
@@ -4647,9 +5786,13 @@ export const MockStorage = {
       setStored(STORAGE_KEYS.USERS, users);
     }
 
-    try {
-      fetch(`${API_BASE_URL}/staff/${id}/`, { method: 'DELETE' }).catch(() => {});
-    } catch (e) {}
+    notifyStorageChange(STORAGE_KEYS.STAFF, remainingStaff);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+      try {
+        fetch(`${API_BASE_URL}/staff/${id}/`, { method: 'DELETE' }).catch(() => {});
+      } catch (e) {}
+    }
   },
 
   // Departments
@@ -4895,7 +6038,10 @@ export const MockStorage = {
     }
 
     if (changed) {
-      setStored(STORAGE_KEYS.BEDS, list);
+      inMemoryStore.set(STORAGE_KEYS.BEDS, list);
+      try {
+        localStorage.setItem(STORAGE_KEYS.BEDS, JSON.stringify(list));
+      } catch (e) {}
     }
 
     if (hospitalId) {
@@ -4913,13 +6059,12 @@ export const MockStorage = {
 
     // If adding a new bed, enforce subscription capacity limit
     if (idx < 0) {
-      const hospital = this.getHospitals().find((h) => h.id === bed.hospitalId);
-      const plan = this.getPlanByTier(hospital?.planTier || 'trial');
-      const hospitalBeds = list.filter((b) => b.hospitalId === bed.hospitalId);
+      const plan = this.getHospitalActivePlan(bed.hospitalId);
+      const hospitalBeds = list.filter((b) => this.matchHospitalId(b.hospitalId, bed.hospitalId));
       if (hospitalBeds.length >= plan.maxBeds) {
         return {
           success: false,
-          message: `Bed Limit Reached — Your current plan allows a maximum of ${plan.maxBeds} beds. Upgrade your subscription to add more beds.`,
+          message: `Bed Limit Reached — Your current plan allows a maximum of ${plan.maxBeds} beds (${hospitalBeds.length}/${plan.maxBeds} in use). Upgrade your subscription to add more beds.`,
         };
       }
     }
@@ -4961,10 +6106,9 @@ export const MockStorage = {
       return { success: true, createdCount: 0 };
     }
     const hospId = bedsToCreate[0].hospitalId;
-    const hospital = this.getHospitals().find((h) => h.id === hospId);
-    const plan = this.getPlanByTier(hospital?.planTier || 'trial');
+    const plan = this.getHospitalActivePlan(hospId);
     const currentList = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
-    const hospitalBeds = currentList.filter((b) => b.hospitalId === hospId);
+    const hospitalBeds = currentList.filter((b) => this.matchHospitalId(b.hospitalId, hospId));
 
     const availableSlots = Math.max(0, plan.maxBeds - hospitalBeds.length);
     if (availableSlots <= 0) {
@@ -5071,6 +6215,31 @@ export const MockStorage = {
     }
     setStored(STORAGE_KEYS.ADMISSIONS, list);
 
+    if (idx < 0) {
+      this.addNotification({
+        title: 'New Inpatient Admission',
+        message: `${admission.patientName} admitted to Ward ${admission.wardType || 'General'} (Bed ${admission.bedNumber || 'Assigned'}).`,
+        type: 'warning',
+        roleTarget: 'nurse',
+        targetRoles: ['nurse', 'hospital_admin', 'doctor'],
+        hospitalId: admission.hospitalId,
+        category: 'clinical',
+        link: '/hospital/admissions',
+      });
+    } else if (admission.status === 'Discharged') {
+      this.addNotification({
+        id: `notif-discharge-${admission.id}-${Date.now()}`,
+        title: 'Inpatient Discharged',
+        message: `${admission.patientName} discharged from Ward ${admission.wardType || 'General'} (Bed ${admission.bedNumber}). Settlement complete.`,
+        type: 'info',
+        roleTarget: 'nurse',
+        targetRoles: ['nurse', 'hospital_admin', 'accountant'],
+        hospitalId: admission.hospitalId,
+        category: 'clinical',
+        link: '/hospital/admissions',
+      });
+    }
+
     const allBeds = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
     const normBedNumber = (admission.bedNumber || '').trim().toLowerCase();
     const bed =
@@ -5117,6 +6286,7 @@ export const MockStorage = {
           admission_date: admission.admissionDate,
           discharge_date: admission.dischargeDate || null,
           diagnosis: admission.reason || '',
+          initial_deposit: admission.initialDeposit || 0,
         }),
       }).catch(() => {});
     } catch (e) {}
@@ -5270,6 +6440,18 @@ export const MockStorage = {
       adm.hospitalId
     );
 
+    // Call backend API to persist status and discharge date immediately!
+    try {
+      fetch(`${API_BASE_URL}/admissions/${admissionId}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'Discharge Initiated',
+          discharge_date: effectiveDischargeDate,
+        }),
+      }).catch(() => {});
+    } catch (e) {}
+
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('pulse_storage_updated'));
     }
@@ -5347,7 +6529,8 @@ export const MockStorage = {
       };
     }
 
-    if (adm.billingStatus === 'Pending') {
+    const hospSettings = this.getHospitalSettings(adm.hospitalId || '');
+    if (hospSettings.requireFullSettlementOnDischarge !== false && adm.billingStatus === 'Pending') {
       return {
         success: false,
         error: 'Inpatient billing settlement is pending. Final bill must be settled at Cashier Desk before bed release.',
@@ -5359,6 +6542,18 @@ export const MockStorage = {
     adm.finalDischargedBy = dischargedBy || 'Hospital Staff';
     adm.finalDischargedRole = dischargedRole || 'Receptionist';
     setStored(STORAGE_KEYS.ADMISSIONS, list);
+
+    // Call backend API to persist status and discharge date
+    try {
+      fetch(`${API_BASE_URL}/admissions/${admissionId}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'Discharged',
+          discharge_date: adm.dischargeDate,
+        }),
+      }).catch(() => {});
+    } catch (e) {}
 
     // Release the bed
     const allBeds = getStored<Bed[]>(STORAGE_KEYS.BEDS, initialBeds);
@@ -5457,6 +6652,31 @@ export const MockStorage = {
     setStored(STORAGE_KEYS.INVOICES, list);
     this.logActivity(idx >= 0 ? 'Updated Invoice Details' : 'Created Patient Invoice', `${invoice.id} for ${invoice.patientName} ($${invoice.totalAmount})`, 'billing', 'Marcus Sterling', 'Accountant', invoice.hospitalId);
 
+    if (idx < 0) {
+      this.addNotification({
+        title: 'New Patient Invoice Created',
+        message: `Invoice #${invoice.id} (₹${invoice.totalAmount}) generated for ${invoice.patientName}.`,
+        type: 'info',
+        roleTarget: 'accountant',
+        targetRoles: ['accountant', 'patient'],
+        hospitalId: invoice.hospitalId,
+        category: 'billing',
+        link: '/hospital/billing',
+      });
+    } else if (invoice.status === 'Paid') {
+      this.addNotification({
+        id: `notif-inv-paid-${invoice.id}-${Date.now()}`,
+        title: 'Invoice Payment Received',
+        message: `Payment of ₹${invoice.totalAmount.toLocaleString('en-IN')} collected for Invoice #${invoice.id} (${invoice.patientName}).`,
+        type: 'success',
+        roleTarget: 'accountant',
+        targetRoles: ['accountant', 'hospital_admin', 'patient'],
+        hospitalId: invoice.hospitalId,
+        category: 'billing',
+        link: '/hospital/billing',
+      });
+    }
+
     try {
       const hospitalKey = invoice.hospitalId || 'HOSP-001';
       fetch(`${API_BASE_URL}/invoices/`, {
@@ -5527,46 +6747,7 @@ export const MockStorage = {
 
   // Medicines
   getMedicines(hospitalId?: string): Medicine[] {
-    let list = getStored<Medicine[]>(STORAGE_KEYS.MEDICINES, initialMedicines);
-
-    // Purge any legacy mock medicines that were previously auto-seeded
-    const MOCK_SKUS = new Set([
-      'MED-AB-625',
-      'MED-AN-650',
-      'MED-AB-1000',
-      'MED-GI-040',
-      'MED-DM-102',
-      'MED-CV-020',
-      'MED-RS-100',
-      'MED-BIO-100',
-      'MED-EM-004',
-      'MED-IV-500',
-      'MED-AB-500',
-      'MED-CV-040',
-    ]);
-    const mockBatches = [
-      'BAT-2026-AUG01',
-      'BAT-2026-DOL12',
-      'BAT-2026-CEF88',
-      'BAT-2026-PAN54',
-      'BAT-2026-GLY33',
-      'BAT-2026-LIP77',
-      'BAT-2026-AST90',
-      'BAT-2026-LAN09',
-      'BAT-2026-EMS22',
-      'BAT-2026-NS500',
-      'BAT-2026-AZI66',
-      'BAT-2026-TEL19',
-    ];
-    const cleaned = list.filter((m) => {
-      if (m.sku && MOCK_SKUS.has(m.sku)) return false;
-      if (m.batchNumber && mockBatches.includes(m.batchNumber)) return false;
-      return true;
-    });
-    if (cleaned.length !== list.length) {
-      setStored(STORAGE_KEYS.MEDICINES, cleaned);
-      list = cleaned;
-    }
+    const list = getStored<Medicine[]>(STORAGE_KEYS.MEDICINES, []);
 
     if (hospitalId) {
       return list.filter((m) => this.matchHospitalId(m.hospitalId, hospitalId));
@@ -5655,7 +6836,7 @@ export const MockStorage = {
 
     this.logActivity(
       'Dispensed Doctor Prescription',
-      `Prescription #${prescriptionId} for ${rx.patientName} dispensed (₹${totalAmount})`,
+      `Prescription #${prescriptionId} for ${rx.patientName} dispensed (â‚¹${totalAmount})`,
       'clinical',
       pharmacistName,
       'Pharmacist',
@@ -5679,6 +6860,19 @@ export const MockStorage = {
     }
 
     const allMeds = this.getMedicines(hospitalId);
+
+    // Strict Schedule-H / Prescription Check:
+    // Block any drug marked as requiring a doctor's prescription from OTC walk-in checkout
+    const rxRestricted = items
+      .map((it) => allMeds.find((m) => m.id === it.medicineId || m.name.toLowerCase() === it.medicineName.toLowerCase()))
+      .filter((m) => m && m.requiresPrescription);
+
+    if (rxRestricted.length > 0) {
+      return {
+        success: false,
+        error: `Schedule-H Restriction: "${rxRestricted[0]?.name}" requires an authorized doctor prescription and cannot be purchased over-the-counter.`,
+      };
+    }
     items.forEach((it) => {
       const med = allMeds.find((m) => m.id === it.medicineId || m.name.toLowerCase() === it.medicineName.toLowerCase());
       if (med) {
@@ -5736,7 +6930,7 @@ export const MockStorage = {
 
     this.logActivity(
       'Completed Walk-in Pharmacy Sale',
-      `OTC sale ${invoiceId} for ${invoice.patientName} (₹${totalAmount})`,
+      `OTC sale ${invoiceId} for ${invoice.patientName} (â‚¹${totalAmount})`,
       'clinical',
       pharmacistName,
       'Pharmacist',
@@ -5823,6 +7017,46 @@ export const MockStorage = {
       list.unshift(medicine);
     }
     setStored(STORAGE_KEYS.MEDICINES, list);
+    notifyStorageChange(STORAGE_KEYS.MEDICINES, list);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.MEDICINES, data: list } }));
+    }
+
+    // Immediately trigger real-time stock alert for Pharmacist & Hospital Admin
+    const stock = Number(medicine.stockQuantity !== undefined ? medicine.stockQuantity : (medicine.stock || 0));
+    const threshold = Number(medicine.minThreshold !== undefined ? medicine.minThreshold : 10);
+    const hospId = medicine.hospitalId || 'hosp-1';
+
+    if (medicine.status !== 'Quarantined') {
+      if (stock === 0) {
+        this.addNotification({
+          id: `notif-pharm-out-of-stock-${medicine.id}`,
+          hospitalId: hospId,
+          title: `Critical Stockout Alert: ${medicine.name}`,
+          message: `${medicine.name} (Batch: ${medicine.batchNumber || 'N/A'}) is completely out of stock (0 units). Reorder immediately to avoid dispensing disruption.`,
+          type: 'error',
+          roleTarget: 'pharmacist',
+          targetRoles: ['pharmacist', 'hospital_admin'],
+          category: 'clinical',
+          link: '/hospital/pharmacy',
+        });
+      } else if (stock <= threshold) {
+        this.addNotification({
+          id: `notif-pharm-low-stock-${medicine.id}`,
+          hospitalId: hospId,
+          title: `Low Stock Warning: ${medicine.name}`,
+          message: `${medicine.name} has only ${stock} units remaining (below safety threshold of ${threshold}). Restock recommended.`,
+          type: 'warning',
+          roleTarget: 'pharmacist',
+          targetRoles: ['pharmacist', 'hospital_admin'],
+          category: 'clinical',
+          link: '/hospital/pharmacy',
+        });
+      } else {
+        this.markNotificationAsRead(`notif-pharm-low-stock-${medicine.id}`);
+        this.markNotificationAsRead(`notif-pharm-out-of-stock-${medicine.id}`);
+      }
+    }
 
     try {
       const hospitalKey = medicine.hospitalId || 'HOSP-001';
@@ -5833,10 +7067,17 @@ export const MockStorage = {
           id: medicine.id,
           hospital: hospitalKey,
           medicine_name: medicine.name,
+          generic_name: medicine.genericName || medicine.name,
+          sku: medicine.sku,
+          batch_number: medicine.batchNumber,
           category: medicine.category || 'General',
           stock_quantity: Number(medicine.stockQuantity !== undefined ? medicine.stockQuantity : (medicine.stock || 0)),
+          min_threshold: Number(medicine.minThreshold !== undefined ? medicine.minThreshold : 10),
           unit_price: Number(medicine.unitPrice !== undefined ? medicine.unitPrice : (medicine.price || 0)),
           expiry_date: medicine.expiryDate || new Date().toISOString().split('T')[0],
+          manufacturer: medicine.manufacturer || '',
+          location_rack: medicine.locationRack || '',
+          requires_prescription: Boolean(medicine.requiresPrescription),
           status: medicine.status || 'In Stock',
         }),
       }).catch(() => {});
@@ -5846,6 +7087,15 @@ export const MockStorage = {
   deleteMedicine(id: string): void {
     const list = getStored<Medicine[]>(STORAGE_KEYS.MEDICINES, initialMedicines).filter((m) => m.id !== id);
     setStored(STORAGE_KEYS.MEDICINES, list);
+    notifyStorageChange(STORAGE_KEYS.MEDICINES, list);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.MEDICINES, data: list } }));
+    }
+
+    this.deleteNotification(`notif-pharm-low-stock-${id}`);
+    this.deleteNotification(`notif-pharm-out-of-stock-${id}`);
+    this.deleteNotification(`notif-pharm-expired-${id}`);
+    this.deleteNotification(`notif-pharm-near-expiry-${id}`);
 
     try {
       fetch(`${API_BASE_URL}/medicines/${id}/`, { method: 'DELETE' }).catch(() => {});
@@ -5955,6 +7205,31 @@ export const MockStorage = {
     }
     setStored(STORAGE_KEYS.LAB_ORDERS, list);
     this.logActivity(idx >= 0 ? 'Updated Lab Diagnostic Report' : 'Ordered Lab Diagnostic', `${order.testName} for ${order.patientName}`, 'clinical', 'Liam Zhang', 'Lab Technician', order.hospitalId);
+
+    if (idx < 0) {
+      this.addNotification({
+        title: 'Diagnostic Lab Order Placed',
+        message: `${order.testName} ordered for ${order.patientName} by ${order.doctorName || 'Attending Physician'}.`,
+        type: 'info',
+        roleTarget: 'lab_technician',
+        targetRoles: ['lab_technician'],
+        hospitalId: order.hospitalId,
+        category: 'clinical',
+        link: '/hospital/laboratory',
+      });
+    } else if (order.status === 'Completed') {
+      this.addNotification({
+        id: `notif-lab-done-${order.id}-${Date.now()}`,
+        title: 'Diagnostic Lab Report Ready',
+        message: `Results for ${order.testName} (${order.patientName}) have been completed and are ready for review.`,
+        type: 'success',
+        roleTarget: 'doctor',
+        targetRoles: ['doctor', 'patient'],
+        hospitalId: order.hospitalId,
+        category: 'clinical',
+        link: '/hospital/laboratory',
+      });
+    }
 
     try {
       const hospitalKey = order.hospitalId || 'HOSP-001';
@@ -6096,22 +7371,77 @@ export const MockStorage = {
     doctorId: string,
     doctorName: string,
     clinicalImpression: string,
-    instructions: string
+    instructions: string,
+    skipCareTrail: boolean = false,
+    skipReason?: string
   ): LabOrder | null {
     const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
     const order = list.find((o) => o.id === orderId);
     if (!order) return null;
 
-    order.status = 'Doctor Reviewed';
     order.reviewedByDoctorId = doctorId;
     order.reviewedByDoctorName = doctorName;
     order.doctorReviewDate = new Date().toISOString().replace('T', ' ').substring(0, 16);
     order.doctorClinicalImpression = clinicalImpression;
-    order.doctorInstructions = instructions;
-    order.nurseActionStatus = 'Pending';
+    order.doctorInstructions = instructions || (skipCareTrail ? 'Care trail completed directly by physician (bedside nursing directives bypassed).' : 'Continue standard clinical protocol.');
+
+    if (skipCareTrail) {
+      order.status = 'Action Completed';
+      order.nurseActionStatus = 'Completed';
+      order.careTrailSkipped = true;
+      order.careTrailCompletedAtReview = true;
+      order.careTrailSkippedReason = skipReason || 'Physician concluded clinical care trail directly without requiring bedside nursing directives.';
+      order.executedByNurseName = `Completed by Dr. ${doctorName}`;
+      order.nurseExecutionDate = order.doctorReviewDate;
+      order.nurseExecutionNotes = `Direct physician sign-off: ${order.doctorInstructions}`;
+      this.logActivity('Care Trail Completed by Doctor', `Dr. ${doctorName} reviewed ${order.testName} for ${order.patientName} & completed care trail directly (nursing directives bypassed)`, 'clinical', doctorName, 'Doctor', order.hospitalId);
+    } else {
+      order.status = 'Doctor Reviewed';
+      order.nurseActionStatus = 'Pending';
+      order.careTrailSkipped = false;
+      this.logActivity('Lab Report Reviewed by Doctor', `Dr. ${doctorName} reviewed ${order.testName} for ${order.patientName} & issued clinical directives`, 'clinical', doctorName, 'Doctor', order.hospitalId);
+    }
 
     setStored(STORAGE_KEYS.LAB_ORDERS, list);
-    this.logActivity('Lab Report Reviewed by Doctor', `Dr. ${doctorName} reviewed ${order.testName} for ${order.patientName} & issued clinical directives`, 'clinical', doctorName, 'Doctor', order.hospitalId);
+    return order;
+  },
+
+  skipCareTrailForOrder(orderId: string, physicianName: string, reason?: string): LabOrder | null {
+    const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
+    const order = list.find((o) => o.id === orderId);
+    if (!order) return null;
+
+    order.status = 'Action Completed';
+    order.nurseActionStatus = 'Completed';
+    order.careTrailSkipped = true;
+    order.careTrailSkippedReason = reason || 'Care trail concluded by doctor/clinical lead.';
+    order.executedByNurseName = `Closed by ${physicianName}`;
+    order.nurseExecutionDate = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    order.nurseExecutionNotes = `Care trail completed directly: ${reason || 'No bedside nursing intervention needed'}`;
+
+    setStored(STORAGE_KEYS.LAB_ORDERS, list);
+    this.logActivity('Care Trail Skipped & Completed', `${physicianName} concluded care trail for ${order.patientName} (${order.testName})`, 'clinical', physicianName, 'Doctor', order.hospitalId);
+    return order;
+  },
+
+  acknowledgeCriticalAlert(
+    orderId: string,
+    acknowledgedBy: string,
+    communicationNote?: string,
+    doctorNotified?: string
+  ): LabOrder | null {
+    const list = getStored<LabOrder[]>(STORAGE_KEYS.LAB_ORDERS, initialLabOrders);
+    const order = list.find((o) => o.id === orderId);
+    if (!order) return null;
+
+    order.criticalAlertAcknowledged = true;
+    order.criticalAlertAcknowledgedBy = acknowledgedBy;
+    order.criticalAlertAcknowledgedAt = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    order.criticalAlertCommunicationNote = communicationNote || 'Telephonic notification completed to ordering physician.';
+    order.criticalAlertDoctorNotified = doctorNotified || order.doctorName || 'Ordering Physician';
+
+    setStored(STORAGE_KEYS.LAB_ORDERS, list);
+    this.logActivity('Critical Panic Alert Acknowledged', `Critical panic alert for ${order.patientName} (${order.testName}) acknowledged by ${acknowledgedBy}. Doctor ${order.criticalAlertDoctorNotified} telephonically notified.`, 'clinical', acknowledgedBy, 'Lab Staff', order.hospitalId);
     return order;
   },
 
@@ -6377,7 +7707,12 @@ export const MockStorage = {
     return getStored(STORAGE_KEYS.PLATFORM_SETTINGS, initialPlatformSettings);
   },
 
-  savePlatformSettings(settings: PlatformSettings): void {
+  savePlatformSettings(settings: PlatformSettings, actorRole?: string): void {
+    const authUser = this.getAuthUser();
+    const effectiveRole = actorRole || authUser?.role;
+    if (effectiveRole === 'super_admin_manager') {
+      throw new Error('Permission Denied: Super Admin Manager is restricted from changing platform settings.');
+    }
     setStored(STORAGE_KEYS.PLATFORM_SETTINGS, settings);
     ApiService.savePlatformSettings(settings).catch(() => {});
     if (settings.allowTrialDays) {
@@ -6396,11 +7731,26 @@ export const MockStorage = {
   getHospitalSettings(hospitalId: string): HospitalSettings {
     const all = getStored<Record<string, HospitalSettings>>(STORAGE_KEYS.HOSPITAL_SETTINGS, {});
     const normHospId = hospitalId || 'HOSP-001';
+    const apptSetting = this.getAppointmentSettings(normHospId);
+
     if (all && all[normHospId]) {
       const stored = all[normHospId];
       return {
         ...initialHospitalSettings,
         ...stored,
+        appointmentBufferMinutes: stored.appointmentBufferMinutes ?? apptSetting?.appointmentBufferMinutes ?? 5,
+        followUpValidityDays: stored.followUpValidityDays ?? 7,
+        pharmacyLowStockThreshold: stored.pharmacyLowStockThreshold ?? 25,
+        maxDiscountPercent: stored.maxDiscountPercent ?? 10,
+        mandatoryVitalsTriage: stored.mandatoryVitalsTriage !== undefined ? stored.mandatoryVitalsTriage : true,
+        maxAdvanceBookingDays: stored.maxAdvanceBookingDays ?? apptSetting?.maxAdvanceBookingDays ?? 30,
+        allowSameDayBooking: stored.allowSameDayBooking !== undefined ? stored.allowSameDayBooking : (apptSetting?.allowSameDayBooking ?? true),
+        minAdvanceBookingHours: stored.minAdvanceBookingHours ?? apptSetting?.minAdvanceBookingHours ?? 0,
+        cancellationDeadlineHours: stored.cancellationDeadlineHours ?? apptSetting?.cancellationDeadlineHours ?? 4,
+        cancellationPenaltyPercent: stored.cancellationPenaltyPercent ?? 50,
+        reschedulingDeadlineHours: stored.reschedulingDeadlineHours ?? apptSetting?.reschedulingDeadlineHours ?? 4,
+        reschedulingPenaltyPercent: stored.reschedulingPenaltyPercent ?? 50,
+        requireFullSettlementOnDischarge: stored.requireFullSettlementOnDischarge !== undefined ? stored.requireFullSettlementOnDischarge : true,
         enableGSTBilling: stored.enableGSTBilling !== undefined ? stored.enableGSTBilling : true,
         defaultGSTRate: stored.defaultGSTRate !== undefined ? stored.defaultGSTRate : 5,
         pharmacyGSTRate: stored.pharmacyGSTRate !== undefined ? stored.pharmacyGSTRate : 5,
@@ -6420,6 +7770,19 @@ export const MockStorage = {
       receptionPhone: hosp?.phone || '+1 (555) 019-2831',
       emergencyHelpline: '+1 (555) 911-0000',
       taxRegistrationNumber: `EIN-84-${normHospId.replace(/[^0-9]/g, '').padStart(7, '9021948')}`,
+      appointmentBufferMinutes: apptSetting?.appointmentBufferMinutes ?? 5,
+      followUpValidityDays: 7,
+      pharmacyLowStockThreshold: 25,
+      maxDiscountPercent: 10,
+      mandatoryVitalsTriage: true,
+      maxAdvanceBookingDays: apptSetting?.maxAdvanceBookingDays ?? 30,
+      allowSameDayBooking: apptSetting?.allowSameDayBooking ?? true,
+      minAdvanceBookingHours: apptSetting?.minAdvanceBookingHours ?? 0,
+      cancellationDeadlineHours: apptSetting?.cancellationDeadlineHours ?? 4,
+      cancellationPenaltyPercent: 50,
+      reschedulingDeadlineHours: apptSetting?.reschedulingDeadlineHours ?? 4,
+      reschedulingPenaltyPercent: 50,
+      requireFullSettlementOnDischarge: true,
     };
   },
 
@@ -6428,6 +7791,49 @@ export const MockStorage = {
     const normHospId = settings.hospitalId || 'HOSP-001';
     all[normHospId] = settings;
     setStored(STORAGE_KEYS.HOSPITAL_SETTINGS, all);
+
+    // 1. Synchronize Hospital identity, phone, email, and address in STORAGE_KEYS.HOSPITALS
+    const hospitals = this.getHospitals();
+    const hIdx = hospitals.findIndex((h) => this.matchHospitalId(h.id, normHospId));
+    if (hIdx >= 0) {
+      hospitals[hIdx] = {
+        ...hospitals[hIdx],
+        name: settings.hospitalName || hospitals[hIdx].name,
+        phone: settings.emergencyHelpline || settings.receptionPhone || hospitals[hIdx].phone,
+        email: settings.email || hospitals[hIdx].email,
+        address: settings.address || hospitals[hIdx].address,
+      };
+      setStored(STORAGE_KEYS.HOSPITALS, hospitals);
+      notifyStorageChange(STORAGE_KEYS.HOSPITALS, hospitals);
+    }
+
+    // 2. Synchronize Hospital Website in STORAGE_KEYS.WEBSITES
+    const websites = this.getWebsites();
+    const wIdx = websites.findIndex((w) => this.matchHospitalId(w.hospitalId, normHospId));
+    if (wIdx >= 0) {
+      websites[wIdx] = {
+        ...websites[wIdx],
+        hospitalName: settings.hospitalName || websites[wIdx].hospitalName,
+      };
+      setStored(STORAGE_KEYS.WEBSITES, websites);
+      notifyStorageChange(STORAGE_KEYS.WEBSITES, websites);
+    }
+
+    // 3. Synchronize clinical appointment parameters with AppointmentSettings engine
+    const apptSettings = this.getAppointmentSettings(normHospId);
+    if (apptSettings) {
+      if (settings.maxAdvanceBookingDays !== undefined) apptSettings.maxAdvanceBookingDays = settings.maxAdvanceBookingDays;
+      if (settings.appointmentBufferMinutes !== undefined) apptSettings.appointmentBufferMinutes = settings.appointmentBufferMinutes;
+      if (settings.allowSameDayBooking !== undefined) apptSettings.allowSameDayBooking = settings.allowSameDayBooking;
+      if (settings.minAdvanceBookingHours !== undefined) apptSettings.minAdvanceBookingHours = settings.minAdvanceBookingHours;
+      if (settings.cancellationDeadlineHours !== undefined) apptSettings.cancellationDeadlineHours = settings.cancellationDeadlineHours;
+      if (settings.cancellationPenaltyPercent !== undefined) apptSettings.cancellationPenaltyPercent = settings.cancellationPenaltyPercent;
+      if (settings.reschedulingDeadlineHours !== undefined) apptSettings.reschedulingDeadlineHours = settings.reschedulingDeadlineHours;
+      if (settings.reschedulingPenaltyPercent !== undefined) apptSettings.reschedulingPenaltyPercent = settings.reschedulingPenaltyPercent;
+      this.saveAppointmentSettings(apptSettings);
+    }
+
+    notifyStorageChange(STORAGE_KEYS.HOSPITAL_SETTINGS, all);
     ApiService.saveHospitalSettings(normHospId, settings).catch(() => {});
     this.logActivity('Updated Hospital Settings Profile', settings.hospitalName, 'system', 'Admin', 'Hospital Admin', settings.hospitalId);
   },
@@ -6438,9 +7844,13 @@ export const MockStorage = {
 
   getAmbulances(hospitalId?: string): Ambulance[] {
     const HARDCODED_AMB_IDS = ['AMB-101', 'AMB-102', 'AMB-103', 'AMB-104', 'AMB-201'];
-    const list = getStored<Ambulance[]>(STORAGE_KEYS.AMBULANCES, initialAmbulances)
-      .filter((a) => !HARDCODED_AMB_IDS.includes(a.id));
-    if (hospitalId) {
+    const stored = getStored<Ambulance[]>(STORAGE_KEYS.AMBULANCES, initialAmbulances);
+    const list = stored.filter((a) => a && a.id && !HARDCODED_AMB_IDS.includes(a.id));
+    if (list.length !== stored.length) {
+      setStored(STORAGE_KEYS.AMBULANCES, list);
+    }
+    if (hospitalId !== undefined) {
+      if (!hospitalId || !hospitalId.trim()) return [];
       return list.filter((a) => this.matchHospitalId(a.hospitalId, hospitalId));
     }
     return list;
@@ -6476,9 +7886,13 @@ export const MockStorage = {
   // Ambulance Drivers
   getAmbulanceDrivers(hospitalId?: string): AmbulanceDriver[] {
     const HARDCODED_DRV_IDS = ['DRV-201', 'DRV-202', 'DRV-203'];
-    const list = getStored<AmbulanceDriver[]>(STORAGE_KEYS.AMBULANCE_DRIVERS, initialAmbulanceDrivers)
-      .filter((d) => !HARDCODED_DRV_IDS.includes(d.id));
-    if (hospitalId) {
+    const stored = getStored<AmbulanceDriver[]>(STORAGE_KEYS.AMBULANCE_DRIVERS, initialAmbulanceDrivers);
+    const list = stored.filter((d) => d && d.id && !HARDCODED_DRV_IDS.includes(d.id));
+    if (list.length !== stored.length) {
+      setStored(STORAGE_KEYS.AMBULANCE_DRIVERS, list);
+    }
+    if (hospitalId !== undefined) {
+      if (!hospitalId || !hospitalId.trim()) return [];
       return list.filter((d) => this.matchHospitalId(d.hospitalId, hospitalId));
     }
     return list;
@@ -6546,9 +7960,13 @@ export const MockStorage = {
   // Emergency Requests
   getEmergencyRequests(hospitalId?: string, patientId?: string): EmergencyRequest[] {
     const HARDCODED_EMR_IDS = ['EMR-7001', 'EMR-7002', 'EMR-7003'];
-    let list = getStored<EmergencyRequest[]>(STORAGE_KEYS.EMERGENCY_REQUESTS, initialEmergencyRequests)
-      .filter((r) => !HARDCODED_EMR_IDS.includes(r.id));
-    if (hospitalId) {
+    const stored = getStored<EmergencyRequest[]>(STORAGE_KEYS.EMERGENCY_REQUESTS, initialEmergencyRequests);
+    let list = stored.filter((r) => r && r.id && !HARDCODED_EMR_IDS.includes(r.id));
+    if (list.length !== stored.length) {
+      setStored(STORAGE_KEYS.EMERGENCY_REQUESTS, list);
+    }
+    if (hospitalId !== undefined) {
+      if (!hospitalId || !hospitalId.trim()) return [];
       list = list.filter((r) => this.matchHospitalId(r.hospitalId, hospitalId));
     }
     if (patientId) {
@@ -6570,6 +7988,19 @@ export const MockStorage = {
       list.unshift(request);
     }
     setStored(STORAGE_KEYS.EMERGENCY_REQUESTS, list);
+
+    if (idx < 0) {
+      this.addNotification({
+        title: '🚨 Emergency 911 Dispatch Alert',
+        message: `${request.emergencyType || 'Emergency'} reported for ${request.patientName} at ${request.pickupLocation}.`,
+        type: 'emergency',
+        roleTarget: 'ambulance_driver',
+        targetRoles: ['ambulance_driver', 'ambulance_manager', 'receptionist'],
+        hospitalId: request.hospitalId,
+        category: 'emergency',
+        link: '/ambulance/dashboard',
+      });
+    }
     ApiService.saveEmergencyRequest({
       id: request.id,
       hospital: request.hospitalId || 'hosp-1',
@@ -6707,9 +8138,13 @@ export const MockStorage = {
   // Ambulance Trips
   getAmbulanceTrips(hospitalId?: string, driverId?: string): AmbulanceTrip[] {
     const HARDCODED_TRIP_IDS = ['TRP-9001', 'TRP-9002'];
-    let list = getStored<AmbulanceTrip[]>(STORAGE_KEYS.AMBULANCE_TRIPS, initialAmbulanceTrips)
-      .filter((t) => !HARDCODED_TRIP_IDS.includes(t.id));
-    if (hospitalId) {
+    const stored = getStored<AmbulanceTrip[]>(STORAGE_KEYS.AMBULANCE_TRIPS, initialAmbulanceTrips);
+    let list = stored.filter((t) => t && t.id && !HARDCODED_TRIP_IDS.includes(t.id));
+    if (list.length !== stored.length) {
+      setStored(STORAGE_KEYS.AMBULANCE_TRIPS, list);
+    }
+    if (hospitalId !== undefined) {
+      if (!hospitalId || !hospitalId.trim()) return [];
       list = list.filter((t) => this.matchHospitalId(t.hospitalId, hospitalId));
     }
     if (driverId) {
@@ -6733,9 +8168,13 @@ export const MockStorage = {
   // Ambulance Maintenance
   getAmbulanceMaintenance(hospitalId?: string): AmbulanceMaintenance[] {
     const HARDCODED_MNT_IDS = ['MNT-301'];
-    const list = getStored<AmbulanceMaintenance[]>(STORAGE_KEYS.AMBULANCE_MAINTENANCE, initialAmbulanceMaintenance)
-      .filter((m) => !HARDCODED_MNT_IDS.includes(m.id));
-    if (hospitalId) {
+    const stored = getStored<AmbulanceMaintenance[]>(STORAGE_KEYS.AMBULANCE_MAINTENANCE, initialAmbulanceMaintenance);
+    const list = stored.filter((m) => m && m.id && !HARDCODED_MNT_IDS.includes(m.id));
+    if (list.length !== stored.length) {
+      setStored(STORAGE_KEYS.AMBULANCE_MAINTENANCE, list);
+    }
+    if (hospitalId !== undefined) {
+      if (!hospitalId || !hospitalId.trim()) return [];
       return list.filter((m) => this.matchHospitalId(m.hospitalId, hospitalId));
     }
     return list;
@@ -7054,6 +8493,16 @@ export const MockStorage = {
       list[idx] = req;
     } else {
       list.unshift(req);
+      this.addNotification({
+        id: `notif-branch-${req.id}`,
+        title: `Branch Onboarding Request: ${req.branchName}`,
+        message: `${req.organizationName} submitted a request to onboard branch "${req.branchName}" (${req.city}). Please review.`,
+        type: 'info',
+        roleTarget: 'super_admin',
+        targetRoles: ['super_admin'],
+        category: 'onboarding',
+        link: '/platform/hospitals?tab=enterprise_requests',
+      });
     }
     setStored(STORAGE_KEYS.BRANCH_REQUESTS, list);
     ApiService.saveBranchRequest(req).catch(() => {});
@@ -7108,6 +8557,8 @@ export const MockStorage = {
     city: string;
     state: string;
     country: string;
+    postalCode?: string;
+    type?: HospitalType;
     contactPerson: string;
     contactPhone: string;
     contactEmail: string;
@@ -7116,8 +8567,53 @@ export const MockStorage = {
     branchAdminEmail: string;
     branchAdminPhone?: string;
     initialPassword?: string;
+    branchAdminPassword?: string;
+    totalBeds?: number;
+    docId?: string;
+    websiteSubdomain?: string;
+    websiteCustomDomain?: string;
+    websiteTemplateId?: WebsiteTemplateId;
+    websiteTheme?: string;
+    websitePrimaryColor?: string;
+    websiteSecondaryColor?: string;
+    websiteHeroTitle?: string;
+    websiteHeroDescription?: string;
+    websiteStatus?: 'published' | 'draft';
+    websitePublished?: boolean;
+    onlineBookingEnabled?: boolean;
+    emergencyBannerEnabled?: boolean;
   }): { success: boolean; branch?: Hospital; message?: string } {
-    const org = this.getOrganizationById(params.organizationId);
+    let org = this.getOrganizationById(params.organizationId);
+    if (!org) {
+      org = this.getOrganizationByHospitalId(params.organizationId);
+    }
+    if (!org) {
+      const hosp = this.getHospitalById(params.organizationId);
+      if (hosp) {
+        const newOrg: Organization = {
+          id: hosp.organizationId || `ORG-${hosp.id}`,
+          name: `${hosp.name} Network`,
+          slug: hosp.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+          headquartersCity: hosp.city || 'Headquarters',
+          headquartersAddress: `${hosp.address || ''}, ${hosp.state || ''}`,
+          primaryHospitalId: hosp.id,
+          planTier: 'enterprise',
+          status: 'active',
+          maxBranches: 10,
+          branches: [hosp.id],
+          contactEmail: hosp.adminEmail || '',
+          contactPhone: hosp.phone || '',
+          createdAt: new Date().toISOString().split('T')[0],
+        };
+        org = newOrg;
+        hosp.isHeadBranch = true;
+        hosp.organizationId = newOrg.id;
+        hosp.organizationName = newOrg.name;
+        this.saveHospital(hosp);
+        this.saveOrganization(newOrg);
+      }
+    }
+
     if (!org) {
       return { success: false, message: 'Organization record not found.' };
     }
@@ -7157,34 +8653,44 @@ export const MockStorage = {
       branchId = `HOSP-${cleanIdPart}-${Math.floor(100 + Math.random() * 900)}`;
     }
 
+    const siteSubdomain = (params.websiteSubdomain || cleanCode.toLowerCase()).replace(/[^a-z0-9-]/g, '');
+    const siteUrl = params.websiteCustomDomain
+      ? (params.websiteCustomDomain.startsWith('http') ? params.websiteCustomDomain : `https://${params.websiteCustomDomain}`)
+      : `https://${siteSubdomain}.pulsecorehealth.com`;
+
+    const adminPassword = params.branchAdminPassword || params.initialPassword || 'Admin@123';
+
     // 1. Create new branch Hospital
     const newBranch: Hospital = {
       id: branchId,
       name: params.branchName.trim(),
       regNumber: `REG-${params.city.substring(0, 3).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      type: 'Multi-Specialty Center',
+      type: params.type || 'Multi-Specialty Center',
       email: params.contactEmail.trim(),
       phone: params.contactPhone.trim(),
       address: params.address.trim(),
       city: params.city.trim(),
       state: params.state.trim(),
       country: params.country.trim(),
-      postalCode: '560001',
+      postalCode: params.postalCode || '560001',
       adminName: params.branchAdminName.trim(),
       adminEmail: params.branchAdminEmail.trim(),
       adminPhone: params.branchAdminPhone?.trim() || params.contactPhone.trim(),
+      adminPassword,
       planTier: 'enterprise',
       status: 'active',
       logoUrl: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=150&auto=format&fit=crop&q=80',
       totalDoctors: 0,
       totalPatients: 0,
-      totalBeds: 50,
+      totalBeds: params.totalBeds || 50,
       createdAt: new Date().toISOString().split('T')[0],
-      websiteUrl: `https://${cleanCode.toLowerCase()}.pulsecorehealth.com`,
-      domainStatus: 'pending',
+      websiteUrl: siteUrl,
+      domainStatus: params.websiteCustomDomain ? 'connected' : 'pending',
       organizationId: org.id,
       organizationName: org.name,
       isBranch: true,
+      isHeadBranch: false,
+      headBranchId: org.primaryHospitalId,
       branchCode: cleanCode,
       branchAdminName: params.branchAdminName.trim(),
       branchAdminEmail: params.branchAdminEmail.trim(),
@@ -7193,19 +8699,49 @@ export const MockStorage = {
     // Save hospital record
     this.saveHospital(newBranch);
 
+    // Ensure primary hospital is tagged as Head Branch and its admin elevated to Network Admin
+    const headHosp = this.getHospitalById(org.primaryHospitalId);
+    if (headHosp && !headHosp.isHeadBranch) {
+      headHosp.isHeadBranch = true;
+      this.saveHospital(headHosp);
+    }
+
     // 2. Associate branch in Organization record
     if (!org.branches.includes(newBranch.id)) {
       org.branches.push(newBranch.id);
       this.saveOrganization(org);
     }
 
+    // Link into Enterprise Branch Document if provisioned via doc
+    if (params.docId) {
+      const doc = this.getEnterpriseBranchDocumentById(params.docId);
+      if (doc) {
+        if (!doc.provisionedBranchIds) doc.provisionedBranchIds = [];
+        if (!doc.provisionedBranchIds.includes(newBranch.id)) {
+          doc.provisionedBranchIds.push(newBranch.id);
+        }
+        doc.status = 'provisioned';
+        this.saveEnterpriseBranchDocument(doc);
+      }
+    }
+
     // 3. Create separate Branch Admin user account with branch-only permissions
     const users = this.getUsers();
+
+    // Ensure Head Hospital Admin has isOrganizationAdmin: true
+    if (headHosp?.adminEmail) {
+      const headUserIdx = users.findIndex((u) => u.email.toLowerCase() === headHosp.adminEmail?.toLowerCase());
+      if (headUserIdx >= 0) {
+        users[headUserIdx].isOrganizationAdmin = true;
+        users[headUserIdx].organizationId = org.id;
+      }
+    }
+
     const branchAdminUser: User = {
       id: `USR-HAD-${newBranch.id}`,
       name: params.branchAdminName.trim(),
       email: params.branchAdminEmail.trim(),
-      password: params.initialPassword || 'Password@123',
+      password: adminPassword,
       role: 'hospital_admin',
       portal: 'hospital',
       hospitalId: newBranch.id,
@@ -7229,39 +8765,40 @@ export const MockStorage = {
     }
     setStored(STORAGE_KEYS.USERS, users);
 
-    // 4. Create Draft Website Configuration for the new branch
+    // 4. Create Website Configuration for the new branch
     const websites = this.getWebsites();
     const existingWebIdx = websites.findIndex((w) => w.hospitalId === newBranch.id);
-    const draftWebsite: HospitalWebsite = {
+    const branchWebsite: HospitalWebsite = {
       id: `WEB-${newBranch.id}`,
       hospitalId: newBranch.id,
       hospitalName: newBranch.name,
-      subdomain: `${cleanCode.toLowerCase()}.pulsecorehealth.com`,
-      customDomain: `www.${params.branchName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`,
-      domainStatus: 'pending_verification',
-      status: 'draft', // DRAFT state as required by Step 6!
-      published: false,
-      templateId: 'premium-healthcare',
-      theme: 'Modern Teal',
-      primaryColor: '#059669',
-      secondaryColor: '#0284c7',
-      heroTitle: `Welcome to ${newBranch.name}`,
+      subdomain: `${siteSubdomain}.pulsecorehealth.com`,
+      customDomain: params.websiteCustomDomain || `www.${params.branchName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`,
+      domainStatus: params.websiteCustomDomain ? 'connected' : 'pending_verification',
+      status: params.websiteStatus || 'published',
+      published: params.websitePublished !== undefined ? params.websitePublished : true,
+      templateId: params.websiteTemplateId || 'premium-healthcare',
+      theme: params.websiteTheme || 'Modern Teal',
+      primaryColor: params.websitePrimaryColor || '#059669',
+      secondaryColor: params.websiteSecondaryColor || '#0284c7',
+      heroTitle: params.websiteHeroTitle || `Welcome to ${newBranch.name}`,
       heroDescription:
+        params.websiteHeroDescription ||
         params.description ||
         `Specialized healthcare, clinical departments, and 24/7 patient services in ${params.city}.`,
       heroImage: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=1200&auto=format&fit=crop&q=80',
       seoTitle: `${newBranch.name} | Multi-Specialty Care in ${params.city}`,
       seoDescription: `Official portal for ${newBranch.name}. Book outpatient appointments, explore clinical departments, and 24/7 emergency care.`,
-      lastDeployedAt: '',
+      lastDeployedAt: new Date().toISOString(),
       monthlyVisitors: 0,
-      onlineBookingEnabled: true,
-      emergencyBannerEnabled: true,
+      onlineBookingEnabled: params.onlineBookingEnabled !== undefined ? params.onlineBookingEnabled : true,
+      emergencyBannerEnabled: params.emergencyBannerEnabled !== undefined ? params.emergencyBannerEnabled : true,
     };
 
     if (existingWebIdx >= 0) {
-      websites[existingWebIdx] = draftWebsite;
+      websites[existingWebIdx] = branchWebsite;
     } else {
-      websites.unshift(draftWebsite);
+      websites.unshift(branchWebsite);
     }
     setStored(STORAGE_KEYS.WEBSITES, websites);
 
@@ -7275,6 +8812,226 @@ export const MockStorage = {
     );
 
     return { success: true, branch: newBranch };
+  },
+
+  getEnterpriseHeadHospitals(): Hospital[] {
+    const hospitals = this.getHospitals();
+    return hospitals.filter(
+      (h) => h.planTier === 'enterprise' || h.isHeadBranch || (!h.isBranch && Boolean(h.organizationId))
+    );
+  },
+
+  // Enterprise Health Network Sub-Branch Documents (Max 5MB)
+  getEnterpriseBranchDocuments(hospitalId?: string): EnterpriseBranchDocument[] {
+    const docs = getStored<EnterpriseBranchDocument[]>(STORAGE_KEYS.ENTERPRISE_BRANCH_DOCUMENTS, []);
+    if (!hospitalId) return docs;
+    return docs.filter((d) => d.hospitalId === hospitalId);
+  },
+
+  getEnterpriseBranchDocumentById(id: string): EnterpriseBranchDocument | undefined {
+    return this.getEnterpriseBranchDocuments().find((d) => d.id === id);
+  },
+
+  saveEnterpriseBranchDocument(doc: EnterpriseBranchDocument): { success: boolean; message?: string } {
+    const uploadCheck = this.canUploadFile(doc.hospitalId, doc.fileSize);
+    if (!uploadCheck.allowed) {
+      return { success: false, message: uploadCheck.message };
+    }
+
+    const docs = getStored<EnterpriseBranchDocument[]>(STORAGE_KEYS.ENTERPRISE_BRANCH_DOCUMENTS, []);
+    const idx = docs.findIndex((d) => d.id === doc.id);
+    if (idx >= 0) {
+      docs[idx] = doc;
+    } else {
+      docs.unshift(doc);
+    }
+    setStored(STORAGE_KEYS.ENTERPRISE_BRANCH_DOCUMENTS, docs);
+
+    // Link document ID to hospital record & designate Head Branch
+    const hosp = this.getHospitalById(doc.hospitalId);
+    if (hosp) {
+      hosp.enterpriseDocumentId = doc.id;
+      hosp.isHeadBranch = true;
+      this.saveHospital(hosp);
+
+      // Elevate Head Branch Admin user to Network Admin
+      const users = this.getUsers();
+      let usersUpdated = false;
+      for (const u of users) {
+        if (u.hospitalId === hosp.id && u.role === 'hospital_admin') {
+          u.isOrganizationAdmin = true;
+          u.permittedBranchIds = ['ALL'];
+          if (hosp.organizationId) u.organizationId = hosp.organizationId;
+          if (hosp.organizationName) u.organizationName = hosp.organizationName;
+          usersUpdated = true;
+        }
+      }
+      if (usersUpdated) {
+        setStored(STORAGE_KEYS.USERS, users);
+      }
+    }
+
+    this.logActivity(
+      'Uploaded Enterprise Sub-Branch Manifest',
+      `${doc.fileName} (${(doc.fileSize / 1024).toFixed(1)} KB) for ${doc.hospitalName}`,
+      'hospital',
+      doc.uploadedBy,
+      'Hospital Admin',
+      doc.hospitalId
+    );
+
+    // Dispatch real-time notification to Super Admin & Super Admin Manager
+    this.addNotification({
+      title: 'Enterprise Sub-Branch Manifest Uploaded',
+      message: `${doc.hospitalName} has uploaded a proposed sub-branch specification (${doc.fileName}, ${(doc.fileSize / 1024).toFixed(1)} KB) for Super Admin review and branch provisioning.`,
+      type: 'info',
+      roleTarget: 'platform',
+      targetRoles: ['super_admin', 'super_admin_manager'],
+      category: 'onboarding',
+      link: '/platform/hospitals?tab=enterprise_requests',
+    });
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
+
+    return { success: true };
+  },
+
+  deleteEnterpriseBranchDocument(id: string): void {
+    let docs = getStored<EnterpriseBranchDocument[]>(STORAGE_KEYS.ENTERPRISE_BRANCH_DOCUMENTS, []);
+    docs = docs.filter((d) => d.id !== id);
+    setStored(STORAGE_KEYS.ENTERPRISE_BRANCH_DOCUMENTS, docs);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
+  },
+
+  // ==========================================
+  // CLOUD STORAGE VAULT & RESOURCE ALLOCATION
+  // ==========================================
+
+  getHospitalStorageUsage(hospitalId?: string): HospitalStorageUsage {
+    const hosp = hospitalId ? this.getHospitalById(hospitalId) : undefined;
+    const plan = hosp ? this.getPlanByTier(hosp.planTier) : this.getPlanByTier('standard');
+    const maxStorageGB = plan?.storageGB || (hosp?.planTier === 'enterprise' ? 2000 : hosp?.planTier === 'standard' ? 250 : hosp?.planTier === 'basic' ? 50 : 10);
+    const maxBytes = maxStorageGB * 1024 * 1024 * 1024;
+
+    if (!hospitalId) {
+      return {
+        usedBytes: 0,
+        usedMB: 0,
+        usedGB: 0,
+        usedFormatted: '0.00 GB',
+        maxStorageGB,
+        percentageUsed: 0,
+        remainingGB: maxStorageGB,
+        isLimitReached: false,
+      };
+    }
+
+    // 1. Files in Hospital Storage Vault
+    const vaultFiles = getStored<HospitalStorageVaultFile[]>(STORAGE_KEYS.HOSPITAL_STORAGE_VAULT, []).filter(
+      (f) => f.hospitalId === hospitalId
+    );
+    const vaultBytes = vaultFiles.reduce((acc, f) => acc + (f.fileSize || 0), 0);
+
+    // 2. Enterprise branch documents
+    const entDocs = this.getEnterpriseBranchDocuments(hospitalId);
+    const entBytes = entDocs.reduce((acc, d) => acc + (d.fileSize || (d.fileData ? d.fileData.length : 0)), 0);
+
+    // 3. Stored records baseline calculation
+    // Active patient records with EHR charts, diagnostic reports, and invoices consume cloud storage
+    const patients = this.getPatients(hospitalId);
+    const labOrders = this.getLabOrders(hospitalId);
+    const invoices = this.getInvoices(hospitalId);
+    const admissions = this.getAdmissions(hospitalId);
+
+    const dbRecordBytes = (patients.length * 256000) + (labOrders.length * 51200) + (invoices.length * 32000) + (admissions.length * 64000);
+
+    const totalUsedBytes = vaultBytes + entBytes + dbRecordBytes;
+    const usedMB = totalUsedBytes / (1024 * 1024);
+    const usedGB = totalUsedBytes / (1024 * 1024 * 1024);
+    const percentageUsed = Math.min(100, Number(((totalUsedBytes / maxBytes) * 100).toFixed(1)));
+    const remainingGB = Math.max(0, Number((maxStorageGB - usedGB).toFixed(2)));
+
+    const usedFormatted = usedGB >= 1 ? `${usedGB.toFixed(2)} GB` : `${usedMB.toFixed(1)} MB`;
+
+    return {
+      usedBytes: totalUsedBytes,
+      usedMB,
+      usedGB,
+      usedFormatted,
+      maxStorageGB,
+      percentageUsed,
+      remainingGB,
+      isLimitReached: totalUsedBytes >= maxBytes,
+    };
+  },
+
+  canUploadFile(hospitalId?: string, additionalBytes: number = 0): {
+    allowed: boolean;
+    currentUsageGB: number;
+    maxStorageGB: number;
+    message?: string;
+  } {
+    if (!hospitalId) return { allowed: true, currentUsageGB: 0, maxStorageGB: 250 };
+    const usage = this.getHospitalStorageUsage(hospitalId);
+    const maxBytes = usage.maxStorageGB * 1024 * 1024 * 1024;
+
+    if (usage.usedBytes + additionalBytes > maxBytes) {
+      const hosp = this.getHospitalById(hospitalId);
+      const plan = hosp ? this.getPlanByTier(hosp.planTier) : undefined;
+      return {
+        allowed: false,
+        currentUsageGB: usage.usedGB,
+        maxStorageGB: usage.maxStorageGB,
+        message: `Cloud Storage Vault Limit Exceeded: Your facility has utilized ${usage.usedFormatted} of your ${usage.maxStorageGB} GB allocation under the ${plan?.name || 'Current'} plan. Uploading this file (${(additionalBytes / (1024 * 1024)).toFixed(1)} MB) would exceed your allocated cloud storage limit. Upgrade your subscription plan to expand storage capacity.`,
+      };
+    }
+
+    return {
+      allowed: true,
+      currentUsageGB: usage.usedGB,
+      maxStorageGB: usage.maxStorageGB,
+    };
+  },
+
+  trackHospitalFile(file: Omit<HospitalStorageVaultFile, 'id' | 'uploadedAt'>): { success: boolean; message?: string } {
+    const check = this.canUploadFile(file.hospitalId, file.fileSize);
+    if (!check.allowed) {
+      return { success: false, message: check.message };
+    }
+
+    const files = getStored<HospitalStorageVaultFile[]>(STORAGE_KEYS.HOSPITAL_STORAGE_VAULT, []);
+    const newFile: HospitalStorageVaultFile = {
+      ...file,
+      id: `VAULT-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+      uploadedAt: new Date().toISOString(),
+    };
+    files.unshift(newFile);
+    setStored(STORAGE_KEYS.HOSPITAL_STORAGE_VAULT, files);
+    notifyStorageChange(STORAGE_KEYS.HOSPITAL_STORAGE_VAULT, files);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
+    return { success: true };
+  },
+
+  getHospitalVaultFiles(hospitalId?: string): HospitalStorageVaultFile[] {
+    const files = getStored<HospitalStorageVaultFile[]>(STORAGE_KEYS.HOSPITAL_STORAGE_VAULT, []);
+    if (!hospitalId) return files;
+    return files.filter((f) => f.hospitalId === hospitalId);
+  },
+
+  deleteHospitalVaultFile(id: string): void {
+    let files = getStored<HospitalStorageVaultFile[]>(STORAGE_KEYS.HOSPITAL_STORAGE_VAULT, []);
+    files = files.filter((f) => f.id !== id);
+    setStored(STORAGE_KEYS.HOSPITAL_STORAGE_VAULT, files);
+    notifyStorageChange(STORAGE_KEYS.HOSPITAL_STORAGE_VAULT, files);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('pulse_storage_updated'));
+    }
   },
 
   getConsolidatedEnterpriseMetrics(organizationId: string, branchId?: string, dateRange?: string) {
@@ -7353,5 +9110,350 @@ export const MockStorage = {
       totalDoctors,
       branchSummaries,
     };
+  },
+
+  // =====================================
+  // INBOUND DEMO REQUESTS PIPELINE
+  // =====================================
+
+  getDemoRequests(): DemoRequest[] {
+    return getStored<DemoRequest[]>(STORAGE_KEYS.DEMO_REQUESTS, initialDemoRequests);
+  },
+
+  createDemoRequest(data: Omit<DemoRequest, 'id' | 'createdAt' | 'status'>): DemoRequest {
+    const list = this.getDemoRequests();
+    const newReq: DemoRequest = {
+      ...data,
+      id: `DEMO-${Math.floor(1000 + Math.random() * 9000)}`,
+      status: 'new',
+      createdAt: new Date().toISOString(),
+    };
+    list.unshift(newReq);
+    setStored(STORAGE_KEYS.DEMO_REQUESTS, list);
+    notifyStorageChange(STORAGE_KEYS.DEMO_REQUESTS, list);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.DEMO_REQUESTS, data: list } }));
+    }
+
+    try {
+      fetch(`${API_BASE_URL}/demo-requests/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newReq),
+      }).catch(() => {});
+    } catch (e) {}
+
+    // Dynamically notify Super Admin & Sales Executive of inbound lead
+    this.addNotification({
+      title: 'Inbound Hospital Demo Request',
+      message: `${newReq.hospitalName} submitted a demo request (${newReq.contactPerson}).`,
+      type: 'warning',
+      roleTarget: 'super_admin',
+      targetRoles: ['super_admin', 'super_admin_manager', 'sales_executive'],
+      category: 'lead',
+      link: '/platform/demo-requests',
+    });
+
+    return newReq;
+  },
+
+  updateDemoRequestStatus(id: string, status: DemoRequest['status']): void {
+    const list = this.getDemoRequests();
+    const idx = list.findIndex((r) => r.id === id);
+    if (idx >= 0) {
+      list[idx].status = status;
+      setStored(STORAGE_KEYS.DEMO_REQUESTS, list);
+      notifyStorageChange(STORAGE_KEYS.DEMO_REQUESTS, list);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.DEMO_REQUESTS, data: list } }));
+      }
+      try {
+        fetch(`${API_BASE_URL}/demo-requests/${id}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        }).catch(() => {});
+      } catch (e) {}
+    }
+  },
+
+  deleteDemoRequest(id: string): void {
+    const list = this.getDemoRequests().filter((r) => r.id !== id);
+    setStored(STORAGE_KEYS.DEMO_REQUESTS, list);
+    notifyStorageChange(STORAGE_KEYS.DEMO_REQUESTS, list);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.DEMO_REQUESTS, data: list } }));
+    }
+    try {
+      fetch(`${API_BASE_URL}/demo-requests/${id}/`, {
+        method: 'DELETE',
+      }).catch(() => {});
+    } catch (e) {}
+  },
+
+  // =====================================
+  // DYNAMIC ROLE-BASED NOTIFICATIONS (START FRESH)
+  // =====================================
+
+  getNotifications(): AppNotification[] {
+    const stored = getStored<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, []);
+    let list: AppNotification[] = [];
+    if (stored && Array.isArray(stored)) {
+      // Cleanse any legacy mock messages so notifications start freshly and dynamically
+      list = stored.filter(
+        (n) =>
+          !n.id.startsWith('notif-sa-') &&
+          !n.id.startsWith('notif-sales-') &&
+          !n.id.startsWith('notif-ha-') &&
+          !n.id.startsWith('notif-doc-') &&
+          !n.id.startsWith('notif-nurse-') &&
+          !n.id.startsWith('notif-recep-') &&
+          !n.id.startsWith('notif-pharm-') &&
+          !n.id.startsWith('notif-lab-') &&
+          !n.id.startsWith('notif-acc-') &&
+          !n.id.startsWith('notif-amb-') &&
+          !n.id.startsWith('notif-pat-')
+      );
+    }
+
+    let modified = false;
+
+    // 1. Auto-sync Pending QR Payment & UTR Approvals from Subscriptions
+    const subs = getStored<HospitalSubscription[]>(STORAGE_KEYS.SUBSCRIPTIONS, []);
+    const pendingSubs = subs.filter((s) => s.paymentStatus === 'pending_approval');
+    for (const sub of pendingSubs) {
+      const notifId = `notif-sub-pending-${sub.id || sub.hospitalId}`;
+      const exists = list.some((n) => n.id === notifId);
+      if (!exists) {
+        const hospitals = getStored<Hospital[]>(STORAGE_KEYS.HOSPITALS, []);
+        const hosp = hospitals.find((h) => h.id === sub.hospitalId || h.id.replace(/-/g, '') === sub.hospitalId.replace(/-/g, ''));
+        const hospName = hosp?.name || sub.hospitalId;
+        const newNotif: AppNotification = {
+          id: notifId,
+          title: 'Pending QR Payment & UTR Approval',
+          message: `${hospName} submitted payment of ₹${(sub.amount || 0).toLocaleString('en-IN')} for ${sub.planName || sub.requestedTier || 'Subscription Upgrade'} (UTR: ${sub.utrNumber || 'Pending Verification'}). Review required.`,
+          timestamp: sub.paymentSubmittedAt || new Date().toISOString(),
+          read: false,
+          type: 'warning',
+          roleTarget: 'super_admin',
+          targetRoles: ['super_admin', 'super_admin_manager'],
+          category: 'billing',
+          link: '/platform/subscriptions',
+        };
+        list.unshift(newNotif);
+        modified = true;
+      }
+    }
+
+    // Auto-mark pending subscription notification as read once approved or rejected
+    for (const n of list) {
+      if (n.id.startsWith('notif-sub-pending-') && !n.read) {
+        const subIdOrHosp = n.id.replace('notif-sub-pending-', '');
+        const matchingSub = subs.find((s) => s.id === subIdOrHosp || s.hospitalId === subIdOrHosp);
+        if (matchingSub && matchingSub.paymentStatus !== 'pending_approval') {
+          n.read = true;
+          modified = true;
+        }
+      }
+    }
+
+    // 2. Auto-sync Real-time Pharmacy Inventory Alerts for Pharmacist & Hospital Admin (Low Stock, Stockout, Near Expiry, Expired)
+    const medicines = getStored<Medicine[]>(STORAGE_KEYS.MEDICINES, []);
+    const now = new Date();
+
+    for (const m of medicines) {
+      if (!m || !m.id) continue;
+      const hospId = m.hospitalId || 'hosp-1';
+      const threshold = m.minThreshold ?? 25;
+      const stock = m.stockQuantity ?? (m as any).stock ?? 0;
+
+      // A. Stockout Alert (0 units)
+      if (m.status !== 'Quarantined' && stock === 0) {
+        const notifId = `notif-pharm-out-of-stock-${m.id}`;
+        if (!list.some((n) => n.id === notifId)) {
+          list.unshift({
+            id: notifId,
+            hospitalId: hospId,
+            title: `Critical Stockout Alert: ${m.name}`,
+            message: `${m.name} (Batch: ${m.batchNumber || 'N/A'}) is completely out of stock (0 units). Reorder immediately to avoid dispensing disruption.`,
+            timestamp: now.toISOString(),
+            read: false,
+            type: 'error',
+            roleTarget: 'pharmacist',
+            targetRoles: ['pharmacist', 'hospital_admin'],
+            category: 'clinical',
+            link: '/hospital/pharmacy',
+          });
+          modified = true;
+        }
+      }
+
+      // B. Low Stock Warning (0 < stock <= threshold)
+      if (m.status !== 'Quarantined' && stock > 0 && stock <= threshold) {
+        const notifId = `notif-pharm-low-stock-${m.id}`;
+        if (!list.some((n) => n.id === notifId)) {
+          list.unshift({
+            id: notifId,
+            hospitalId: hospId,
+            title: `Low Stock Warning: ${m.name}`,
+            message: `${m.name} has only ${stock} unit${stock === 1 ? '' : 's'} remaining (below minimum threshold of ${threshold}). Restock recommended.`,
+            timestamp: now.toISOString(),
+            read: false,
+            type: 'warning',
+            roleTarget: 'pharmacist',
+            targetRoles: ['pharmacist', 'hospital_admin'],
+            category: 'clinical',
+            link: '/hospital/pharmacy',
+          });
+          modified = true;
+        }
+      }
+
+      // C. Expiry and Near Expiry Alerts
+      if (m.expiryDate) {
+        const exp = new Date(m.expiryDate);
+        if (!isNaN(exp.getTime())) {
+          const diffDays = Math.ceil((exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays <= 0) {
+            // Expired Alert
+            const notifId = `notif-pharm-expired-${m.id}`;
+            if (!list.some((n) => n.id === notifId)) {
+              list.unshift({
+                id: notifId,
+                hospitalId: hospId,
+                title: `Expired Medicine Alert: ${m.name}`,
+                message: `Batch ${m.batchNumber || 'N/A'} of ${m.name} expired on ${m.expiryDate}. Quarantine or dispose of stock immediately.`,
+                timestamp: now.toISOString(),
+                read: false,
+                type: 'error',
+                roleTarget: 'pharmacist',
+                targetRoles: ['pharmacist', 'hospital_admin'],
+                category: 'clinical',
+                link: '/hospital/pharmacy',
+              });
+              modified = true;
+            }
+          } else if (diffDays <= 90 && m.status !== 'Quarantined') {
+            // Near Expiry Alert (within 90 days)
+            const notifId = `notif-pharm-near-expiry-${m.id}`;
+            if (!list.some((n) => n.id === notifId)) {
+              list.unshift({
+                id: notifId,
+                hospitalId: hospId,
+                title: `Near Expiry Alert: ${m.name}`,
+                message: `Batch ${m.batchNumber || 'N/A'} of ${m.name} expires in ${diffDays} day${diffDays === 1 ? '' : 's'} (${m.expiryDate}). Expedite dispensing or return to vendor.`,
+                timestamp: now.toISOString(),
+                read: false,
+                type: 'warning',
+                roleTarget: 'pharmacist',
+                targetRoles: ['pharmacist', 'hospital_admin'],
+                category: 'clinical',
+                link: '/hospital/pharmacy',
+              });
+              modified = true;
+            }
+          }
+        }
+      }
+    }
+
+    // Auto-mark or cleanse resolved medicine notifications when stock is replenished
+    for (const n of list) {
+      if (n.id.startsWith('notif-pharm-low-stock-') || n.id.startsWith('notif-pharm-out-of-stock-')) {
+        const medId = n.id.replace('notif-pharm-low-stock-', '').replace('notif-pharm-out-of-stock-', '');
+        const matchingMed = medicines.find((m) => m.id === medId);
+        if (matchingMed) {
+          const threshold = matchingMed.minThreshold ?? 25;
+          const stock = matchingMed.stockQuantity ?? (matchingMed as any).stock ?? 0;
+          if (stock > threshold && !n.read) {
+            n.read = true;
+            modified = true;
+          }
+        }
+      }
+    }
+
+    if (modified || list.length !== (stored?.length || 0)) {
+      setStored(STORAGE_KEYS.NOTIFICATIONS, list);
+    }
+    return list;
+  },
+
+  getRoleNotifications(role?: string, hospitalId?: string, userId?: string, portal?: string): AppNotification[] {
+    const all = this.getNotifications();
+    return filterNotificationsForUser(all, role, hospitalId, userId, portal);
+  },
+
+  markNotificationAsRead(id: string): void {
+    const list = this.getNotifications();
+    const idx = list.findIndex((n) => n.id === id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], read: true };
+      setStored(STORAGE_KEYS.NOTIFICATIONS, list);
+      notifyStorageChange(STORAGE_KEYS.NOTIFICATIONS, list);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.NOTIFICATIONS, data: list } }));
+      }
+    }
+  },
+
+  markAllRoleNotificationsAsRead(role?: string, hospitalId?: string, userId?: string, portal?: string): void {
+    const list = this.getNotifications();
+    const roleItems = filterNotificationsForUser(list, role, hospitalId, userId, portal);
+    const roleIds = new Set(roleItems.map((n) => n.id));
+    const updated = list.map((n) => (roleIds.has(n.id) ? { ...n, read: true } : n));
+    setStored(STORAGE_KEYS.NOTIFICATIONS, updated);
+    notifyStorageChange(STORAGE_KEYS.NOTIFICATIONS, updated);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.NOTIFICATIONS, data: updated } }));
+    }
+  },
+
+  clearRoleNotifications(role?: string, hospitalId?: string, userId?: string, portal?: string): void {
+    const list = this.getNotifications();
+    const roleItems = filterNotificationsForUser(list, role, hospitalId, userId, portal);
+    const roleIds = new Set(roleItems.map((n) => n.id));
+    const updated = list.filter((n) => !roleIds.has(n.id));
+    setStored(STORAGE_KEYS.NOTIFICATIONS, updated);
+    notifyStorageChange(STORAGE_KEYS.NOTIFICATIONS, updated);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.NOTIFICATIONS, data: updated } }));
+    }
+  },
+
+  deleteNotification(id: string): void {
+    const list = this.getNotifications().filter((n) => n.id !== id);
+    setStored(STORAGE_KEYS.NOTIFICATIONS, list);
+    notifyStorageChange(STORAGE_KEYS.NOTIFICATIONS, list);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.NOTIFICATIONS, data: list } }));
+    }
+  },
+
+  addNotification(notif: Omit<AppNotification, 'id' | 'timestamp' | 'read'> & { id?: string; timestamp?: string; read?: boolean }): AppNotification {
+    const list = this.getNotifications();
+    const newNotif: AppNotification = {
+      id: notif.id || `notif-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      timestamp: notif.timestamp || new Date().toISOString(),
+      read: notif.read || false,
+      ...notif,
+    };
+    list.unshift(newNotif);
+    setStored(STORAGE_KEYS.NOTIFICATIONS, list);
+    notifyStorageChange(STORAGE_KEYS.NOTIFICATIONS, list);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.NOTIFICATIONS, data: list } }));
+    }
+    return newNotif;
+  },
+
+  resetDefaultNotifications(): AppNotification[] {
+    setStored(STORAGE_KEYS.NOTIFICATIONS, []);
+    notifyStorageChange(STORAGE_KEYS.NOTIFICATIONS, []);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pulse_storage_updated', { detail: { key: STORAGE_KEYS.NOTIFICATIONS, data: [] } }));
+    }
+    return [];
   },
 };

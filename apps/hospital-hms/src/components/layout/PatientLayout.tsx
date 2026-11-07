@@ -46,7 +46,7 @@ export const PatientLayout: React.FC = () => {
             </div>
             <div>
               <span className="font-bold text-base text-slate-900 tracking-tight flex items-center gap-1.5">
-                PulseCore <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-teal-50 text-teal-700 border border-teal-200">Patient Portal</span>
+                Zenelait <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-teal-50 text-teal-700 border border-teal-200">Patient Portal</span>
               </span>
               <p className="text-[11px] text-slate-500 truncate">{user?.hospitalName || 'Apex City Medical Center'}</p>
             </div>

@@ -158,6 +158,12 @@ class Appointment(models.Model):
     time = models.CharField(max_length=20)
     type = models.CharField(max_length=50, default='General Checkup')
     status = models.CharField(max_length=20, default='Scheduled')
+    fee = models.DecimalField(max_digits=10, decimal_places=2, default=500.00)
+    cancellation_penalty = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    cancellation_penalty_collected = models.BooleanField(default=False)
+    cancellation_collected_invoice_id = models.CharField(max_length=50, blank=True, null=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancellation_reason = models.TextField(blank=True, null=True)
     notes = models.TextField(blank=True, null=True)
     opd_room_id = models.CharField(max_length=50, blank=True, null=True)
     opd_room_name = models.CharField(max_length=255, blank=True, null=True)
@@ -166,6 +172,13 @@ class Appointment(models.Model):
     consultation_started_at = models.DateTimeField(null=True, blank=True)
     consultation_completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if hasattr(self, 'doctor') and self.doctor and self.doctor.hospital:
+            self.hospital = self.doctor.hospital
+        elif hasattr(self, 'patient') and self.patient and self.patient.hospital:
+            self.hospital = self.patient.hospital
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.id} - {self.patient.name}"
@@ -207,10 +220,18 @@ class Admission(models.Model):
     doctor = models.ForeignKey(Doctor, on_delete=models.CASCADE, related_name='admissions')
     room_number = models.CharField(max_length=50)
     bed_number = models.CharField(max_length=50)
-    status = models.CharField(max_length=20, default='Admitted')
+    status = models.CharField(max_length=50, default='Admitted')
     admission_date = models.DateField()
     discharge_date = models.DateField(null=True, blank=True)
     diagnosis = models.TextField(blank=True, null=True)
+    initial_deposit = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+
+    def save(self, *args, **kwargs):
+        if hasattr(self, 'doctor') and self.doctor and self.doctor.hospital:
+            self.hospital = self.doctor.hospital
+        elif hasattr(self, 'patient') and self.patient and self.patient.hospital:
+            self.hospital = self.patient.hospital
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.id} - {self.patient.name}"
@@ -236,10 +257,17 @@ class PharmacyMedicine(models.Model):
     id = models.CharField(max_length=50, primary_key=True)
     hospital = models.ForeignKey(Hospital, on_delete=models.CASCADE, related_name='medicines')
     medicine_name = models.CharField(max_length=255)
+    generic_name = models.CharField(max_length=255, blank=True, null=True)
+    sku = models.CharField(max_length=100, blank=True, null=True)
+    batch_number = models.CharField(max_length=100, blank=True, null=True)
     category = models.CharField(max_length=100)
     stock_quantity = models.IntegerField(default=0)
+    min_threshold = models.IntegerField(default=10)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
     expiry_date = models.DateField()
+    manufacturer = models.CharField(max_length=255, blank=True, null=True)
+    location_rack = models.CharField(max_length=100, blank=True, null=True)
+    requires_prescription = models.BooleanField(default=True)
     status = models.CharField(max_length=20, default='In Stock')
 
     def __str__(self):
@@ -255,6 +283,13 @@ class Prescription(models.Model):
     status = models.CharField(max_length=20, default='Active')
     medicines = models.JSONField(default=list)
     notes = models.TextField(blank=True, null=True)
+
+    def save(self, *args, **kwargs):
+        if hasattr(self, 'doctor') and self.doctor and self.doctor.hospital:
+            self.hospital = self.doctor.hospital
+        elif hasattr(self, 'patient') and self.patient and self.patient.hospital:
+            self.hospital = self.patient.hospital
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.id} - {self.patient.name}"
@@ -890,6 +925,28 @@ class PlatformSetting(models.Model):
 
     def __str__(self):
         return f"Platform Settings ({self.id})"
+
+
+class DemoRequest(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)
+    hospital_name = models.CharField(max_length=255)
+    contact_person = models.CharField(max_length=255)
+    designation = models.CharField(max_length=150, blank=True, null=True)
+    email = models.EmailField()
+    phone = models.CharField(max_length=50)
+    city = models.CharField(max_length=100, blank=True, null=True)
+    state = models.CharField(max_length=100, blank=True, null=True)
+    bed_capacity = models.CharField(max_length=100, default='150 - 500 Beds')
+    hospital_type = models.CharField(max_length=100, default='Multi-Specialty Hospital')
+    preferred_date = models.CharField(max_length=50, blank=True, null=True)
+    preferred_time = models.CharField(max_length=50, blank=True, null=True)
+    message = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=50, default='new')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"DemoRequest {self.id}: {self.hospital_name} ({self.contact_person})"
+
 
 
 

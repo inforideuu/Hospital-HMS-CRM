@@ -323,7 +323,7 @@ export const SalesLeads: React.FC = () => {
               </button>
             </div>
             <Button variant="primary" size="sm" onClick={handleOpenCreate} leftIcon={<Plus className="w-4 h-4" />}>
-              + Create Lead
+              Create Lead
             </Button>
           </div>
         }

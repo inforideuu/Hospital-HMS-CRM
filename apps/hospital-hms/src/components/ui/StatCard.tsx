@@ -3,7 +3,8 @@ import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 export interface StatCardProps {
   title: string;
-  value: string | number;
+  value: string | number | ReactNode;
+  unit?: string;
   icon: ReactNode;
   trend?: {
     value: string | number;
@@ -11,13 +12,14 @@ export interface StatCardProps {
     label?: string;
   };
   subtext?: string;
-  accentColor?: 'indigo' | 'emerald' | 'amber' | 'rose' | 'cyan' | 'purple';
+  accentColor?: 'indigo' | 'emerald' | 'amber' | 'rose' | 'cyan' | 'purple' | 'coral';
   onClick?: () => void;
 }
 
 export const StatCard: React.FC<StatCardProps> = ({
   title,
   value,
+  unit,
   icon,
   trend,
   subtext,
@@ -31,6 +33,7 @@ export const StatCard: React.FC<StatCardProps> = ({
     rose: 'bg-rose-50 text-rose-600 border border-rose-100',
     cyan: 'bg-cyan-50 text-cyan-600 border border-cyan-100',
     purple: 'bg-purple-50 text-purple-600 border border-purple-100',
+    coral: 'bg-[#FF3030]/10 text-[#FF3030] border border-[#FF3030]/20',
   };
 
   return (
@@ -41,10 +44,15 @@ export const StatCard: React.FC<StatCardProps> = ({
       }`}
     >
       <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</p>
+        <div className="space-y-1 min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 truncate">{title}</p>
           <div className="flex items-baseline gap-2">
-            <h3 className="text-2xl font-bold tracking-tight text-slate-900">{value}</h3>
+            <h3 className="text-2xl font-bold tracking-tight text-slate-900 whitespace-nowrap">{value}</h3>
+            {unit && (
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider shrink-0">
+                {unit}
+              </span>
+            )}
           </div>
         </div>
         <div className={`p-2.5 rounded-xl shrink-0 ${iconBgStyles[accentColor]}`}>
